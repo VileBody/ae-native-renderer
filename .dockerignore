@@ -4,6 +4,8 @@ target
 .gitignore
 jobs/*/out
 jobs/*/tmp
+s3_full_artifacts_examples
+*.tar.gz
 fixtures/footage/*
 fixtures/fonts/*
 *.aep

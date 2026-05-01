@@ -14,6 +14,12 @@ enum Command {
     Doctor,
     Probe { path: PathBuf },
     Validate { #[arg(long)] scene: PathBuf },
+    ValidatePayload {
+        #[arg(long)]
+        payload: PathBuf,
+        #[arg(long)]
+        strict: bool,
+    },
     Render { #[arg(long)] scene: PathBuf, #[arg(long)] out: PathBuf },
     Job { #[arg(long)] job_dir: PathBuf },
     ListEffects,
@@ -27,6 +33,7 @@ fn main() -> anyhow::Result<()> {
         Command::Doctor => doctor(),
         Command::Probe { path } => probe(path),
         Command::Validate { scene } => validate(scene),
+        Command::ValidatePayload { payload, strict } => validate_payload(payload, strict),
         Command::Render { scene, out } => render(scene, out),
         Command::Job { job_dir } => {
             let scene = job_dir.join("scene.json");
@@ -69,6 +76,16 @@ fn validate(scene_path: PathBuf) -> anyhow::Result<()> {
     println!("scene.version={}", scene.version);
     println!("composition.id={}", scene.composition.id);
     println!("layers={}", scene.layers.len());
+    Ok(())
+}
+
+fn validate_payload(payload_path: PathBuf, strict: bool) -> anyhow::Result<()> {
+    let payload = ae_bridge::load_payload(&payload_path)?;
+    let report = ae_bridge::validate_payload(&payload, strict);
+    println!("{}", serde_json::to_string_pretty(&report)?);
+    if !report.ok {
+        anyhow::bail!("payload validation failed: {}", payload_path.display());
+    }
     Ok(())
 }
 

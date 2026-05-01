@@ -1,0 +1,141 @@
+{
+  "payloadVersion": "0.1",
+  "projectSpec": {
+    "mainCompName": "Comp 1",
+    "subtitlesMode": "minimal_static"
+  },
+  "compsSpec": [
+    {
+      "name": "Comp 1",
+      "w": 1080,
+      "h": 1960,
+      "fps": 23.9759979248047,
+      "dur": 6.0,
+      "pixelAspect": 1.0,
+      "workAreaStart": 0.0,
+      "workAreaDuration": 6.0,
+      "displayStartTime": 0.0,
+      "bgColor": [0, 0, 0]
+    }
+  ],
+  "footage_layers": [
+    {
+      "name": "demo.mp4",
+      "type": "footage",
+      "in_point": 0.0,
+      "out_point": 6.0,
+      "z_index": 100,
+      "text": "",
+      "adjustment_layer": false,
+      "source_rect": {},
+      "props": {
+        "tf_anchor": {
+          "match_name": "ADBE Anchor Point",
+          "value": [360.0, 640.0, 0.0],
+          "keyframes": [],
+          "expression": null
+        },
+        "tf_position": {
+          "match_name": "ADBE Position",
+          "value": [540.0, 980.0, 0.0],
+          "keyframes": [],
+          "expression": null
+        },
+        "tf_scale": {
+          "match_name": "ADBE Scale",
+          "value": [155.67708333843748, 155.67708333843748, 100.0],
+          "keyframes": [],
+          "expression": null
+        },
+        "tf_rotation": {
+          "match_name": "ADBE Rotate Z",
+          "value": 0,
+          "keyframes": [],
+          "expression": null
+        },
+        "tf_opacity": {
+          "match_name": "ADBE Opacity",
+          "value": 100,
+          "keyframes": [],
+          "expression": null
+        }
+      },
+      "effects": {},
+      "text_data": {
+        "layer_meta": {
+          "comp_name_target": "Comp 1",
+          "startTime": 0.0,
+          "enabled": true,
+          "audioEnabled": false,
+          "motionBlur": false,
+          "collapseTransformation": false,
+          "blendingModeCode": "5212"
+        },
+        "source_footage": {
+          "file_name": "demo.mp4",
+          "file_path": "media/video/demo.mp4"
+        }
+      }
+    }
+  ],
+  "text_layers": [
+    {
+      "name": "title",
+      "type": "text",
+      "in_point": 0.0,
+      "out_point": 6.0,
+      "z_index": 900,
+      "text": "HELLO NATIVE",
+      "adjustment_layer": false,
+      "source_rect": {},
+      "props": {
+        "tf_anchor": {
+          "match_name": "ADBE Anchor Point",
+          "value": [540.0, 960.0, 0.0],
+          "keyframes": [],
+          "expression": null
+        },
+        "tf_position": {
+          "match_name": "ADBE Position",
+          "value": [540.0, 960.0, 0.0],
+          "keyframes": [],
+          "expression": null
+        },
+        "tf_scale": {
+          "match_name": "ADBE Scale",
+          "value": [100.0, 100.0, 100.0],
+          "keyframes": [],
+          "expression": null
+        },
+        "layer_opacity": {
+          "match_name": "ADBE Opacity",
+          "value": 100,
+          "keyframes": [],
+          "expression": null
+        }
+      },
+      "effects": {},
+      "text_data": {
+        "layer_meta": {
+          "comp_name_target": "Comp 1",
+          "enabled": true,
+          "collapseTransformation": false,
+          "motionBlur": false
+        },
+        "text_base": {
+          "font": "Montserrat-BoldItalic",
+          "fontSize": 100,
+          "applyFill": true,
+          "fillColor": [1, 1, 1],
+          "applyStroke": false,
+          "strokeWidth": 0,
+          "tracking": 0,
+          "leading": 120,
+          "autoLeading": false,
+          "justificationCode": "7415",
+          "allCaps": false
+        }
+      }
+    }
+  ]
+}
