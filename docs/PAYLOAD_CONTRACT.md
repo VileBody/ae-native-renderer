@@ -148,3 +148,25 @@ The command prints a JSON capability report with:
 - expression counts;
 - keyframed property counts;
 - supported/ignored/approximate/unsupported findings.
+
+## Import to Render IR
+
+Use:
+
+```bash
+render-cli import-payload \
+  --payload fixtures/payload/minimal_static.json \
+  --out jobs/minimal_static/scene.json \
+  --diagnostics jobs/minimal_static/import-diagnostics.json
+```
+
+The importer writes `render-ir` `scene.json`.
+
+Current import rules:
+
+- imports only layers targeting `projectSpec.mainCompName`;
+- imports video `footage` layers as IR footage layers;
+- imports static `text` layers as IR text layers;
+- imports main-comp `precomp` and `adjustment` layers as placeholders;
+- skips audio layers with an `ignored` diagnostic;
+- skips non-main-comp layers until text precomp flattening is implemented.

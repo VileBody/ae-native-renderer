@@ -20,6 +20,14 @@ enum Command {
         #[arg(long)]
         strict: bool,
     },
+    ImportPayload {
+        #[arg(long)]
+        payload: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        diagnostics: Option<PathBuf>,
+    },
     Render { #[arg(long)] scene: PathBuf, #[arg(long)] out: PathBuf },
     Job { #[arg(long)] job_dir: PathBuf },
     ListEffects,
@@ -34,6 +42,7 @@ fn main() -> anyhow::Result<()> {
         Command::Probe { path } => probe(path),
         Command::Validate { scene } => validate(scene),
         Command::ValidatePayload { payload, strict } => validate_payload(payload, strict),
+        Command::ImportPayload { payload, out, diagnostics } => import_payload(payload, out, diagnostics),
         Command::Render { scene, out } => render(scene, out),
         Command::Job { job_dir } => {
             let scene = job_dir.join("scene.json");
@@ -86,6 +95,29 @@ fn validate_payload(payload_path: PathBuf, strict: bool) -> anyhow::Result<()> {
     if !report.ok {
         anyhow::bail!("payload validation failed: {}", payload_path.display());
     }
+    Ok(())
+}
+
+fn import_payload(payload_path: PathBuf, out: PathBuf, diagnostics: Option<PathBuf>) -> anyhow::Result<()> {
+    let payload = ae_bridge::load_payload(&payload_path)?;
+    let result = ae_bridge::import_payload_to_scene(&payload)?;
+
+    if let Some(parent) = out.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    std::fs::write(&out, serde_json::to_string_pretty(&result.scene)?)?;
+
+    if let Some(path) = diagnostics {
+        if let Some(parent) = path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::write(&path, serde_json::to_string_pretty(&result.diagnostics)?)?;
+        println!("import.diagnostics={}", path.display());
+    } else {
+        println!("{}", serde_json::to_string_pretty(&result.diagnostics)?);
+    }
+
+    println!("import.done payload={} out={}", payload_path.display(), out.display());
     Ok(())
 }
 

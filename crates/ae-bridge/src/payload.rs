@@ -1,5 +1,5 @@
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::Path;
@@ -139,6 +139,21 @@ pub struct PayloadValidationReport {
     pub errors: Vec<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PayloadImportResult {
+    pub scene: render_ir::Scene,
+    pub diagnostics: PayloadImportDiagnostics,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PayloadImportDiagnostics {
+    pub main_comp: String,
+    pub imported_layers: usize,
+    pub skipped_layers: usize,
+    pub assets: usize,
+    pub findings: Vec<CapabilityFinding>,
+}
+
 impl PayloadValidationReport {
     pub fn has_unsupported(&self) -> bool {
         self.findings
@@ -255,12 +270,172 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
     }
 }
 
+pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<PayloadImportResult> {
+    let main_comp = payload
+        .comps_spec
+        .iter()
+        .find(|comp| comp.name == payload.project_spec.main_comp_name)
+        .ok_or_else(|| anyhow::anyhow!("main comp '{}' was not found in compsSpec", payload.project_spec.main_comp_name))?;
+
+    let mut diagnostics = PayloadImportDiagnostics {
+        main_comp: main_comp.name.clone(),
+        imported_layers: 0,
+        skipped_layers: 0,
+        assets: 0,
+        findings: Vec::new(),
+    };
+
+    let mut assets = Vec::new();
+    let mut layer_items = Vec::new();
+    let mut asset_index = 0usize;
+
+    for layer in payload.footage_layers.iter().chain(payload.text_layers.iter()) {
+        let target_comp = layer_target_comp(layer).unwrap_or(&main_comp.name);
+        if target_comp != main_comp.name {
+            diagnostics.skipped_layers += 1;
+            diagnostics.findings.push(CapabilityFinding {
+                status: CapabilityStatus::Approximate,
+                feature: "import.skip_non_main_comp".to_string(),
+                layer: Some(layer.name.clone()),
+                detail: format!("layer targets comp '{target_comp}'; precomp flattening is planned later"),
+            });
+            continue;
+        }
+
+        if layer.kind == "footage" && is_audio_layer(layer) {
+            diagnostics.skipped_layers += 1;
+            diagnostics.findings.push(CapabilityFinding {
+                status: CapabilityStatus::Ignored,
+                feature: "import.skip_audio".to_string(),
+                layer: Some(layer.name.clone()),
+                detail: "audio is recognized but not part of the current render IR import".to_string(),
+            });
+            continue;
+        }
+
+        match import_layer(layer, &mut assets, &mut asset_index) {
+            Some(imported) => {
+                diagnostics.imported_layers += 1;
+                layer_items.push((layer.z_index, imported));
+            }
+            None => {
+                diagnostics.skipped_layers += 1;
+                diagnostics.findings.push(CapabilityFinding {
+                    status: CapabilityStatus::Unsupported,
+                    feature: format!("import.layer.{}", layer.kind),
+                    layer: Some(layer.name.clone()),
+                    detail: "layer type cannot be represented in render IR yet".to_string(),
+                });
+            }
+        }
+    }
+
+    layer_items.sort_by_key(|(z_index, _)| *z_index);
+    let layers = layer_items.into_iter().map(|(_, layer)| layer).collect::<Vec<_>>();
+    diagnostics.assets = assets.len();
+
+    let scene = render_ir::Scene {
+        version: "0.2-payload".to_string(),
+        composition: render_ir::Composition {
+            id: main_comp.name.clone(),
+            width: main_comp.w,
+            height: main_comp.h,
+            fps: main_comp.fps,
+            duration: main_comp.dur,
+            background: bg_color_to_rgba(main_comp.bg_color),
+        },
+        assets,
+        layers,
+    };
+
+    Ok(PayloadImportResult { scene, diagnostics })
+}
+
 fn validate_layer_timing(layer: &PayloadLayer, errors: &mut Vec<String>) {
     if layer.out_point <= layer.in_point {
         errors.push(format!(
             "layer '{}' has invalid time range {}..{}",
             layer.name, layer.in_point, layer.out_point
         ));
+    }
+}
+
+fn import_layer(
+    layer: &PayloadLayer,
+    assets: &mut Vec<render_ir::Asset>,
+    asset_index: &mut usize,
+) -> Option<render_ir::Layer> {
+    let id = layer_id(layer);
+    let start = layer.in_point;
+    let duration = layer.out_point - layer.in_point;
+    let transform = transform_of(layer);
+    let effects = effects_of(layer);
+
+    match layer.kind.as_str() {
+        "footage" => {
+            let asset_id = format!("video_{:04}", *asset_index);
+            *asset_index += 1;
+            assets.push(render_ir::Asset {
+                id: asset_id.clone(),
+                kind: render_ir::AssetKind::Video,
+                path: footage_path(layer),
+            });
+            Some(render_ir::Layer::Footage {
+                id,
+                start,
+                duration,
+                source: asset_id,
+                transform,
+                effects,
+            })
+        }
+        "text" => {
+            let text_base = &layer.text_data["text_base"];
+            Some(render_ir::Layer::Text {
+                id,
+                start,
+                duration,
+                text: layer.text.clone(),
+                font: text_base
+                    .get("font")
+                    .and_then(Value::as_str)
+                    .unwrap_or("default")
+                    .to_string(),
+                fontSize: text_base
+                    .get("fontSize")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(64.0) as f32,
+                fill: color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255]),
+                box_: None,
+                transform,
+                effects,
+            })
+        }
+        "precomp" => Some(render_ir::Layer::Precomp {
+            id,
+            start,
+            duration,
+            composition: layer
+                .text_data
+                .pointer("/precomp_source/comp_name")
+                .and_then(Value::as_str)
+                .unwrap_or(&layer.name)
+                .to_string(),
+            collapse_transformations: layer
+                .text_data
+                .pointer("/layer_meta/collapseTransformation")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            transform,
+            effects,
+        }),
+        "adjustment" => Some(render_ir::Layer::Adjustment {
+            id,
+            start,
+            duration,
+            effects,
+        }),
+        _ => None,
     }
 }
 
@@ -298,6 +473,13 @@ fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
     });
 }
 
+fn layer_target_comp(layer: &PayloadLayer) -> Option<&str> {
+    layer
+        .text_data
+        .pointer("/layer_meta/comp_name_target")
+        .and_then(Value::as_str)
+}
+
 fn is_audio_layer(layer: &PayloadLayer) -> bool {
     let audio_enabled = layer
         .text_data
@@ -316,6 +498,108 @@ fn is_audio_layer(layer: &PayloadLayer) -> bool {
 
 fn normalize_effect_name(effect_name: &str) -> &str {
     effect_name.split_once(':').map_or(effect_name, |(_, name)| name)
+}
+
+fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
+    let default = render_ir::Transform2D::default();
+    render_ir::Transform2D {
+        anchor: prop_vec2(layer, "tf_anchor").unwrap_or(default.anchor),
+        position: prop_vec2(layer, "tf_position").unwrap_or(default.position),
+        scale: prop_vec2(layer, "tf_scale").unwrap_or(default.scale),
+        rotation: prop_f32(layer, "tf_rotation").unwrap_or(default.rotation),
+        opacity: prop_f32(layer, "tf_opacity")
+            .or_else(|| prop_f32(layer, "layer_opacity"))
+            .unwrap_or(default.opacity),
+    }
+}
+
+fn effects_of(layer: &PayloadLayer) -> Vec<render_ir::EffectSpec> {
+    layer
+        .effects
+        .iter()
+        .map(|(name, params)| render_ir::EffectSpec {
+            match_name: normalize_effect_name(name).to_string(),
+            params: serde_json::to_value(params).unwrap_or_else(|_| json!({})),
+        })
+        .collect()
+}
+
+fn prop_vec2(layer: &PayloadLayer, name: &str) -> Option<[f32; 2]> {
+    let value = &layer.props.get(name)?.value;
+    let arr = value.as_array()?;
+    Some([
+        arr.first()?.as_f64()? as f32,
+        arr.get(1)?.as_f64()? as f32,
+    ])
+}
+
+fn prop_f32(layer: &PayloadLayer, name: &str) -> Option<f32> {
+    layer.props.get(name)?.value.as_f64().map(|value| value as f32)
+}
+
+fn footage_path(layer: &PayloadLayer) -> String {
+    let file_path = layer
+        .text_data
+        .pointer("/source_footage/file_path")
+        .and_then(Value::as_str)
+        .unwrap_or("");
+    if !file_path.trim().is_empty() {
+        return file_path.to_string();
+    }
+
+    let file_name = layer
+        .text_data
+        .pointer("/source_footage/file_name")
+        .and_then(Value::as_str)
+        .unwrap_or(&layer.name);
+    format!("media/video/{file_name}")
+}
+
+fn layer_id(layer: &PayloadLayer) -> String {
+    let slug = layer
+        .name
+        .chars()
+        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
+        .collect::<String>()
+        .trim_matches('_')
+        .chars()
+        .take(48)
+        .collect::<String>();
+    if slug.is_empty() {
+        format!("layer_{:04}", layer.z_index)
+    } else {
+        format!("layer_{:04}_{slug}", layer.z_index)
+    }
+}
+
+fn bg_color_to_rgba(color: Option<[f32; 3]>) -> [u8; 4] {
+    let color = color.unwrap_or([0.0, 0.0, 0.0]);
+    [
+        color_component_to_u8(color[0] as f64),
+        color_component_to_u8(color[1] as f64),
+        color_component_to_u8(color[2] as f64),
+        255,
+    ]
+}
+
+fn color_value_to_rgba(value: Option<&Value>, fallback: [u8; 4]) -> [u8; 4] {
+    let Some(arr) = value.and_then(Value::as_array) else {
+        return fallback;
+    };
+    if arr.len() < 3 {
+        return fallback;
+    }
+    [
+        arr.first().and_then(Value::as_f64).map(color_component_to_u8).unwrap_or(fallback[0]),
+        arr.get(1).and_then(Value::as_f64).map(color_component_to_u8).unwrap_or(fallback[1]),
+        arr.get(2).and_then(Value::as_f64).map(color_component_to_u8).unwrap_or(fallback[2]),
+        arr.get(3).and_then(Value::as_f64).map(color_component_to_u8).unwrap_or(fallback[3]),
+    ]
+}
+
+fn color_component_to_u8(value: f64) -> u8 {
+    let scaled = if value <= 1.0 { value * 255.0 } else { value };
+    scaled.round().clamp(0.0, 255.0) as u8
 }
 
 fn effect_status(effect_name: &str) -> CapabilityStatus {
