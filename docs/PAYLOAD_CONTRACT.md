@@ -165,9 +165,48 @@ The importer writes `render-ir` `scene.json`.
 Current import rules:
 
 - imports video `footage` layers as IR footage layers;
+- stores footage `source_start` from AE `layer_meta.startTime` when present;
 - imports static `text` layers as IR text layers;
 - flattens direct text children from precomps placed in `projectSpec.mainCompName`;
 - applies parent precomp timing and static transform approximately to flattened text;
 - skips flattened precomp placeholders after their text children are imported;
 - skips audio layers with an `ignored` diagnostic;
 - skips adjustment layers, non-text nested content, and unsupported nested comps with diagnostics.
+
+## Native Job Assets
+
+The native renderer resolves media from either an extracted job folder or a job
+archive. Supported layouts:
+
+```text
+job_id/app/media/video/*.mp4
+job_id/app/media/audio/*.mp3
+app/media/video/*.mp4
+app/media/audio/*.mp3
+media/video/*.mp4
+media/audio/*.mp3
+```
+
+Use:
+
+```bash
+render-cli resolve-assets \
+  --scene jobs/example/scene.json \
+  --assets-root jobs/example/app \
+  --strict
+
+render-cli resolve-assets \
+  --scene jobs/example/scene.json \
+  --job-archive jobs/example_job_folder.tar.gz \
+  --strict
+```
+
+The command prints stable JSON with each asset's requested path, resolved path,
+probe metadata, and errors. Video rendering uses the same resolver:
+
+```bash
+render-cli render \
+  --scene jobs/example/scene.json \
+  --out jobs/example/out \
+  --job-archive jobs/example_job_folder.tar.gz
+```

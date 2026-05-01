@@ -47,6 +47,30 @@ docker run --rm \
   render --scene /work/jobs/demo_static/scene.json --out /work/jobs/demo_static/out
 ```
 
+Resolve/probe assets from an extracted job folder or tar archive:
+
+```bash
+docker run --rm \
+  -v "$PWD:/work" \
+  ae-native-renderer:dev \
+  resolve-assets \
+  --scene /work/jobs/example/scene.json \
+  --job-archive /work/jobs/example_job_folder.tar.gz \
+  --strict
+```
+
+Render a scene with footage:
+
+```bash
+docker run --rm \
+  -v "$PWD:/work" \
+  ae-native-renderer:dev \
+  render \
+  --scene /work/jobs/example/scene.json \
+  --out /work/jobs/example/out \
+  --job-archive /work/jobs/example_job_folder.tar.gz
+```
+
 Mux PNG sequence to mp4:
 
 ```bash
@@ -70,7 +94,9 @@ crates/testkit         golden frame tests and image diff helpers
 
 ## Current status
 
-This is an early scaffold with a working Docker build and static PNG sequence demo.
+This is an early native-renderer slice with a working Docker build, payload import,
+asset resolution/probing, FFmpeg frame decode, and PNG sequence rendering for static
+footage timelines.
 The active implementation plan is `ROADMAP_V2.md`: consume generated payload JSON
 directly, translate it into render IR, then build native footage + text rendering
 before adding transforms, keyframes, effects, text animators, and expressions.

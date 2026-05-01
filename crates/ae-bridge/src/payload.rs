@@ -192,29 +192,44 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
 
     for comp in &payload.comps_spec {
         if comp.w == 0 || comp.h == 0 {
-            errors.push(format!("comp '{}' has invalid dimensions {}x{}", comp.name, comp.w, comp.h));
+            errors.push(format!(
+                "comp '{}' has invalid dimensions {}x{}",
+                comp.name, comp.w, comp.h
+            ));
         }
         if comp.fps <= 0.0 {
             errors.push(format!("comp '{}' has invalid fps {}", comp.name, comp.fps));
         }
         if comp.dur <= 0.0 {
-            errors.push(format!("comp '{}' has invalid duration {}", comp.name, comp.dur));
+            errors.push(format!(
+                "comp '{}' has invalid duration {}",
+                comp.name, comp.dur
+            ));
         }
     }
 
-    for layer in payload.footage_layers.iter().chain(payload.text_layers.iter()) {
+    for layer in payload
+        .footage_layers
+        .iter()
+        .chain(payload.text_layers.iter())
+    {
         *layer_types.entry(layer.kind.clone()).or_insert(0) += 1;
         validate_layer_timing(layer, &mut errors);
         classify_layer(layer, &mut findings);
 
         for (prop_name, prop) in &layer.props {
-            if prop.expression.as_deref().is_some_and(|expr| !expr.trim().is_empty()) {
+            if prop
+                .expression
+                .as_deref()
+                .is_some_and(|expr| !expr.trim().is_empty())
+            {
                 *expressions.entry(prop_name.clone()).or_insert(0) += 1;
                 findings.push(CapabilityFinding {
                     status: CapabilityStatus::Unsupported,
                     feature: format!("expression.{prop_name}"),
                     layer: Some(layer.name.clone()),
-                    detail: "raw property expressions are not part of the MVP native path".to_string(),
+                    detail: "raw property expressions are not part of the MVP native path"
+                        .to_string(),
                 });
             }
             if !prop.keyframes.is_empty() {
@@ -275,7 +290,12 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         .comps_spec
         .iter()
         .find(|comp| comp.name == payload.project_spec.main_comp_name)
-        .ok_or_else(|| anyhow::anyhow!("main comp '{}' was not found in compsSpec", payload.project_spec.main_comp_name))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "main comp '{}' was not found in compsSpec",
+                payload.project_spec.main_comp_name
+            )
+        })?;
 
     let mut diagnostics = PayloadImportDiagnostics {
         main_comp: main_comp.name.clone(),
@@ -290,7 +310,11 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
     let mut asset_index = 0usize;
     let precomp_sources = main_precomp_sources(payload, &main_comp.name);
 
-    for layer in payload.footage_layers.iter().chain(payload.text_layers.iter()) {
+    for layer in payload
+        .footage_layers
+        .iter()
+        .chain(payload.text_layers.iter())
+    {
         let target_comp = layer_target_comp(layer).unwrap_or(&main_comp.name);
         if target_comp != main_comp.name {
             if let Some(parent) = precomp_sources.get(target_comp) {
@@ -330,13 +354,17 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
             continue;
         }
 
-        if layer.kind == "precomp" && precomp_source_name(layer).is_some_and(|name| precomp_has_text_children(payload, name)) {
+        if layer.kind == "precomp"
+            && precomp_source_name(layer)
+                .is_some_and(|name| precomp_has_text_children(payload, name))
+        {
             diagnostics.skipped_layers += 1;
             diagnostics.findings.push(CapabilityFinding {
                 status: CapabilityStatus::Approximate,
                 feature: "import.skip_flattened_precomp_placeholder".to_string(),
                 layer: Some(layer.name.clone()),
-                detail: "precomp placeholder was replaced by flattened child text layers".to_string(),
+                detail: "precomp placeholder was replaced by flattened child text layers"
+                    .to_string(),
             });
             continue;
         }
@@ -347,7 +375,8 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
                 status: CapabilityStatus::Ignored,
                 feature: "import.skip_audio".to_string(),
                 layer: Some(layer.name.clone()),
-                detail: "audio is recognized but not part of the current render IR import".to_string(),
+                detail: "audio is recognized but not part of the current render IR import"
+                    .to_string(),
             });
             continue;
         }
@@ -370,7 +399,10 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
     }
 
     layer_items.sort_by_key(|(sort_key, _)| *sort_key);
-    let layers = layer_items.into_iter().map(|(_, layer)| layer).collect::<Vec<_>>();
+    let layers = layer_items
+        .into_iter()
+        .map(|(_, layer)| layer)
+        .collect::<Vec<_>>();
     diagnostics.assets = assets.len();
 
     let scene = render_ir::Scene {
@@ -390,7 +422,10 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
     Ok(PayloadImportResult { scene, diagnostics })
 }
 
-fn main_precomp_sources<'a>(payload: &'a GeneratedPayload, main_comp_name: &str) -> BTreeMap<String, &'a PayloadLayer> {
+fn main_precomp_sources<'a>(
+    payload: &'a GeneratedPayload,
+    main_comp_name: &str,
+) -> BTreeMap<String, &'a PayloadLayer> {
     payload
         .footage_layers
         .iter()
@@ -402,7 +437,10 @@ fn main_precomp_sources<'a>(payload: &'a GeneratedPayload, main_comp_name: &str)
 }
 
 fn precomp_has_text_children(payload: &GeneratedPayload, comp_name: &str) -> bool {
-    payload.text_layers.iter().any(|layer| layer.kind == "text" && layer_target_comp(layer) == Some(comp_name))
+    payload
+        .text_layers
+        .iter()
+        .any(|layer| layer.kind == "text" && layer_target_comp(layer) == Some(comp_name))
 }
 
 fn import_flattened_text_layer(
@@ -418,7 +456,13 @@ fn import_flattened_text_layer(
 
     let child_transform = transform_of(layer);
     let transform = compose_precomp_transform(transform_of(parent), child_transform);
-    Some(import_text_layer(layer, start, end - start, transform, main_comp))
+    Some(import_text_layer(
+        layer,
+        start,
+        end - start,
+        transform,
+        main_comp,
+    ))
 }
 
 fn validate_layer_timing(layer: &PayloadLayer, errors: &mut Vec<String>) {
@@ -455,6 +499,7 @@ fn import_layer(
                 start,
                 duration,
                 source: asset_id,
+                source_start: footage_source_start(layer),
                 transform,
                 effects,
             })
@@ -472,7 +517,13 @@ fn import_layer(
                 display_start_time: None,
                 bg_color: None,
             };
-            Some(import_text_layer(layer, start, duration, transform, &fallback_comp))
+            Some(import_text_layer(
+                layer,
+                start,
+                duration,
+                transform,
+                &fallback_comp,
+            ))
         }
         "precomp" => Some(render_ir::Layer::Precomp {
             id,
@@ -538,7 +589,10 @@ fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
             CapabilityStatus::Ignored,
             "audio layers are recognized but ignored until audio mux support",
         ),
-        "footage" => (CapabilityStatus::Supported, "video footage layers are part of the first native render slice"),
+        "footage" => (
+            CapabilityStatus::Supported,
+            "video footage layers are part of the first native render slice",
+        ),
         "text" => (
             CapabilityStatus::Supported,
             "static text layers are part of the first native render slice",
@@ -605,7 +659,9 @@ fn flattened_sort_key(parent: &PayloadLayer, child: &PayloadLayer) -> i64 {
 }
 
 fn normalize_effect_name(effect_name: &str) -> &str {
-    effect_name.split_once(':').map_or(effect_name, |(_, name)| name)
+    effect_name
+        .split_once(':')
+        .map_or(effect_name, |(_, name)| name)
 }
 
 fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
@@ -621,7 +677,10 @@ fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
     }
 }
 
-fn compose_precomp_transform(parent: render_ir::Transform2D, child: render_ir::Transform2D) -> render_ir::Transform2D {
+fn compose_precomp_transform(
+    parent: render_ir::Transform2D,
+    child: render_ir::Transform2D,
+) -> render_ir::Transform2D {
     let sx = parent.scale[0] / 100.0;
     let sy = parent.scale[1] / 100.0;
     render_ir::Transform2D {
@@ -650,14 +709,16 @@ fn effects_of(layer: &PayloadLayer) -> Vec<render_ir::EffectSpec> {
 fn prop_vec2(layer: &PayloadLayer, name: &str) -> Option<[f32; 2]> {
     let value = &layer.props.get(name)?.value;
     let arr = value.as_array()?;
-    Some([
-        arr.first()?.as_f64()? as f32,
-        arr.get(1)?.as_f64()? as f32,
-    ])
+    Some([arr.first()?.as_f64()? as f32, arr.get(1)?.as_f64()? as f32])
 }
 
 fn prop_f32(layer: &PayloadLayer, name: &str) -> Option<f32> {
-    layer.props.get(name)?.value.as_f64().map(|value| value as f32)
+    layer
+        .props
+        .get(name)?
+        .value
+        .as_f64()
+        .map(|value| value as f32)
 }
 
 fn footage_path(layer: &PayloadLayer) -> String {
@@ -678,11 +739,26 @@ fn footage_path(layer: &PayloadLayer) -> String {
     format!("media/video/{file_name}")
 }
 
+fn footage_source_start(layer: &PayloadLayer) -> f64 {
+    let layer_start_time = layer
+        .text_data
+        .pointer("/layer_meta/startTime")
+        .and_then(Value::as_f64)
+        .unwrap_or(layer.in_point);
+    (layer.in_point - layer_start_time).max(0.0)
+}
+
 fn layer_id(layer: &PayloadLayer) -> String {
     let slug = layer
         .name
         .chars()
-        .map(|ch| if ch.is_ascii_alphanumeric() { ch.to_ascii_lowercase() } else { '_' })
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() {
+                ch.to_ascii_lowercase()
+            } else {
+                '_'
+            }
+        })
         .collect::<String>()
         .trim_matches('_')
         .chars()
@@ -713,10 +789,22 @@ fn color_value_to_rgba(value: Option<&Value>, fallback: [u8; 4]) -> [u8; 4] {
         return fallback;
     }
     [
-        arr.first().and_then(Value::as_f64).map(color_component_to_u8).unwrap_or(fallback[0]),
-        arr.get(1).and_then(Value::as_f64).map(color_component_to_u8).unwrap_or(fallback[1]),
-        arr.get(2).and_then(Value::as_f64).map(color_component_to_u8).unwrap_or(fallback[2]),
-        arr.get(3).and_then(Value::as_f64).map(color_component_to_u8).unwrap_or(fallback[3]),
+        arr.first()
+            .and_then(Value::as_f64)
+            .map(color_component_to_u8)
+            .unwrap_or(fallback[0]),
+        arr.get(1)
+            .and_then(Value::as_f64)
+            .map(color_component_to_u8)
+            .unwrap_or(fallback[1]),
+        arr.get(2)
+            .and_then(Value::as_f64)
+            .map(color_component_to_u8)
+            .unwrap_or(fallback[2]),
+        arr.get(3)
+            .and_then(Value::as_f64)
+            .map(color_component_to_u8)
+            .unwrap_or(fallback[3]),
     ]
 }
 
@@ -725,7 +813,11 @@ fn color_component_to_u8(value: f64) -> u8 {
     scaled.round().clamp(0.0, 255.0) as u8
 }
 
-fn text_box_for(transform: &render_ir::Transform2D, font_size: f32, comp: &CompSpec) -> render_ir::Rect {
+fn text_box_for(
+    transform: &render_ir::Transform2D,
+    font_size: f32,
+    comp: &CompSpec,
+) -> render_ir::Rect {
     let height = (font_size * 2.0).max(1.0);
     render_ir::Rect {
         x: 0.0,

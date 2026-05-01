@@ -208,18 +208,22 @@ Convert generated payload JSON into the renderer's portable `scene.json`.
 ### Goal
 Resolve local job assets and read video/audio metadata.
 
+### Status
+Implemented with an FFprobe-backed probe and a job-folder/tar resolver. `render-core`
+still receives media through a trait and has no direct backend dependency.
+
 ### Checklist
-- [ ] Define job input layout for native renderer.
-- [ ] Resolve payload `file_name` to local `media/video` and `media/audio`.
-- [ ] Implement real media probe using FFmpeg or GStreamer.
-- [ ] Return width, height, fps, duration, pixel format.
-- [ ] Return audio sample rate, channels, duration.
-- [ ] Fail clearly on missing assets in strict mode.
+- [x] Define job input layout for native renderer.
+- [x] Resolve payload `file_name` to local `media/video` and `media/audio`.
+- [x] Implement real media probe using FFmpeg or GStreamer.
+- [x] Return width, height, fps, duration, pixel format.
+- [x] Return audio sample rate, channels, duration.
+- [x] Fail clearly on missing assets in strict mode.
 
 ### Acceptance Criteria
-- [ ] Each example archive's local videos can be probed.
-- [ ] Probe result is stable JSON.
-- [ ] `render-core` still has no direct media backend dependency.
+- [x] Each example archive's local videos can be probed.
+- [x] Probe result is stable JSON.
+- [x] `render-core` still has no direct media backend dependency.
 
 ### Non-goals
 - Frame decoding.
@@ -233,17 +237,20 @@ Resolve local job assets and read video/audio metadata.
 ### Goal
 Decode requested footage frames through a media backend abstraction.
 
+### Status
+Implemented with a local `FfmpegVideoSource` and `render-cli dump-frames`.
+
 ### Checklist
-- [ ] Implement `VideoSource` for local MP4 files.
-- [ ] Implement `frame_at(time)` with nearest-frame semantics.
-- [ ] Convert decoded frames to RGBA8.
-- [ ] Add `render-cli dump-frames`.
-- [ ] Cache decoded/probed sources per render job.
+- [x] Implement `VideoSource` for local MP4 files.
+- [x] Implement `frame_at(time)` with nearest-frame semantics.
+- [x] Convert decoded frames to RGBA8.
+- [x] Add `render-cli dump-frames`.
+- [x] Cache decoded/probed sources per render job.
 
 ### Acceptance Criteria
-- [ ] First N frames of a local example video dump as PNG.
-- [ ] Frame dimensions match probe metadata.
-- [ ] Decode errors are actionable.
+- [x] First N frames of a local example video dump as PNG.
+- [x] Frame dimensions match probe metadata.
+- [x] Decode errors are actionable.
 
 ### Non-goals
 - Perfect VFR support.
@@ -257,17 +264,21 @@ Decode requested footage frames through a media backend abstraction.
 ### Goal
 Render the first native template with only video clips and background.
 
+### Status
+Implemented for static footage layers using activity windows, `source_start`,
+z-order, cover-fit resizing, and numbered PNG output.
+
 ### Checklist
-- [ ] Map layer `in_point` / `out_point` to composition activity.
-- [ ] Map source start time from layer metadata where available.
-- [ ] Composite active footage layers in `z_index` order.
-- [ ] Add source canvas sizing and crop/fit behavior.
-- [ ] Add deterministic output manifest.
+- [x] Map layer `in_point` / `out_point` to composition activity.
+- [x] Map source start time from layer metadata where available.
+- [x] Composite active footage layers in `z_index` order.
+- [x] Add source canvas sizing and crop/fit behavior.
+- [x] Add deterministic output manifest.
 
 ### Acceptance Criteria
-- [ ] A stripped payload with only footage renders end-to-end.
-- [ ] Clips appear at the expected timeline positions.
-- [ ] Output is a numbered PNG sequence.
+- [x] A stripped payload with only footage renders end-to-end.
+- [x] Clips appear at the expected timeline positions.
+- [x] Output is a numbered PNG sequence.
 
 ### Non-goals
 - Text.

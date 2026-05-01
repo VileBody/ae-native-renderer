@@ -100,6 +100,8 @@ pub enum Layer {
         duration: f64,
         source: String,
         #[serde(default)]
+        source_start: f64,
+        #[serde(default)]
         transform: Transform2D,
         #[serde(default)]
         effects: Vec<EffectSpec>,

@@ -3,7 +3,10 @@ use std::process::Command;
 pub fn doctor() -> anyhow::Result<Vec<String>> {
     let required = ["decodebin", "appsink", "appsrc", "videoconvert"];
     let mut lines = Vec::new();
-    lines.push(format!("gstreamer.tools.gst-inspect={}", command_available("gst-inspect-1.0")));
+    lines.push(format!(
+        "gstreamer.tools.gst-inspect={}",
+        command_available("gst-inspect-1.0")
+    ));
     for name in required {
         let ok = Command::new("gst-inspect-1.0")
             .arg(name)
@@ -13,6 +16,7 @@ pub fn doctor() -> anyhow::Result<Vec<String>> {
         lines.push(format!("gstreamer.plugin.{name}={ok}"));
     }
     lines.push(format!("ffmpeg.binary={}", command_available("ffmpeg")));
+    lines.push(format!("ffprobe.binary={}", command_available("ffprobe")));
     Ok(lines)
 }
 

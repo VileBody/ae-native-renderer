@@ -19,6 +19,14 @@ The first IR is deliberately small. It represents a composition, assets, and a l
   ],
   "layers": [
     {
+      "id": "clip_1",
+      "type": "footage",
+      "start": 0,
+      "duration": 2.5,
+      "source": "video_1",
+      "source_start": 4.2
+    },
+    {
       "id": "title",
       "type": "text",
       "start": 0,
@@ -46,6 +54,9 @@ The first IR is deliberately small. It represents a composition, assets, and a l
 - `text`
 - `precomp`
 - `adjustment`
+
+For `footage` layers, `source_start` is optional and defaults to `0`. It is the
+source-media time sampled at the layer's composition `start`.
 
 ## Transform convention
 
