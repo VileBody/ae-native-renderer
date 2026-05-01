@@ -1,0 +1,14 @@
+[package]
+name = "render-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+serde_json.workspace = true
+render-ir = { path = "../render-ir" }
+raster-cpu = { path = "../raster-cpu" }
+transform-math = { path = "../transform-math" }
+text-engine = { path = "../text-engine" }
+effects = { path = "../effects" }

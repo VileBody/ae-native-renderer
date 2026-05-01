@@ -1,0 +1,20 @@
+[package]
+name = "render-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[[bin]]
+name = "render-cli"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+render-ir = { path = "../render-ir" }
+render-core = { path = "../render-core" }
+media-gst = { path = "../media-gst" }
+effects = { path = "../effects" }

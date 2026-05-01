@@ -1,0 +1,60 @@
+{
+  "version": "0.1",
+  "composition": {
+    "id": "main",
+    "width": 1080,
+    "height": 1920,
+    "fps": 30.0,
+    "duration": 2.0,
+    "background": [12, 12, 16, 255]
+  },
+  "assets": [
+    {
+      "id": "demo_video",
+      "type": "video",
+      "path": "assets/demo.mp4"
+    },
+    {
+      "id": "font_montserrat_bold_italic",
+      "type": "font",
+      "path": "assets/fonts/Montserrat-BoldItalic.ttf"
+    }
+  ],
+  "layers": [
+    {
+      "id": "title",
+      "type": "text",
+      "start": 0.0,
+      "duration": 2.0,
+      "text": "AE NATIVE RENDERER",
+      "font": "font_montserrat_bold_italic",
+      "fontSize": 72.0,
+      "fill": [255, 255, 255, 255],
+      "box": { "x": 80.0, "y": 300.0, "w": 920.0, "h": 300.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [0.0, 0.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    },
+    {
+      "id": "debug_solid",
+      "type": "solid",
+      "start": 0.0,
+      "duration": 2.0,
+      "color": [80, 40, 180, 180],
+      "rect": { "x": 120.0, "y": 760.0, "w": 840.0, "h": 420.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [0.0, 0.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    }
+  ]
+}

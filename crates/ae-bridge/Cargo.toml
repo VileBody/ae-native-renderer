@@ -1,0 +1,9 @@
+[package]
+name = "ae-bridge"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+serde.workspace = true
+render-ir = { path = "../render-ir" }

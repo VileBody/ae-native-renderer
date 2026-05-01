@@ -1,0 +1,13 @@
+services:
+  renderer:
+    build: .
+    image: ae-native-renderer:dev
+    volumes:
+      - ./jobs:/work/jobs
+      - ./fixtures:/work/fixtures
+    command:
+      - render
+      - --scene
+      - /work/jobs/demo_static/scene.json
+      - --out
+      - /work/jobs/demo_static/out
