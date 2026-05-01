@@ -288,16 +288,55 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
     let mut assets = Vec::new();
     let mut layer_items = Vec::new();
     let mut asset_index = 0usize;
+    let precomp_sources = main_precomp_sources(payload, &main_comp.name);
 
     for layer in payload.footage_layers.iter().chain(payload.text_layers.iter()) {
         let target_comp = layer_target_comp(layer).unwrap_or(&main_comp.name);
         if target_comp != main_comp.name {
+            if let Some(parent) = precomp_sources.get(target_comp) {
+                if layer.kind == "text" {
+                    match import_flattened_text_layer(layer, parent, main_comp) {
+                        Some(imported) => {
+                            diagnostics.imported_layers += 1;
+                            diagnostics.findings.push(CapabilityFinding {
+                                status: CapabilityStatus::Approximate,
+                                feature: "import.flatten_text_precomp".to_string(),
+                                layer: Some(layer.name.clone()),
+                                detail: format!("flattened text layer from comp '{target_comp}' through precomp '{}'", parent.name),
+                            });
+                            layer_items.push((flattened_sort_key(parent, layer), imported));
+                        }
+                        None => {
+                            diagnostics.skipped_layers += 1;
+                            diagnostics.findings.push(CapabilityFinding {
+                                status: CapabilityStatus::Unsupported,
+                                feature: "import.skip_flattened_text".to_string(),
+                                layer: Some(layer.name.clone()),
+                                detail: "flattened text layer has no active time range after parent clipping".to_string(),
+                            });
+                        }
+                    }
+                    continue;
+                }
+            }
+
             diagnostics.skipped_layers += 1;
             diagnostics.findings.push(CapabilityFinding {
                 status: CapabilityStatus::Approximate,
                 feature: "import.skip_non_main_comp".to_string(),
                 layer: Some(layer.name.clone()),
-                detail: format!("layer targets comp '{target_comp}'; precomp flattening is planned later"),
+                detail: format!("layer targets comp '{target_comp}'; non-text or nested precomp content is not imported yet"),
+            });
+            continue;
+        }
+
+        if layer.kind == "precomp" && precomp_source_name(layer).is_some_and(|name| precomp_has_text_children(payload, name)) {
+            diagnostics.skipped_layers += 1;
+            diagnostics.findings.push(CapabilityFinding {
+                status: CapabilityStatus::Approximate,
+                feature: "import.skip_flattened_precomp_placeholder".to_string(),
+                layer: Some(layer.name.clone()),
+                detail: "precomp placeholder was replaced by flattened child text layers".to_string(),
             });
             continue;
         }
@@ -316,7 +355,7 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         match import_layer(layer, &mut assets, &mut asset_index) {
             Some(imported) => {
                 diagnostics.imported_layers += 1;
-                layer_items.push((layer.z_index, imported));
+                layer_items.push((main_sort_key(layer), imported));
             }
             None => {
                 diagnostics.skipped_layers += 1;
@@ -330,7 +369,7 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         }
     }
 
-    layer_items.sort_by_key(|(z_index, _)| *z_index);
+    layer_items.sort_by_key(|(sort_key, _)| *sort_key);
     let layers = layer_items.into_iter().map(|(_, layer)| layer).collect::<Vec<_>>();
     diagnostics.assets = assets.len();
 
@@ -349,6 +388,37 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
     };
 
     Ok(PayloadImportResult { scene, diagnostics })
+}
+
+fn main_precomp_sources<'a>(payload: &'a GeneratedPayload, main_comp_name: &str) -> BTreeMap<String, &'a PayloadLayer> {
+    payload
+        .footage_layers
+        .iter()
+        .chain(payload.text_layers.iter())
+        .filter(|layer| layer.kind == "precomp")
+        .filter(|layer| layer_target_comp(layer).unwrap_or(main_comp_name) == main_comp_name)
+        .filter_map(|layer| precomp_source_name(layer).map(|name| (name.to_string(), layer)))
+        .collect()
+}
+
+fn precomp_has_text_children(payload: &GeneratedPayload, comp_name: &str) -> bool {
+    payload.text_layers.iter().any(|layer| layer.kind == "text" && layer_target_comp(layer) == Some(comp_name))
+}
+
+fn import_flattened_text_layer(
+    layer: &PayloadLayer,
+    parent: &PayloadLayer,
+    main_comp: &CompSpec,
+) -> Option<render_ir::Layer> {
+    let start = (parent.in_point + layer.in_point).max(parent.in_point);
+    let end = (parent.in_point + layer.out_point).min(parent.out_point);
+    if end <= start {
+        return None;
+    }
+
+    let child_transform = transform_of(layer);
+    let transform = compose_precomp_transform(transform_of(parent), child_transform);
+    Some(import_text_layer(layer, start, end - start, transform, main_comp))
 }
 
 fn validate_layer_timing(layer: &PayloadLayer, errors: &mut Vec<String>) {
@@ -390,26 +460,19 @@ fn import_layer(
             })
         }
         "text" => {
-            let text_base = &layer.text_data["text_base"];
-            Some(render_ir::Layer::Text {
-                id,
-                start,
-                duration,
-                text: layer.text.clone(),
-                font: text_base
-                    .get("font")
-                    .and_then(Value::as_str)
-                    .unwrap_or("default")
-                    .to_string(),
-                fontSize: text_base
-                    .get("fontSize")
-                    .and_then(Value::as_f64)
-                    .unwrap_or(64.0) as f32,
-                fill: color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255]),
-                box_: None,
-                transform,
-                effects,
-            })
+            let fallback_comp = CompSpec {
+                name: String::new(),
+                w: 1080,
+                h: 1920,
+                fps: 30.0,
+                dur: duration,
+                pixel_aspect: None,
+                work_area_start: None,
+                work_area_duration: None,
+                display_start_time: None,
+                bg_color: None,
+            };
+            Some(import_text_layer(layer, start, duration, transform, &fallback_comp))
         }
         "precomp" => Some(render_ir::Layer::Precomp {
             id,
@@ -436,6 +499,36 @@ fn import_layer(
             effects,
         }),
         _ => None,
+    }
+}
+
+fn import_text_layer(
+    layer: &PayloadLayer,
+    start: f64,
+    duration: f64,
+    transform: render_ir::Transform2D,
+    comp: &CompSpec,
+) -> render_ir::Layer {
+    let text_base = &layer.text_data["text_base"];
+    let font_size = text_base
+        .get("fontSize")
+        .and_then(Value::as_f64)
+        .unwrap_or(64.0) as f32;
+    render_ir::Layer::Text {
+        id: layer_id(layer),
+        start,
+        duration,
+        text: layer.text.clone(),
+        font: text_base
+            .get("font")
+            .and_then(Value::as_str)
+            .unwrap_or("default")
+            .to_string(),
+        fontSize: font_size,
+        fill: color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255]),
+        box_: Some(text_box_for(&transform, font_size, comp)),
+        transform,
+        effects: effects_of(layer),
     }
 }
 
@@ -480,6 +573,13 @@ fn layer_target_comp(layer: &PayloadLayer) -> Option<&str> {
         .and_then(Value::as_str)
 }
 
+fn precomp_source_name(layer: &PayloadLayer) -> Option<&str> {
+    layer
+        .text_data
+        .pointer("/precomp_source/comp_name")
+        .and_then(Value::as_str)
+}
+
 fn is_audio_layer(layer: &PayloadLayer) -> bool {
     let audio_enabled = layer
         .text_data
@@ -496,6 +596,14 @@ fn is_audio_layer(layer: &PayloadLayer) -> bool {
     audio_enabled || file_name.ends_with(".mp3") || file_name.ends_with(".wav")
 }
 
+fn main_sort_key(layer: &PayloadLayer) -> i64 {
+    i64::from(layer.z_index) * 10_000
+}
+
+fn flattened_sort_key(parent: &PayloadLayer, child: &PayloadLayer) -> i64 {
+    main_sort_key(parent) + i64::from(child.z_index.clamp(0, 9_999))
+}
+
 fn normalize_effect_name(effect_name: &str) -> &str {
     effect_name.split_once(':').map_or(effect_name, |(_, name)| name)
 }
@@ -510,6 +618,21 @@ fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
         opacity: prop_f32(layer, "tf_opacity")
             .or_else(|| prop_f32(layer, "layer_opacity"))
             .unwrap_or(default.opacity),
+    }
+}
+
+fn compose_precomp_transform(parent: render_ir::Transform2D, child: render_ir::Transform2D) -> render_ir::Transform2D {
+    let sx = parent.scale[0] / 100.0;
+    let sy = parent.scale[1] / 100.0;
+    render_ir::Transform2D {
+        anchor: child.anchor,
+        position: [
+            parent.position[0] + (child.position[0] - parent.anchor[0]) * sx,
+            parent.position[1] + (child.position[1] - parent.anchor[1]) * sy,
+        ],
+        scale: [child.scale[0] * sx, child.scale[1] * sy],
+        rotation: parent.rotation + child.rotation,
+        opacity: parent.opacity * child.opacity / 100.0,
     }
 }
 
@@ -600,6 +723,16 @@ fn color_value_to_rgba(value: Option<&Value>, fallback: [u8; 4]) -> [u8; 4] {
 fn color_component_to_u8(value: f64) -> u8 {
     let scaled = if value <= 1.0 { value * 255.0 } else { value };
     scaled.round().clamp(0.0, 255.0) as u8
+}
+
+fn text_box_for(transform: &render_ir::Transform2D, font_size: f32, comp: &CompSpec) -> render_ir::Rect {
+    let height = (font_size * 2.0).max(1.0);
+    render_ir::Rect {
+        x: 0.0,
+        y: (transform.position[1] - height / 2.0).clamp(0.0, comp.h.saturating_sub(1) as f32),
+        w: comp.w as f32,
+        h: height,
+    }
 }
 
 fn effect_status(effect_name: &str) -> CapabilityStatus {

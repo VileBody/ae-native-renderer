@@ -164,9 +164,10 @@ The importer writes `render-ir` `scene.json`.
 
 Current import rules:
 
-- imports only layers targeting `projectSpec.mainCompName`;
 - imports video `footage` layers as IR footage layers;
 - imports static `text` layers as IR text layers;
-- imports main-comp `precomp` and `adjustment` layers as placeholders;
+- flattens direct text children from precomps placed in `projectSpec.mainCompName`;
+- applies parent precomp timing and static transform approximately to flattened text;
+- skips flattened precomp placeholders after their text children are imported;
 - skips audio layers with an `ignored` diagnostic;
-- skips non-main-comp layers until text precomp flattening is implemented.
+- skips adjustment layers, non-text nested content, and unsupported nested comps with diagnostics.

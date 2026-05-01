@@ -379,15 +379,18 @@ Support the simple animated properties already present in the payload.
 ### Goal
 Handle the common payload shape where text lives in a `Текст` precomp placed over main footage.
 
+### Status
+Implemented for direct text precomps placed in the main comp. Unsupported nested/non-text content is reported; full cycle detection remains open.
+
 ### Checklist
-- [ ] Resolve precomp layers by `precomp_source.comp_name`.
-- [ ] Flatten simple text precomp layers into the main render stack.
-- [ ] Apply parent precomp transform after child transform where needed.
-- [ ] Detect unsupported nested cases.
+- [x] Resolve precomp layers by `precomp_source.comp_name`.
+- [x] Flatten simple text precomp layers into the main render stack.
+- [x] Apply parent precomp transform after child transform where needed.
+- [x] Detect unsupported nested cases.
 
 ### Acceptance Criteria
-- [ ] `template_4th` and `impulse_2nd` text precomp structure maps to native layers.
-- [ ] Flattened output is deterministic.
+- [x] `template_4th` and `impulse_2nd` text precomp structure maps to native layers.
+- [x] Flattened output is deterministic.
 - [ ] Cycles and unsupported nested content fail clearly.
 
 ### Non-goals
