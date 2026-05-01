@@ -70,4 +70,9 @@ crates/testkit         golden frame tests and image diff helpers
 
 ## Current status
 
-This is R0/R1 scaffolding. It is meant to be filled milestone by milestone according to `ROADMAP.md`.
+This is an early scaffold with a working Docker build and static PNG sequence demo.
+The active implementation plan is `ROADMAP_V2.md`: consume generated payload JSON
+directly, translate it into render IR, then build native footage + text rendering
+before adding transforms, keyframes, effects, text animators, and expressions.
+
+`ROADMAP.md` remains as the broader original AE-subset contract.
