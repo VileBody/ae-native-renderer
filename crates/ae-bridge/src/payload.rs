@@ -820,8 +820,8 @@ fn text_box_for(
 ) -> render_ir::Rect {
     let height = (font_size * 2.0).max(1.0);
     render_ir::Rect {
-        x: 0.0,
-        y: (transform.position[1] - height / 2.0).clamp(0.0, comp.h.saturating_sub(1) as f32),
+        x: transform.anchor[0] - transform.position[0],
+        y: transform.anchor[1] - height / 2.0,
         w: comp.w as f32,
         h: height,
     }

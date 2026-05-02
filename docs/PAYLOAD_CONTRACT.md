@@ -167,11 +167,25 @@ Current import rules:
 - imports video `footage` layers as IR footage layers;
 - stores footage `source_start` from AE `layer_meta.startTime` when present;
 - imports static `text` layers as IR text layers;
+- stores generated text boxes in layer-local coordinates so static transforms can place them;
 - flattens direct text children from precomps placed in `projectSpec.mainCompName`;
 - applies parent precomp timing and static transform approximately to flattened text;
 - skips flattened precomp placeholders after their text children are imported;
 - skips audio layers with an `ignored` diagnostic;
 - skips adjustment layers, non-text nested content, and unsupported nested comps with diagnostics.
+
+## Text Rendering
+
+Native text rendering uses system fonts through fontconfig when available and falls
+back to common platform fonts such as DejaVu Sans. The v0 renderer supports:
+
+- readable Latin and Cyrillic glyph rasterization;
+- fill color and layer opacity;
+- multi-line text;
+- centered alignment for the subtitle boxes used by the current examples.
+
+AE-perfect shaping, per-character styling, stroke, shadow, and text animators remain
+later roadmap items.
 
 ## Native Job Assets
 

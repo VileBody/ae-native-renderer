@@ -95,10 +95,10 @@ crates/testkit         golden frame tests and image diff helpers
 ## Current status
 
 This is an early native-renderer slice with a working Docker build, payload import,
-asset resolution/probing, FFmpeg frame decode, and PNG sequence rendering for static
-footage timelines.
+asset resolution/probing, FFmpeg frame decode, static footage timelines, readable
+text rendering, and basic 2D layer transforms.
 The active implementation plan is `ROADMAP_V2.md`: consume generated payload JSON
-directly, translate it into render IR, then build native footage + text rendering
-before adding transforms, keyframes, effects, text animators, and expressions.
+directly, translate it into render IR, then build native footage, text, and static
+transform rendering before adding keyframes, effects, text animators, and expressions.
 
 `ROADMAP.md` remains as the broader original AE-subset contract.

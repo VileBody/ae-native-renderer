@@ -58,6 +58,10 @@ The first IR is deliberately small. It represents a composition, assets, and a l
 For `footage` layers, `source_start` is optional and defaults to `0`. It is the
 source-media time sampled at the layer's composition `start`.
 
+For `text` layers, `box` is interpreted in layer-local coordinates before
+`transform` is applied. Imported subtitle payloads use this to center a full-width
+text box around the AE layer position.
+
 ## Transform convention
 
 Use column-vector math:

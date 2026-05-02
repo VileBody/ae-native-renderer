@@ -292,18 +292,23 @@ z-order, cover-fit resizing, and numbered PNG output.
 ### Goal
 Render simple text layers above footage.
 
+### Status
+Implemented with `fontdue` rasterization and fontconfig/system-font fallback. This is
+not AE typography parity, but it renders readable Latin/Cyrillic static text over
+footage.
+
 ### Checklist
-- [ ] Load font files by payload font name or configured mapping.
-- [ ] Use a real font rasterization backend.
-- [ ] Support fill color and opacity.
-- [ ] Support multi-line text.
-- [ ] Support basic alignment used by examples.
-- [ ] Ignore stroke/shadow/animator in permissive mode with diagnostics.
+- [x] Load font files by payload font name or configured mapping.
+- [x] Use a real font rasterization backend.
+- [x] Support fill color and opacity.
+- [x] Support multi-line text.
+- [x] Support basic alignment used by examples.
+- [x] Ignore stroke/shadow/animator in permissive mode with diagnostics.
 
 ### Acceptance Criteria
-- [ ] Text appears over footage in native output.
-- [ ] Cyrillic text renders correctly for example payloads.
-- [ ] Missing fonts fail clearly or use a configured fallback.
+- [x] Text appears over footage in native output.
+- [x] Cyrillic text renders correctly for example payloads.
+- [x] Missing fonts fail clearly or use a configured fallback.
 
 ### Non-goals
 - AE-perfect typography.
@@ -317,18 +322,22 @@ Render simple text layers above footage.
 ### Goal
 Apply anchor, position, scale, rotation, and opacity to footage and text layers.
 
+### Status
+Implemented with inverse nearest-neighbor sampling for static layer transforms.
+Bilinear sampling and focused matrix tests remain open.
+
 ### Checklist
-- [ ] Use transform matrix from `transform-math`.
-- [ ] Implement transformed sampling for footage.
-- [ ] Implement transformed rendering for text layer canvas.
-- [ ] Support nearest-neighbor first.
+- [x] Use transform matrix from `transform-math`.
+- [x] Implement transformed sampling for footage.
+- [x] Implement transformed rendering for text layer canvas.
+- [x] Support nearest-neighbor first.
 - [ ] Add bilinear sampling after correctness.
 - [ ] Add focused tests for anchor/position/scale/rotation.
 
 ### Acceptance Criteria
-- [ ] Example footage fills the 1080x1960 frame according to payload scale/anchor.
-- [ ] Text position matches payload within an acceptable v0 tolerance.
-- [ ] Opacity affects final output.
+- [x] Example footage fills the 1080x1960 frame according to payload scale/anchor.
+- [x] Text position matches payload within an acceptable v0 tolerance.
+- [x] Opacity affects final output.
 
 ### Non-goals
 - 3D transforms.

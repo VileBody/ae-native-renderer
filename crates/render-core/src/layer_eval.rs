@@ -1,7 +1,8 @@
 use effects::{EffectContext, EffectRegistry};
 use raster_cpu::{composite_normal, Canvas};
-use render_ir::{EffectSpec, Layer, Scene};
-use text_engine::{layout_text_stub, rasterize_text_debug, TextLayoutRequest};
+use render_ir::{EffectSpec, Layer, Rect, Scene};
+use text_engine::{rasterize_text, TextLayoutRequest};
+use transform_math::{Transform2D, Vec2};
 
 pub trait FootageProvider {
     fn frame_at(&mut self, source: &str, time: f64) -> anyhow::Result<Option<Canvas>>;
@@ -69,18 +70,25 @@ fn render_layer_stub(
 ) -> anyhow::Result<Canvas> {
     let comp = &scene.composition;
     let mut canvas = match layer {
-        Layer::Solid { color, rect, .. } => {
-            let mut c = Canvas::transparent(comp.width, comp.height);
-            let x0 = rect.x.max(0.0) as u32;
-            let y0 = rect.y.max(0.0) as u32;
-            let x1 = (rect.x + rect.w).max(0.0) as u32;
-            let y1 = (rect.y + rect.h).max(0.0) as u32;
-            for y in y0..y1.min(comp.height) {
-                for x in x0..x1.min(comp.width) {
+        Layer::Solid {
+            color,
+            rect,
+            transform,
+            ..
+        } => {
+            let mut c = Canvas::transparent(canvas_dim(rect.w), canvas_dim(rect.h));
+            for y in 0..c.height {
+                for x in 0..c.width {
                     c.set_pixel(x, y, *color);
                 }
             }
-            c
+            transform_canvas(
+                &c,
+                comp.width,
+                comp.height,
+                transform,
+                [rect.x, rect.y],
+            )
         }
         Layer::Text {
             text,
@@ -88,26 +96,41 @@ fn render_layer_stub(
             fontSize,
             fill,
             box_,
+            transform,
             ..
         } => {
-            let box_rect = box_.as_ref().map(|r| [r.x, r.y, r.w, r.h]);
-            let layout = layout_text_stub(&TextLayoutRequest {
+            let rect = box_.clone().unwrap_or(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: comp.width as f32,
+                h: comp.height as f32,
+            });
+            let local_width = canvas_dim(rect.w);
+            let local_height = canvas_dim(rect.h);
+            let text_canvas = rasterize_text(&TextLayoutRequest {
                 text: text.clone(),
                 font_id: font.clone(),
                 font_size: *fontSize,
-                box_rect,
-            });
-            rasterize_text_debug(&layout, comp.width, comp.height, *fill)
+                box_rect: Some([0.0, 0.0, local_width as f32, local_height as f32]),
+            }, local_width, local_height, *fill)?;
+            transform_canvas(
+                &text_canvas,
+                comp.width,
+                comp.height,
+                transform,
+                [rect.x, rect.y],
+            )
         }
         Layer::Footage {
             start,
             source,
             source_start,
+            transform,
             ..
         } => {
             let source_time = (*source_start + (time - *start)).max(0.0);
             match footage.frame_at(source, source_time)? {
-                Some(frame) => cover_canvas(&frame, comp.width, comp.height),
+                Some(frame) => transform_canvas(&frame, comp.width, comp.height, transform, [0.0, 0.0]),
                 None => checkerboard_canvas(comp.width, comp.height),
             }
         }
@@ -144,30 +167,45 @@ fn checkerboard_canvas(width: u32, height: u32) -> Canvas {
     c
 }
 
-fn cover_canvas(src: &Canvas, width: u32, height: u32) -> Canvas {
-    if src.width == width && src.height == height {
-        return src.clone();
-    }
-
-    let scale_x = width as f32 / src.width.max(1) as f32;
-    let scale_y = height as f32 / src.height.max(1) as f32;
-    let scale = scale_x.max(scale_y);
-    let scaled_w = src.width as f32 * scale;
-    let scaled_h = src.height as f32 * scale;
-    let offset_x = (width as f32 - scaled_w) * 0.5;
-    let offset_y = (height as f32 - scaled_h) * 0.5;
+fn transform_canvas(
+    src: &Canvas,
+    width: u32,
+    height: u32,
+    transform: &render_ir::Transform2D,
+    local_origin: [f32; 2],
+) -> Canvas {
+    let Some(inverse) = transform_to_matrix(transform).matrix().inverse() else {
+        return Canvas::transparent(width, height);
+    };
 
     let mut dst = Canvas::transparent(width, height);
     for y in 0..height {
         for x in 0..width {
-            let sx = ((x as f32 - offset_x) / scale)
-                .round()
-                .clamp(0.0, src.width.saturating_sub(1) as f32) as u32;
-            let sy = ((y as f32 - offset_y) / scale)
-                .round()
-                .clamp(0.0, src.height.saturating_sub(1) as f32) as u32;
-            dst.set_pixel(x, y, src.pixel(sx, sy));
+            let local = inverse.transform_point(Vec2::new(x as f32, y as f32));
+            let sx = (local.x - local_origin[0]).round() as i32;
+            let sy = (local.y - local_origin[1]).round() as i32;
+            if sx < 0 || sy < 0 || sx >= src.width as i32 || sy >= src.height as i32 {
+                continue;
+            }
+            let pixel = src.pixel(sx as u32, sy as u32);
+            if pixel[3] > 0 {
+                dst.set_pixel(x, y, pixel);
+            }
         }
     }
     dst
+}
+
+fn transform_to_matrix(transform: &render_ir::Transform2D) -> Transform2D {
+    Transform2D {
+        anchor: Vec2::from(transform.anchor),
+        position: Vec2::from(transform.position),
+        scale_percent: Vec2::from(transform.scale),
+        rotation_deg: transform.rotation,
+        opacity_percent: transform.opacity,
+    }
+}
+
+fn canvas_dim(value: f32) -> u32 {
+    value.ceil().max(1.0).min(u32::MAX as f32) as u32
 }

@@ -37,6 +37,37 @@ impl Mat3 {
         Self { m: out }
     }
 
+    pub fn inverse(self) -> Option<Self> {
+        let m = self.m;
+        let det = m[0][0] * (m[1][1] * m[2][2] - m[1][2] * m[2][1])
+            - m[0][1] * (m[1][0] * m[2][2] - m[1][2] * m[2][0])
+            + m[0][2] * (m[1][0] * m[2][1] - m[1][1] * m[2][0]);
+        if det.abs() < f32::EPSILON {
+            return None;
+        }
+
+        let inv_det = 1.0 / det;
+        Some(Self {
+            m: [
+                [
+                    (m[1][1] * m[2][2] - m[1][2] * m[2][1]) * inv_det,
+                    (m[0][2] * m[2][1] - m[0][1] * m[2][2]) * inv_det,
+                    (m[0][1] * m[1][2] - m[0][2] * m[1][1]) * inv_det,
+                ],
+                [
+                    (m[1][2] * m[2][0] - m[1][0] * m[2][2]) * inv_det,
+                    (m[0][0] * m[2][2] - m[0][2] * m[2][0]) * inv_det,
+                    (m[0][2] * m[1][0] - m[0][0] * m[1][2]) * inv_det,
+                ],
+                [
+                    (m[1][0] * m[2][1] - m[1][1] * m[2][0]) * inv_det,
+                    (m[0][1] * m[2][0] - m[0][0] * m[2][1]) * inv_det,
+                    (m[0][0] * m[1][1] - m[0][1] * m[1][0]) * inv_det,
+                ],
+            ],
+        })
+    }
+
     pub fn transform_point(self, p: Vec2) -> Vec2 {
         Vec2 {
             x: self.m[0][0] * p.x + self.m[0][1] * p.y + self.m[0][2],

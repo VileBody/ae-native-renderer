@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+fontdue.workspace = true
 serde.workspace = true
 transform-math = { path = "../transform-math" }
 raster-cpu = { path = "../raster-cpu" }
