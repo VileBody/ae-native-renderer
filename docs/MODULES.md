@@ -30,8 +30,8 @@
 
 ## Server-only adapters
 
-- GStreamer decode/probe
-- FFmpeg mux scripts
+- GStreamer-first decode/probe through appsink/appsrc pipelines
+- FFmpeg/libav fallback and CLI debug/mux tooling
 
 ## Future mobile adapters
 

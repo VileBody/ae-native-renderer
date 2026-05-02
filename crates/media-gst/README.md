@@ -1,5 +1,17 @@
 # media-gst
 
-GStreamer media backend scaffold.
+Media adapter crate for probe/decode/encode boundaries.
 
-R0/R1 only shell out to `gst-inspect-1.0` for environment validation to keep the skeleton easy to build. R2/R3 should replace the stubs with real GStreamer Rust bindings and appsink/appsrc pipelines.
+Current state:
+
+- `doctor` checks GStreamer availability through `gst-inspect-1.0`.
+- active probe/frame extraction paths use FFmpeg/ffprobe as bootstrap tooling.
+- `VideoSource` is the boundary used by the CLI today.
+
+Target state:
+
+- server decode through GStreamer Rust bindings and `appsink`.
+- server encode/mux through GStreamer `appsrc` pipelines.
+- FFmpeg remains available as fallback/debug tooling, not as renderer core.
+
+See `docs/ARCHITECTURE.md` for the full media I/O split.

@@ -24,6 +24,9 @@ scene.json                          = portable render IR
 ```
 
 GStreamer is **not** the renderer graph. It is a codec/media adapter.
+See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for the backend split:
+GStreamer-first on Linux servers, AVFoundation/VideoToolbox on Apple platforms,
+and FFmpeg kept as fallback/tooling rather than the renderer's center.
 
 ## Quick start
 
@@ -131,7 +134,7 @@ crates/render-ir       scene.json schema and parsing
 crates/render-core     composition/layer graph and frame evaluation
 crates/raster-cpu      CPU canvas, compositing, samplers
 crates/transform-math  matrices, transform conventions, interpolation helpers
-crates/media-gst       GStreamer adapter skeleton
+crates/media-gst       media adapter crate: FFmpeg-backed today, GStreamer target
 crates/text-engine     text layout/glyph skeleton
 crates/effects         effect registry and effect modules
 crates/ae-bridge       AE matchName mapping and future JSX/AEPX bridge
