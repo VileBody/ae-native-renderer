@@ -1,15 +1,15 @@
 # Effects Module Roadmap
 
-Initial first-party AE matchName stubs:
+Initial first-party AE matchName support:
 
 ```text
-ADBE Drop Shadow
-ADBE Glo2
+ADBE Drop Shadow       approximate
+ADBE Glo2              approximate
+ADBE Box Blur2         approximate
 ADBE Turbulent Displace
 ADBE Posterize Time
 ADBE Geometry2
 ADBE Minimax
-ADBE Box Blur2
 ```
 
 ## Registry rules
@@ -18,6 +18,7 @@ ADBE Box Blur2
 - known stub logs unsupported/placeholder;
 - real implementation must have a micro-scene fixture;
 - every effect must expose parameter parsing separately from pixel math.
+- v0 parameter parsing accepts the generated payload shape and direct JSON values.
 
 ## Suggested implementation order
 

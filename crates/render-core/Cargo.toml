@@ -7,6 +7,7 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 render-ir = { path = "../render-ir" }
 raster-cpu = { path = "../raster-cpu" }
 transform-math = { path = "../transform-math" }

@@ -1,0 +1,92 @@
+{
+  "version": "v0",
+  "composition": {
+    "id": "animation_effects_smoke",
+    "width": 320,
+    "height": 180,
+    "fps": 30.0,
+    "duration": 0.2,
+    "background": [0, 0, 0, 255]
+  },
+  "assets": [],
+  "layers": [
+    {
+      "type": "text",
+      "id": "text_animated_fx",
+      "start": 0.0,
+      "duration": 0.2,
+      "text": "BLAST",
+      "font": "DejaVu Sans Bold",
+      "fontSize": 48.0,
+      "fill": [245, 248, 255, 255],
+      "box": { "x": -160.0, "y": -42.0, "w": 320.0, "h": 84.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [160.0, 92.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0,
+        "animation": {
+          "position": [
+            { "time": 0.0, "value": [146.0, 92.0] },
+            { "time": 0.1667, "value": [160.0, 92.0] }
+          ],
+          "scale": [
+            { "time": 0.0, "value": [70.0, 70.0] },
+            { "time": 0.1667, "value": [100.0, 100.0] }
+          ],
+          "opacity": [
+            { "time": 0.0, "value": 35.0 },
+            { "time": 0.1667, "value": 100.0 }
+          ],
+          "reveal": [
+            { "time": 0.0, "value": 35.0 },
+            { "time": 0.1667, "value": 100.0 }
+          ]
+        }
+      },
+      "effects": [
+        {
+          "match_name": "ADBE Drop Shadow",
+          "params": {
+            "0001": [0, 0, 0, 1],
+            "0002": 220,
+            "0003": 135,
+            "0004": 6,
+            "0005": 8
+          }
+        },
+        {
+          "match_name": "ADBE Glo2",
+          "params": {
+            "0002": 80,
+            "0003": 18,
+            "0004": 0.8
+          }
+        },
+        {
+          "match_name": "ADBE Box Blur2",
+          "params": {
+            "0001": 1
+          }
+        }
+      ]
+    },
+    {
+      "type": "solid",
+      "id": "background",
+      "start": 0.0,
+      "duration": 0.2,
+      "color": [20, 24, 30, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 320.0, "h": 180.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [0.0, 0.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    }
+  ]
+}

@@ -66,6 +66,16 @@ enum Command {
         assets_root: Option<PathBuf>,
         #[arg(long)]
         job_archive: Option<PathBuf>,
+        #[arg(long)]
+        mp4: Option<PathBuf>,
+    },
+    Mux {
+        #[arg(long)]
+        frames: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long)]
+        fps: Option<f64>,
     },
     Job {
         #[arg(long)]
@@ -106,11 +116,13 @@ fn main() -> anyhow::Result<()> {
             out,
             assets_root,
             job_archive,
-        } => render(scene, out, assets_root, job_archive),
+            mp4,
+        } => render(scene, out, assets_root, job_archive, mp4),
+        Command::Mux { frames, out, fps } => mux(frames, out, fps),
         Command::Job { job_dir } => {
             let scene = job_dir.join("scene.json");
             let out = job_dir.join("out");
-            render(scene, out, Some(job_dir), None)
+            render(scene, out, Some(job_dir), None, None)
         }
         Command::ListEffects => {
             for name in effects::EffectRegistry::known_match_names() {
@@ -303,19 +315,52 @@ fn render(
     out: PathBuf,
     assets_root: Option<PathBuf>,
     job_archive: Option<PathBuf>,
+    mp4: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let scene = render_ir::load_scene(&scene_path)?;
+    let fps = scene.composition.fps;
     let strict_media = assets_root.is_some() || job_archive.is_some();
     let resolver = build_resolver(&scene_path, assets_root, job_archive)?;
     let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
     std::fs::create_dir_all(&out)?;
     render_core::render_png_sequence_with_footage(&scene, &out, &mut footage)?;
+    if let Some(mp4) = mp4 {
+        render_core::mux_png_sequence_to_mp4(out.join("frames"), fps, &mp4)?;
+        println!("render.mp4={}", mp4.display());
+    }
     println!(
         "render.done scene={} out={}",
         scene_path.display(),
         out.display()
     );
     Ok(())
+}
+
+fn mux(frames: PathBuf, out: PathBuf, fps: Option<f64>) -> anyhow::Result<()> {
+    let frames_dir = if frames.join("frames").is_dir() {
+        frames.join("frames")
+    } else {
+        frames.clone()
+    };
+    let fps = fps
+        .or_else(|| read_manifest_fps(&frames))
+        .or_else(|| frames.parent().and_then(read_manifest_fps))
+        .unwrap_or(30.0);
+    render_core::mux_png_sequence_to_mp4(&frames_dir, fps, &out)?;
+    println!(
+        "mux.done frames={} fps={} out={}",
+        frames_dir.display(),
+        fps,
+        out.display()
+    );
+    Ok(())
+}
+
+fn read_manifest_fps(path: &Path) -> Option<f64> {
+    let manifest_path = path.join("manifest.json");
+    let raw = std::fs::read_to_string(manifest_path).ok()?;
+    let value: serde_json::Value = serde_json::from_str(&raw).ok()?;
+    value.get("fps").and_then(serde_json::Value::as_f64)
 }
 
 fn build_resolver(

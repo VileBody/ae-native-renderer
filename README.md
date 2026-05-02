@@ -71,7 +71,28 @@ docker run --rm \
   --job-archive /work/jobs/example_job_folder.tar.gz
 ```
 
-Mux PNG sequence to mp4:
+Render and mux to MP4 in one pass:
+
+```bash
+docker run --rm \
+  -v "$PWD:/work" \
+  ae-native-renderer:dev \
+  render \
+  --scene /work/fixtures/animation_effects_scene.json \
+  --out /work/target/smoke/animation_effects_render \
+  --mp4 /work/target/smoke/animation_effects.mp4
+```
+
+Mux an existing PNG sequence to MP4:
+
+```bash
+docker run --rm \
+  -v "$PWD:/work" \
+  ae-native-renderer:dev \
+  mux --frames /work/jobs/demo_static/out --out /work/jobs/demo_static/out/result.mp4
+```
+
+The external helper script is still available:
 
 ```bash
 ./scripts/mux_png_to_mp4.sh jobs/demo_static/out/frames 30 jobs/demo_static/out/result.mp4
@@ -96,9 +117,10 @@ crates/testkit         golden frame tests and image diff helpers
 
 This is an early native-renderer slice with a working Docker build, payload import,
 asset resolution/probing, FFmpeg frame decode, static footage timelines, readable
-text rendering, and basic 2D layer transforms.
+text rendering, basic 2D layer transforms, PNG manifests/logs, MP4 muxing,
+hold/linear transform keyframes, and approximate Drop Shadow/Glow/Box Blur.
 The active implementation plan is `ROADMAP_V2.md`: consume generated payload JSON
-directly, translate it into render IR, then build native footage, text, and static
-transform rendering before adding keyframes, effects, text animators, and expressions.
+directly, translate it into render IR, then build native footage, text, transforms,
+keyframes, effects, text animators, and expressions incrementally.
 
 `ROADMAP.md` remains as the broader original AE-subset contract.

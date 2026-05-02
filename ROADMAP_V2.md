@@ -352,16 +352,16 @@ Bilinear sampling and focused matrix tests remain open.
 Make native output easy to inspect and compare.
 
 ### Checklist
-- [ ] Write PNG frames.
-- [ ] Write `manifest.json`.
-- [ ] Write `render-log.jsonl`.
-- [ ] Keep external FFmpeg mux script.
-- [ ] Add optional `render-cli mux` only if useful.
+- [x] Write PNG frames.
+- [x] Write `manifest.json`.
+- [x] Write `render-log.jsonl`.
+- [x] Keep external FFmpeg mux script.
+- [x] Add optional `render-cli mux` only if useful.
 
 ### Acceptance Criteria
-- [ ] A native render can be muxed into MP4.
-- [ ] Manifest includes fps, dimensions, duration, frame count, scene hash.
-- [ ] Logs include skipped/unsupported features.
+- [x] A native render can be muxed into MP4.
+- [x] Manifest includes fps, dimensions, duration, frame count, scene hash.
+- [x] Logs include skipped/unsupported features.
 
 ### Non-goals
 - Audio muxing.
@@ -375,17 +375,17 @@ Make native output easy to inspect and compare.
 Support the simple animated properties already present in the payload.
 
 ### Checklist
-- [ ] Implement `Animated<T>` hold and linear interpolation.
-- [ ] Map AE interpolation codes to v0 behavior.
-- [ ] Support animated opacity.
-- [ ] Support animated scale.
-- [ ] Support animated position.
-- [ ] Support text reveal percent as data, even before visual reveal is implemented.
+- [x] Implement `Animated<T>` hold and linear interpolation.
+- [x] Map AE interpolation codes to v0 behavior.
+- [x] Support animated opacity.
+- [x] Support animated scale.
+- [x] Support animated position.
+- [x] Support text reveal percent as data, even before visual reveal is implemented.
 
 ### Acceptance Criteria
-- [ ] `impulse_2nd` scale/opacity timing visibly changes over time.
-- [ ] Static behavior remains unchanged.
-- [ ] Unsupported Bezier/ease reports approximate mode.
+- [x] `impulse_2nd` scale/opacity timing visibly changes over time.
+- [x] Static behavior remains unchanged.
+- [x] Unsupported Bezier/ease reports approximate mode.
 
 ### Non-goals
 - AE Bezier fidelity.
@@ -430,16 +430,16 @@ Implement the effects that quickly improve visual match for easier templates.
 3. `ADBE Box Blur2`
 
 ### Checklist
-- [ ] Parse effect params from payload.
+- [x] Parse effect params from payload.
 - [ ] Implement effect parameter structs.
-- [ ] Add unit tests.
-- [ ] Add micro-scene examples.
-- [ ] Mark effects as approximate in capability reports.
+- [x] Add unit tests.
+- [x] Add micro-scene examples.
+- [x] Mark effects as approximate in capability reports.
 
 ### Acceptance Criteria
-- [ ] Drop Shadow works on text alpha.
-- [ ] Glow produces stable approximate output.
-- [ ] Box Blur works on RGBA canvas.
+- [x] Drop Shadow works on text alpha.
+- [x] Glow produces stable approximate output.
+- [x] Box Blur works on RGBA canvas.
 
 ### Non-goals
 - Pixel-perfect AE match.

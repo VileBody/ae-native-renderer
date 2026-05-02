@@ -666,6 +666,9 @@ fn normalize_effect_name(effect_name: &str) -> &str {
 
 fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
     let default = render_ir::Transform2D::default();
+    let opacity_animation = prop_f32_keyframes(layer, "tf_opacity")
+        .or_else(|| prop_f32_keyframes(layer, "layer_opacity"))
+        .unwrap_or_default();
     render_ir::Transform2D {
         anchor: prop_vec2(layer, "tf_anchor").unwrap_or(default.anchor),
         position: prop_vec2(layer, "tf_position").unwrap_or(default.position),
@@ -674,6 +677,15 @@ fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
         opacity: prop_f32(layer, "tf_opacity")
             .or_else(|| prop_f32(layer, "layer_opacity"))
             .unwrap_or(default.opacity),
+        animation: render_ir::Transform2DAnimation {
+            position: prop_vec2_keyframes(layer, "tf_position").unwrap_or_default(),
+            scale: prop_vec2_keyframes(layer, "tf_scale").unwrap_or_default(),
+            opacity: opacity_animation,
+            reveal: prop_f32_keyframes(layer, "text_reveal_percent")
+                .or_else(|| prop_f32_keyframes(layer, "text_reveal"))
+                .or_else(|| prop_f32_keyframes(layer, "reveal"))
+                .unwrap_or_default(),
+        },
     }
 }
 
@@ -683,6 +695,7 @@ fn compose_precomp_transform(
 ) -> render_ir::Transform2D {
     let sx = parent.scale[0] / 100.0;
     let sy = parent.scale[1] / 100.0;
+    let animation = compose_precomp_animation(&parent, &child, sx, sy);
     render_ir::Transform2D {
         anchor: child.anchor,
         position: [
@@ -692,6 +705,108 @@ fn compose_precomp_transform(
         scale: [child.scale[0] * sx, child.scale[1] * sy],
         rotation: parent.rotation + child.rotation,
         opacity: parent.opacity * child.opacity / 100.0,
+        animation,
+    }
+}
+
+fn compose_precomp_animation(
+    parent: &render_ir::Transform2D,
+    child: &render_ir::Transform2D,
+    sx: f32,
+    sy: f32,
+) -> render_ir::Transform2DAnimation {
+    let position = if child.animation.position.is_empty() {
+        parent
+            .animation
+            .position
+            .iter()
+            .map(|key| render_ir::Vec2Keyframe {
+                time: key.time,
+                value: [
+                    key.value[0] + (child.position[0] - parent.anchor[0]) * sx,
+                    key.value[1] + (child.position[1] - parent.anchor[1]) * sy,
+                ],
+                hold: key.hold,
+                approximate: true,
+            })
+            .collect()
+    } else {
+        child
+            .animation
+            .position
+            .iter()
+            .map(|key| render_ir::Vec2Keyframe {
+                time: key.time,
+                value: [
+                    parent.position[0] + (key.value[0] - parent.anchor[0]) * sx,
+                    parent.position[1] + (key.value[1] - parent.anchor[1]) * sy,
+                ],
+                hold: key.hold,
+                approximate: key.approximate,
+            })
+            .collect()
+    };
+
+    let scale = if child.animation.scale.is_empty() {
+        parent
+            .animation
+            .scale
+            .iter()
+            .map(|key| render_ir::Vec2Keyframe {
+                time: key.time,
+                value: [
+                    child.scale[0] * key.value[0] / 100.0,
+                    child.scale[1] * key.value[1] / 100.0,
+                ],
+                hold: key.hold,
+                approximate: true,
+            })
+            .collect()
+    } else {
+        child
+            .animation
+            .scale
+            .iter()
+            .map(|key| render_ir::Vec2Keyframe {
+                time: key.time,
+                value: [key.value[0] * sx, key.value[1] * sy],
+                hold: key.hold,
+                approximate: key.approximate,
+            })
+            .collect()
+    };
+
+    let opacity = if child.animation.opacity.is_empty() {
+        parent
+            .animation
+            .opacity
+            .iter()
+            .map(|key| render_ir::ScalarKeyframe {
+                time: key.time,
+                value: key.value * child.opacity / 100.0,
+                hold: key.hold,
+                approximate: true,
+            })
+            .collect()
+    } else {
+        child
+            .animation
+            .opacity
+            .iter()
+            .map(|key| render_ir::ScalarKeyframe {
+                time: key.time,
+                value: parent.opacity * key.value / 100.0,
+                hold: key.hold,
+                approximate: key.approximate,
+            })
+            .collect()
+    };
+
+    render_ir::Transform2DAnimation {
+        position,
+        scale,
+        opacity,
+        reveal: child.animation.reveal.clone(),
     }
 }
 
@@ -707,9 +822,7 @@ fn effects_of(layer: &PayloadLayer) -> Vec<render_ir::EffectSpec> {
 }
 
 fn prop_vec2(layer: &PayloadLayer, name: &str) -> Option<[f32; 2]> {
-    let value = &layer.props.get(name)?.value;
-    let arr = value.as_array()?;
-    Some([arr.first()?.as_f64()? as f32, arr.get(1)?.as_f64()? as f32])
+    value_to_vec2(&layer.props.get(name)?.value)
 }
 
 fn prop_f32(layer: &PayloadLayer, name: &str) -> Option<f32> {
@@ -719,6 +832,58 @@ fn prop_f32(layer: &PayloadLayer, name: &str) -> Option<f32> {
         .value
         .as_f64()
         .map(|value| value as f32)
+}
+
+fn prop_vec2_keyframes(layer: &PayloadLayer, name: &str) -> Option<Vec<render_ir::Vec2Keyframe>> {
+    let prop = layer.props.get(name)?;
+    let mut keyframes: Vec<_> = prop
+        .keyframes
+        .iter()
+        .filter_map(|key| {
+            let value = value_to_vec2(&key.v)?;
+            let (hold, approximate) = keyframe_flags(key);
+            Some(render_ir::Vec2Keyframe {
+                time: key.t,
+                value,
+                hold,
+                approximate,
+            })
+        })
+        .collect();
+    keyframes.sort_by(|a, b| a.time.total_cmp(&b.time));
+    Some(keyframes)
+}
+
+fn prop_f32_keyframes(layer: &PayloadLayer, name: &str) -> Option<Vec<render_ir::ScalarKeyframe>> {
+    let prop = layer.props.get(name)?;
+    let mut keyframes: Vec<_> = prop
+        .keyframes
+        .iter()
+        .filter_map(|key| {
+            let value = key.v.as_f64()? as f32;
+            let (hold, approximate) = keyframe_flags(key);
+            Some(render_ir::ScalarKeyframe {
+                time: key.t,
+                value,
+                hold,
+                approximate,
+            })
+        })
+        .collect();
+    keyframes.sort_by(|a, b| a.time.total_cmp(&b.time));
+    Some(keyframes)
+}
+
+fn value_to_vec2(value: &Value) -> Option<[f32; 2]> {
+    let arr = value.as_array()?;
+    Some([arr.first()?.as_f64()? as f32, arr.get(1)?.as_f64()? as f32])
+}
+
+fn keyframe_flags(key: &KeyframeSpec) -> (bool, bool) {
+    let hold = key.iit.as_deref() == Some("6614") || key.oit.as_deref() == Some("6614");
+    let bezier = key.iit.as_deref() == Some("6613") || key.oit.as_deref() == Some("6613");
+    let has_ease = !key.ease_in.is_empty() || !key.ease_out.is_empty();
+    (hold, bezier || has_ease)
 }
 
 fn footage_path(layer: &PayloadLayer) -> String {
@@ -839,9 +1004,9 @@ fn effect_status(effect_name: &str) -> CapabilityStatus {
 
 fn effect_detail(effect_name: &str) -> &'static str {
     match effect_name {
-        "ADBE Drop Shadow" => "planned as the first approximate text effect",
-        "ADBE Glo2" => "planned after Drop Shadow as an approximate effect",
-        "ADBE Box Blur2" => "planned for early blur support",
+        "ADBE Drop Shadow" => "implemented as an approximate text/canvas shadow",
+        "ADBE Glo2" => "implemented as an approximate alpha/luminance glow",
+        "ADBE Box Blur2" => "implemented as an approximate RGBA box blur",
         "ADBE Geometry2" => "planned later with adjustment layer support",
         "ADBE Posterize Time" => "planned later after keyframe/time pipeline is stable",
         "ADBE Minimax" => "planned later for complex text templates",

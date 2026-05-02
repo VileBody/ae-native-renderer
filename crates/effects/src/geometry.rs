@@ -9,7 +9,12 @@ impl Effect for Geometry2 {
         "ADBE Geometry2"
     }
 
-    fn render(&self, input: &Canvas, _ctx: &EffectContext) -> anyhow::Result<Canvas> {
+    fn render(
+        &self,
+        input: &Canvas,
+        _ctx: &EffectContext,
+        _params: &serde_json::Value,
+    ) -> anyhow::Result<Canvas> {
         // TODO: implement ADBE Geometry2 math.
         // Current behavior: pass-through stub.
         Ok(input.clone())

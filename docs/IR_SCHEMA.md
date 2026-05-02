@@ -40,7 +40,13 @@ The first IR is deliberately small. It represents a composition, assets, and a l
         "position": [100, 200],
         "scale": [100, 100],
         "rotation": 0,
-        "opacity": 100
+        "opacity": 100,
+        "animation": {
+          "position": [{ "time": 0.0, "value": [100, 200] }],
+          "scale": [{ "time": 0.0, "value": [100, 100] }],
+          "opacity": [{ "time": 0.0, "value": 100 }],
+          "reveal": [{ "time": 0.0, "value": 100 }]
+        }
       }
     }
   ]
@@ -71,3 +77,7 @@ M = T(position) · R(rotation) · S(scale) · T(-anchor)
 ```
 
 All deviations must be validated against golden frames.
+
+`transform.animation` is optional. v0 supports hold and linear keyframes for
+`position`, `scale`, `opacity`, and a simple text `reveal` percent. Imported AE
+Bezier/ease keyframes are evaluated linearly and marked as approximate.

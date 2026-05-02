@@ -57,6 +57,8 @@ pub struct Transform2D {
     pub scale: [f32; 2],
     pub rotation: f32,
     pub opacity: f32,
+    #[serde(default)]
+    pub animation: Transform2DAnimation,
 }
 
 impl Default for Transform2D {
@@ -67,8 +69,41 @@ impl Default for Transform2D {
             scale: [100.0, 100.0],
             rotation: 0.0,
             opacity: 100.0,
+            animation: Transform2DAnimation::default(),
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Transform2DAnimation {
+    #[serde(default)]
+    pub position: Vec<Vec2Keyframe>,
+    #[serde(default)]
+    pub scale: Vec<Vec2Keyframe>,
+    #[serde(default)]
+    pub opacity: Vec<ScalarKeyframe>,
+    #[serde(default)]
+    pub reveal: Vec<ScalarKeyframe>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Vec2Keyframe {
+    pub time: f64,
+    pub value: [f32; 2],
+    #[serde(default)]
+    pub hold: bool,
+    #[serde(default)]
+    pub approximate: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScalarKeyframe {
+    pub time: f64,
+    pub value: f32,
+    #[serde(default)]
+    pub hold: bool,
+    #[serde(default)]
+    pub approximate: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

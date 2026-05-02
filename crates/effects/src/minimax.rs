@@ -9,7 +9,12 @@ impl Effect for Minimax {
         "ADBE Minimax"
     }
 
-    fn render(&self, input: &Canvas, _ctx: &EffectContext) -> anyhow::Result<Canvas> {
+    fn render(
+        &self,
+        input: &Canvas,
+        _ctx: &EffectContext,
+        _params: &serde_json::Value,
+    ) -> anyhow::Result<Canvas> {
         // TODO: implement ADBE Minimax math.
         // Current behavior: pass-through stub.
         Ok(input.clone())
