@@ -157,6 +157,8 @@ Media decode now uses a persistent FFmpeg rawvideo pipe with a small per-source
 frame cache and bounded open-decoder pool instead of spawning one FFmpeg process
 per requested frame. Render logs include per-frame layer/effect profile details,
 and manifests include aggregate layer/effect timing summaries.
+Media I/O profiling and tuning knobs are documented in
+[docs/MEDIA_PROFILING.md](docs/MEDIA_PROFILING.md).
 The active implementation plan is `ROADMAP_V2.md`: consume generated payload JSON
 directly, translate it into render IR, then build native footage, text, transforms,
 keyframes, effects, text animators, and expressions incrementally.

@@ -5,6 +5,7 @@ use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 #[derive(Parser, Debug)]
 #[command(name = "render-cli")]
@@ -464,7 +465,10 @@ fn render(
     render_core::render_png_sequence_with_footage(&scene, &out, &mut footage)?;
     write_media_report(&out, &footage)?;
     if let Some(mp4) = mp4 {
-        render_core::mux_png_sequence_to_mp4(out.join("frames"), fps, &mp4)?;
+        let frames_dir = out.join("frames");
+        let mux_started = Instant::now();
+        render_core::mux_png_sequence_to_mp4(&frames_dir, fps, &mp4)?;
+        write_mux_report(&out, &frames_dir, fps, &mp4, elapsed_ms(mux_started), "render")?;
         println!("render.mp4={}", mp4.display());
     }
     println!(
@@ -485,7 +489,20 @@ fn mux(frames: PathBuf, out: PathBuf, fps: Option<f64>) -> anyhow::Result<()> {
         .or_else(|| read_manifest_fps(&frames))
         .or_else(|| frames.parent().and_then(read_manifest_fps))
         .unwrap_or(30.0);
+    let mux_started = Instant::now();
     render_core::mux_png_sequence_to_mp4(&frames_dir, fps, &out)?;
+    let report_dir = out
+        .parent()
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| PathBuf::from("."));
+    write_mux_report(
+        &report_dir,
+        &frames_dir,
+        fps,
+        &out,
+        elapsed_ms(mux_started),
+        "mux",
+    )?;
     println!(
         "mux.done frames={} fps={} out={}",
         frames_dir.display(),
@@ -1133,6 +1150,17 @@ impl CliFootageProvider {
                 totals.decoder_parks += stats.decoder_parks;
                 totals.sequential_frames_skipped += stats.sequential_frames_skipped;
                 totals.max_cache_entries = totals.max_cache_entries.max(stats.max_cache_entries);
+                totals.max_sequential_decode_gap = totals
+                    .max_sequential_decode_gap
+                    .max(stats.max_sequential_decode_gap);
+                totals.request_ms += stats.request_ms;
+                totals.cache_hit_ms += stats.cache_hit_ms;
+                totals.cache_miss_ms += stats.cache_miss_ms;
+                totals.decoder_spawn_ms += stats.decoder_spawn_ms;
+                totals.frame_read_ms += stats.frame_read_ms;
+                totals.max_request_ms = totals.max_request_ms.max(stats.max_request_ms);
+                totals.max_frame_read_ms =
+                    totals.max_frame_read_ms.max(stats.max_frame_read_ms);
                 Some(json!({
                     "asset_id": source_id.clone(),
                     "backend": source.backend_name(),
@@ -1140,7 +1168,8 @@ impl CliFootageProvider {
                         .get(&source_id)
                         .cloned()
                         .unwrap_or_else(|| source.path().display().to_string()),
-                    "stats": stats
+                    "stats": stats,
+                    "derived": media_stats_derived(&stats)
                 }))
             })
             .collect::<Vec<_>>();
@@ -1160,6 +1189,7 @@ impl CliFootageProvider {
             "missing_sources": missing_sources,
             "cache_hit_rate": hit_rate,
             "totals": totals,
+            "derived": media_stats_derived(&totals),
             "sources": sources
         })
     }
@@ -1256,4 +1286,53 @@ fn write_media_report(out: &Path, footage: &CliFootageProvider) -> anyhow::Resul
     fs::write(&path, serde_json::to_string_pretty(&footage.media_report())?)?;
     println!("render.media_report={}", path.display());
     Ok(())
+}
+
+fn write_mux_report(
+    report_dir: &Path,
+    frames_dir: &Path,
+    fps: f64,
+    out: &Path,
+    elapsed_ms: f64,
+    mode: &str,
+) -> anyhow::Result<()> {
+    fs::create_dir_all(report_dir)?;
+    let path = report_dir.join("mux-report.json");
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&json!({
+            "mode": mode,
+            "backend": "ffmpeg-cli",
+            "frames": frames_dir.display().to_string(),
+            "fps": fps,
+            "out": out.display().to_string(),
+            "elapsed_ms": elapsed_ms
+        }))?,
+    )?;
+    println!("mux.report={}", path.display());
+    Ok(())
+}
+
+fn media_stats_derived(stats: &media_gst::VideoSourceStats) -> Value {
+    json!({
+        "avg_request_ms": ratio(stats.request_ms, stats.requests),
+        "avg_cache_hit_ms": ratio(stats.cache_hit_ms, stats.cache_hits),
+        "avg_cache_miss_ms": ratio(stats.cache_miss_ms, stats.cache_misses),
+        "avg_decoder_spawn_ms": ratio(stats.decoder_spawn_ms, stats.decoder_spawns),
+        "avg_frame_read_ms": ratio(stats.frame_read_ms, stats.frames_decoded),
+        "decoded_frames_per_request": ratio(stats.frames_decoded as f64, stats.requests),
+        "skipped_frames_per_request": ratio(stats.sequential_frames_skipped as f64, stats.requests)
+    })
+}
+
+fn ratio(total: f64, count: u64) -> f64 {
+    if count == 0 {
+        0.0
+    } else {
+        total / count as f64
+    }
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
 }

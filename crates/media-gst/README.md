@@ -10,6 +10,8 @@ Current state:
   per frame.
 - `VideoSource` is the boundary used by the CLI today.
 - the CLI adds a per-source frame cache and bounds the number of open decoders.
+- media tuning knobs: `AE_RENDER_MAX_OPEN_DECODERS`,
+  `AE_RENDER_MEDIA_FRAME_CACHE`, and `AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP`.
 
 Target state:
 

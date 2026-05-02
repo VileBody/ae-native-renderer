@@ -4,6 +4,7 @@ use std::collections::{HashMap, VecDeque};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdout, Command, Stdio};
+use std::time::Instant;
 
 const DEFAULT_CACHE_CAPACITY: usize = 4;
 const MAX_SEQUENTIAL_DECODE_GAP: u64 = 180;
@@ -35,6 +36,14 @@ pub struct VideoSourceStats {
     pub decoder_parks: u64,
     pub sequential_frames_skipped: u64,
     pub max_cache_entries: usize,
+    pub max_sequential_decode_gap: u64,
+    pub request_ms: f64,
+    pub cache_hit_ms: f64,
+    pub cache_miss_ms: f64,
+    pub decoder_spawn_ms: f64,
+    pub frame_read_ms: f64,
+    pub max_request_ms: f64,
+    pub max_frame_read_ms: f64,
 }
 
 pub trait VideoSource {
@@ -51,6 +60,7 @@ pub struct GstVideoSourceTodo;
 pub struct FfmpegVideoSource {
     path: PathBuf,
     info: VideoInfo,
+    max_sequential_decode_gap: u64,
     decoder: Option<FfmpegPipe>,
     cache: FrameCache,
     stats: VideoSourceStats,
@@ -80,10 +90,12 @@ impl FfmpegVideoSource {
                 fps: media.fps.unwrap_or(30.0),
                 duration: media.duration.unwrap_or(0.0),
             },
+            max_sequential_decode_gap: media_sequential_decode_gap(),
             decoder: None,
-            cache: FrameCache::new(DEFAULT_CACHE_CAPACITY),
+            cache: FrameCache::new(media_frame_cache_capacity()),
             stats: VideoSourceStats {
-                max_cache_entries: DEFAULT_CACHE_CAPACITY,
+                max_cache_entries: media_frame_cache_capacity(),
+                max_sequential_decode_gap: media_sequential_decode_gap(),
                 ..VideoSourceStats::default()
             },
         })
@@ -130,7 +142,8 @@ impl FfmpegVideoSource {
         let restart = match self.decoder.as_ref() {
             Some(decoder) => {
                 frame_index < decoder.next_frame
-                    || frame_index.saturating_sub(decoder.next_frame) > MAX_SEQUENTIAL_DECODE_GAP
+                    || frame_index.saturating_sub(decoder.next_frame)
+                        > self.max_sequential_decode_gap
             }
             None => true,
         };
@@ -145,6 +158,7 @@ impl FfmpegVideoSource {
         self.stop_decoder();
 
         let time = self.time_for_frame_index(frame_index);
+        let spawn_started = Instant::now();
         let mut child = Command::new("ffmpeg")
             .arg("-v")
             .arg("error")
@@ -165,6 +179,7 @@ impl FfmpegVideoSource {
             .stderr(Stdio::null())
             .spawn()
             .map_err(|err| anyhow::anyhow!("failed to spawn ffmpeg decoder: {err}"))?;
+        self.stats.decoder_spawn_ms += elapsed_ms(spawn_started);
         let stdout = child
             .stdout
             .take()
@@ -186,6 +201,7 @@ impl FfmpegVideoSource {
             .ok_or_else(|| anyhow::anyhow!("ffmpeg decoder was not started"))?;
         let frame_index = decoder.next_frame;
         let mut rgba = vec![0_u8; expected];
+        let read_started = Instant::now();
         decoder.stdout.read_exact(&mut rgba).map_err(|err| {
             anyhow::anyhow!(
                 "ffmpeg decoder ended before frame {} for {}: {err}",
@@ -193,6 +209,9 @@ impl FfmpegVideoSource {
                 self.path.display()
             )
         })?;
+        let read_ms = elapsed_ms(read_started);
+        self.stats.frame_read_ms += read_ms;
+        self.stats.max_frame_read_ms = self.stats.max_frame_read_ms.max(read_ms);
         decoder.next_frame += 1;
         self.stats.frames_decoded += 1;
         Ok((
@@ -226,11 +245,16 @@ impl VideoSource for FfmpegVideoSource {
     }
 
     fn frame_at(&mut self, time: f64) -> anyhow::Result<VideoFrame> {
+        let request_started = Instant::now();
         self.stats.requests += 1;
         let frame_index = self.frame_index_for_time(time);
 
         if let Some(frame) = self.cache.get(frame_index) {
             self.stats.cache_hits += 1;
+            let elapsed = elapsed_ms(request_started);
+            self.stats.cache_hit_ms += elapsed;
+            self.stats.request_ms += elapsed;
+            self.stats.max_request_ms = self.stats.max_request_ms.max(elapsed);
             return Ok(frame);
         }
 
@@ -241,6 +265,10 @@ impl VideoSource for FfmpegVideoSource {
             let (decoded_index, frame) = self.read_next_frame()?;
             self.cache.insert(decoded_index, frame.clone());
             if decoded_index == frame_index {
+                let elapsed = elapsed_ms(request_started);
+                self.stats.cache_miss_ms += elapsed;
+                self.stats.request_ms += elapsed;
+                self.stats.max_request_ms = self.stats.max_request_ms.max(elapsed);
                 return Ok(frame);
             }
             self.stats.sequential_frames_skipped += 1;
@@ -250,6 +278,24 @@ impl VideoSource for FfmpegVideoSource {
     fn stats(&self) -> VideoSourceStats {
         self.stats.clone()
     }
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
+}
+
+fn media_frame_cache_capacity() -> usize {
+    std::env::var("AE_RENDER_MEDIA_FRAME_CACHE")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .unwrap_or(DEFAULT_CACHE_CAPACITY)
+}
+
+fn media_sequential_decode_gap() -> u64 {
+    std::env::var("AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(MAX_SEQUENTIAL_DECODE_GAP)
 }
 
 struct FfmpegPipe {

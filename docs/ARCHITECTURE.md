@@ -188,8 +188,10 @@ backend: it checks GStreamer availability for `doctor`, has a `VideoSource` trai
 and uses FFmpeg/ffprobe-backed probing plus a persistent sequential FFmpeg pipe
 for active CLI frame extraction. The CLI now keeps a small per-source frame cache
 and a bounded pool of open decoders so it no longer spawns one FFmpeg process per
-requested frame. The target is still to replace the hot path with GStreamer Rust
-bindings and appsink/appsrc pipelines.
+requested frame. Media reports include request/cache/decode/spawn/read timings
+and runtime tuning knobs for cache size, decoder pool size, and sequential decode
+gap. The target is still to replace the hot path with GStreamer Rust bindings and
+appsink/appsrc pipelines.
 
 `render-core` currently renders through a `FootageProvider` boundary and writes
 PNG sequences plus `manifest.json` and `render-log.jsonl`. The manifest includes
