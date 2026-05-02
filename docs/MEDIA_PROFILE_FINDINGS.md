@@ -52,10 +52,15 @@ seek     template_4th  1761       60        56       0        3       0      796
 
 ## Next Media Work
 
-1. Add a timeline media planner that groups active footage requests by source and
-   monotonic frame order before rendering.
-2. Add explicit source-open/prewarm before frame 0 so first-frame decoder spawn
-   spikes do not land inside layer render timing.
-3. Add GStreamer appsink implementation behind the same `VideoSource` stats.
-4. Add appsrc/encoder `VideoSink` and compare it against PNG-sequence + FFmpeg
+Done after this baseline:
+
+1. Added `media-plan.json`, generated before render, grouping active footage
+   requests by source in render-frame order.
+2. Added source prepare/prewarm for sources needed in the initial render frames
+   through `AE_RENDER_PREWARM_FRAMES`.
+
+Remaining:
+
+1. Add GStreamer appsink implementation behind the same `VideoSource` stats.
+2. Add appsrc/encoder `VideoSink` and compare it against PNG-sequence + FFmpeg
    mux in `mux-report.json`.

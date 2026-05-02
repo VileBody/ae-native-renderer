@@ -16,6 +16,7 @@ decode/encode plumbing. Profiling here should answer media questions only:
 Every `render` writes:
 
 ```text
+out/media-plan.json
 out/media-report.json
 out/manifest.json
 out/render-log.jsonl
@@ -27,9 +28,17 @@ When MP4 mux is requested, it also writes:
 out/mux-report.json
 ```
 
+`media-plan.json` is the timeline media plan. It is generated before rendering
+and groups every planned footage request by source, render frame, render time,
+source time, composition, and layer. It also includes the source prepare/prewarm
+report.
+
 `media-report.json` is the main media I/O report. Important fields:
 
 ```text
+prepare.elapsed_ms              source open/prewarm wall time before frame rendering
+prepare.prewarm_frames          number of initial render frames eligible for source prewarm
+prepare.prepared_sources        sources opened and decoder-started before frame rendering
 totals.requests                 footage frame requests from render-core
 totals.cache_hits               requests served from per-source frame cache
 totals.cache_misses             requests that had to decode
@@ -56,12 +65,16 @@ conformance, not raw speed.
 AE_RENDER_MAX_OPEN_DECODERS=6
 AE_RENDER_MEDIA_FRAME_CACHE=4
 AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP=180
+AE_RENDER_PREWARM_FRAMES=1
 ```
 
 - `AE_RENDER_MAX_OPEN_DECODERS`: limits simultaneously running decoder pipes.
 - `AE_RENDER_MEDIA_FRAME_CACHE`: per-source decoded-frame LRU size; `0` disables it.
 - `AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP`: maximum frame gap to advance by reading
   sequentially before restarting/seeking.
+- `AE_RENDER_PREWARM_FRAMES`: number of initial render frames whose planned
+  sources should be opened and decoder-started before frame rendering; `0`
+  disables prewarm.
 
 ## Example
 
@@ -82,6 +95,7 @@ Summarize the result:
 
 ```bash
 jq '.totals, .derived' target/profile/template_4th/media-report.json
+jq '.plan.total_requests, .prepare.prepared_sources' target/profile/template_4th/media-plan.json
 jq '.timing.total_ms, .profile.effects' target/profile/template_4th/manifest.json
 ```
 

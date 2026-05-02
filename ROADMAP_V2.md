@@ -628,6 +628,9 @@ Status: first native hardening pass implemented with controlled approximations.
 - [x] Add per-source media frame cache and a bounded open-decoder pool.
 - [x] Add detailed media I/O timing for request/cache/decode/spawn/read and MP4 mux.
 - [x] Add media profiling docs and runtime tuning knobs.
+- [x] Add media runtime contract structs for frame requests, source plans, timeline media plans, and video sinks.
+- [x] Add timeline media planner with `media-plan.json` output.
+- [x] Add source prepare/prewarm before early render frames through `AE_RENDER_PREWARM_FRAMES`.
 - [x] Add transformed-layer ROI bounds so transforms do not scan the full comp when avoidable.
 - [ ] Add precomp frame cache.
 - [ ] Add allocation reuse / buffer pools.

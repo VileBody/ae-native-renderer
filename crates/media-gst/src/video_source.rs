@@ -1,4 +1,4 @@
-use crate::probe::probe;
+use crate::{probe::probe, SourcePlan};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, VecDeque};
 use std::io::Read;
@@ -48,6 +48,9 @@ pub struct VideoSourceStats {
 
 pub trait VideoSource {
     fn info(&self) -> VideoInfo;
+    fn prepare(&mut self, _plan: &SourcePlan) -> anyhow::Result<()> {
+        Ok(())
+    }
     fn frame_at(&mut self, time: f64) -> anyhow::Result<VideoFrame>;
 
     fn stats(&self) -> VideoSourceStats {
@@ -242,6 +245,14 @@ impl Drop for FfmpegVideoSource {
 impl VideoSource for FfmpegVideoSource {
     fn info(&self) -> VideoInfo {
         self.info.clone()
+    }
+
+    fn prepare(&mut self, plan: &SourcePlan) -> anyhow::Result<()> {
+        if let Some(time) = plan.first_request_source_time() {
+            let frame_index = self.frame_index_for_time(time);
+            self.ensure_decoder_at(frame_index)?;
+        }
+        Ok(())
     }
 
     fn frame_at(&mut self, time: f64) -> anyhow::Result<VideoFrame> {

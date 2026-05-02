@@ -156,7 +156,9 @@ command and a production-style job runner with native/fallback routing reports.
 Media decode now uses a persistent FFmpeg rawvideo pipe with a small per-source
 frame cache and bounded open-decoder pool instead of spawning one FFmpeg process
 per requested frame. Render logs include per-frame layer/effect profile details,
-and manifests include aggregate layer/effect timing summaries.
+and manifests include aggregate layer/effect timing summaries. Renders also write
+`media-plan.json`, a per-source timeline of planned footage requests, and use it
+to prewarm early media sources before frame rendering.
 Media I/O profiling and tuning knobs are documented in
 [docs/MEDIA_PROFILING.md](docs/MEDIA_PROFILING.md).
 The active implementation plan is `ROADMAP_V2.md`: consume generated payload JSON

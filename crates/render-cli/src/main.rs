@@ -7,6 +7,8 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod media_plan;
+
 #[derive(Parser, Debug)]
 #[command(name = "render-cli")]
 #[command(about = "AE-subset native renderer skeleton", long_about = None)]
@@ -462,6 +464,9 @@ fn render(
     let resolver = build_resolver(&scene_path, assets_root, job_archive)?;
     let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
     std::fs::create_dir_all(&out)?;
+    let media_plan = media_plan::build_timeline_media_plan(&scene)?;
+    let prepare_report = footage.prepare(&media_plan)?;
+    write_media_plan(&out, &media_plan, prepare_report)?;
     render_core::render_png_sequence_with_footage(&scene, &out, &mut footage)?;
     write_media_report(&out, &footage)?;
     if let Some(mp4) = mp4 {
@@ -1108,6 +1113,7 @@ struct CliFootageProvider {
     max_open_decoders: usize,
     missing_sources: HashSet<String>,
     strict_media: bool,
+    prepare_report: Option<Value>,
 }
 
 impl CliFootageProvider {
@@ -1128,7 +1134,76 @@ impl CliFootageProvider {
             max_open_decoders: max_open_decoders(),
             missing_sources: HashSet::new(),
             strict_media,
+            prepare_report: None,
         }
+    }
+
+    fn prepare(&mut self, plan: &media_gst::TimelineMediaPlan) -> anyhow::Result<Value> {
+        let prepare_started = Instant::now();
+        let prewarm_frames = media_prewarm_frames();
+        let mut prepared_sources = Vec::new();
+        let mut skipped_sources = Vec::new();
+        let mut missing_sources = Vec::new();
+
+        for source_plan in &plan.sources {
+            let first_render_frame = source_plan.first_render_frame;
+            let should_prewarm = prewarm_frames > 0
+                && first_render_frame
+                    .map(|frame| frame < prewarm_frames)
+                    .unwrap_or(false);
+
+            if !should_prewarm {
+                skipped_sources.push(json!({
+                    "asset_id": source_plan.asset_id.clone(),
+                    "reason": if prewarm_frames == 0 {
+                        "prewarm_disabled"
+                    } else {
+                        "outside_prewarm_window"
+                    },
+                    "first_render_frame": first_render_frame
+                }));
+                continue;
+            }
+
+            let source_started = Instant::now();
+            if !self.open_source(&source_plan.asset_id)? {
+                missing_sources.push(json!({
+                    "asset_id": source_plan.asset_id.clone(),
+                    "first_render_frame": first_render_frame,
+                    "elapsed_ms": elapsed_ms(source_started)
+                }));
+                continue;
+            }
+
+            self.sources
+                .get_mut(&source_plan.asset_id)
+                .ok_or_else(|| {
+                    anyhow::anyhow!("video source '{}' was not opened", source_plan.asset_id)
+                })?
+                .prepare(source_plan)?;
+            self.mark_decoder_used(&source_plan.asset_id);
+            prepared_sources.push(json!({
+                "asset_id": source_plan.asset_id.clone(),
+                "first_render_frame": first_render_frame,
+                "first_source_time": source_plan.first_source_time,
+                "last_source_time": source_plan.last_source_time,
+                "requests": source_plan.requests.len(),
+                "elapsed_ms": elapsed_ms(source_started)
+            }));
+        }
+
+        let report = json!({
+            "policy": "open and start decoder for planned sources needed in the first render frames",
+            "elapsed_ms": elapsed_ms(prepare_started),
+            "prewarm_frames": prewarm_frames,
+            "planned_sources": plan.sources.len(),
+            "planned_requests": plan.total_requests,
+            "prepared_sources": prepared_sources,
+            "skipped_sources": skipped_sources,
+            "missing_sources": missing_sources
+        });
+        self.prepare_report = Some(report.clone());
+        Ok(report)
     }
 
     fn media_report(&self) -> Value {
@@ -1187,6 +1262,7 @@ impl CliFootageProvider {
             "opened_sources": sources.len(),
             "max_open_decoders": self.max_open_decoders,
             "missing_sources": missing_sources,
+            "prepare": self.prepare_report.clone(),
             "cache_hit_rate": hit_rate,
             "totals": totals,
             "derived": media_stats_derived(&totals),
@@ -1220,43 +1296,56 @@ impl CliFootageProvider {
             .filter(|source| source.decoder_is_running())
             .count()
     }
+
+    fn open_source(&mut self, source: &str) -> anyhow::Result<bool> {
+        if self.missing_sources.contains(source) {
+            return Ok(false);
+        }
+        if self.sources.contains_key(source) {
+            return Ok(true);
+        }
+
+        let asset = self
+            .assets
+            .get(source)
+            .cloned()
+            .ok_or_else(|| {
+                anyhow::anyhow!("footage source '{source}' was not found in scene assets")
+            })?;
+        if !matches!(asset.kind, render_ir::AssetKind::Video) {
+            anyhow::bail!("footage source '{source}' points to a non-video asset");
+        }
+        let resolution = self.resolver.resolve(&asset.path, Some("video"));
+        let Some(path) = resolution.resolved_path.clone() else {
+            if self.strict_media {
+                anyhow::bail!(
+                    "video asset '{}' was not found; tried: {}",
+                    asset.path,
+                    resolution.candidates.join(", ")
+                );
+            }
+            eprintln!(
+                "render.warn missing video asset '{}'; using checkerboard placeholder",
+                asset.path
+            );
+            self.missing_sources.insert(source.to_string());
+            return Ok(false);
+        };
+
+        let resolved_path = path.clone();
+        self.sources.insert(
+            source.to_string(),
+            media_gst::FfmpegVideoSource::open(&resolved_path)?,
+        );
+        self.source_paths.insert(source.to_string(), resolved_path);
+        Ok(true)
+    }
 }
 
 impl render_core::FootageProvider for CliFootageProvider {
     fn frame_at(&mut self, source: &str, time: f64) -> anyhow::Result<Option<raster_cpu::Canvas>> {
-        if self.missing_sources.contains(source) {
+        if !self.open_source(source)? {
             return Ok(None);
-        }
-
-        if !self.sources.contains_key(source) {
-            let asset = self.assets.get(source).ok_or_else(|| {
-                anyhow::anyhow!("footage source '{source}' was not found in scene assets")
-            })?;
-            if !matches!(asset.kind, render_ir::AssetKind::Video) {
-                anyhow::bail!("footage source '{source}' points to a non-video asset");
-            }
-            let resolution = self.resolver.resolve(&asset.path, Some("video"));
-            let Some(path) = resolution.resolved_path.clone() else {
-                if self.strict_media {
-                    anyhow::bail!(
-                        "video asset '{}' was not found; tried: {}",
-                        asset.path,
-                        resolution.candidates.join(", ")
-                    );
-                }
-                eprintln!(
-                    "render.warn missing video asset '{}'; using checkerboard placeholder",
-                    asset.path
-                );
-                self.missing_sources.insert(source.to_string());
-                return Ok(None);
-            };
-            let resolved_path = path.clone();
-            self.sources.insert(
-                source.to_string(),
-                media_gst::FfmpegVideoSource::open(&resolved_path)?,
-            );
-            self.source_paths.insert(source.to_string(), resolved_path);
         }
 
         let decoded = self
@@ -1279,6 +1368,30 @@ fn max_open_decoders() -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(6)
+}
+
+fn media_prewarm_frames() -> u32 {
+    std::env::var("AE_RENDER_PREWARM_FRAMES")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .unwrap_or(1)
+}
+
+fn write_media_plan(
+    out: &Path,
+    plan: &media_gst::TimelineMediaPlan,
+    prepare_report: Value,
+) -> anyhow::Result<()> {
+    let path = out.join("media-plan.json");
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&json!({
+            "plan": plan,
+            "prepare": prepare_report
+        }))?,
+    )?;
+    println!("render.media_plan={}", path.display());
+    Ok(())
 }
 
 fn write_media_report(out: &Path, footage: &CliFootageProvider) -> anyhow::Result<()> {
