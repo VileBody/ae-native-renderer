@@ -1,9 +1,10 @@
 use crate::layer_eval::{
-    render_frame_with_footage_traced, CheckerboardFootageProvider, EffectTiming,
-    FootageProvider, FrameRenderTrace, LayerTiming,
+    render_frame_with_footage_traced, CheckerboardFootageProvider, EffectTiming, FootageProvider,
+    FrameRenderTrace, LayerTiming,
 };
+use raster_cpu::Canvas;
 use render_ir::{EffectSpec, Layer, Scene, Transform2D};
-use serde_json::json;
+use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
@@ -22,10 +23,79 @@ pub fn render_png_sequence_with_footage(
     out_dir: impl AsRef<Path>,
     footage: &mut dyn FootageProvider,
 ) -> anyhow::Result<()> {
-    crate::graph::validate_graph(scene)?;
     let out_dir = out_dir.as_ref();
     let frames_dir = out_dir.join("frames");
     fs::create_dir_all(&frames_dir)?;
+
+    render_sequence_with_footage_callback(
+        scene,
+        out_dir,
+        footage,
+        RenderSequenceOptions::png_sequence(),
+        |frame, _time, canvas| {
+            let path = frames_dir.join(format!("frame_{frame:06}.png"));
+            canvas.save_png(path)?;
+            Ok(RenderFrameOutput::path(format!(
+                "frames/frame_{frame:06}.png"
+            )))
+        },
+    )
+}
+
+#[derive(Debug, Clone)]
+pub struct RenderSequenceOptions {
+    output: String,
+    output_mode: Option<String>,
+    output_backend: Option<String>,
+    frame_write_timing_key: String,
+}
+
+impl RenderSequenceOptions {
+    pub fn png_sequence() -> Self {
+        Self {
+            output: "frames/frame_%06d.png".to_string(),
+            output_mode: None,
+            output_backend: None,
+            frame_write_timing_key: "save_ms".to_string(),
+        }
+    }
+
+    pub fn video_sink(output: impl Into<String>, backend: impl Into<String>) -> Self {
+        Self {
+            output: output.into(),
+            output_mode: Some("video_sink".to_string()),
+            output_backend: Some(backend.into()),
+            frame_write_timing_key: "write_ms".to_string(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct RenderFrameOutput {
+    pub path: Option<String>,
+}
+
+impl RenderFrameOutput {
+    pub fn path(path: impl Into<String>) -> Self {
+        Self {
+            path: Some(path.into()),
+        }
+    }
+}
+
+pub fn render_sequence_with_footage_callback<F>(
+    scene: &Scene,
+    out_dir: impl AsRef<Path>,
+    footage: &mut dyn FootageProvider,
+    options: RenderSequenceOptions,
+    mut on_frame: F,
+) -> anyhow::Result<()>
+where
+    F: FnMut(u32, f64, &Canvas) -> anyhow::Result<RenderFrameOutput>,
+{
+    crate::graph::validate_graph(scene)?;
+    let out_dir = out_dir.as_ref();
+    fs::create_dir_all(out_dir)?;
 
     let frame_count = (scene.composition.duration * scene.composition.fps).ceil() as u32;
     let feature_summary = scene_feature_summary(scene);
@@ -47,7 +117,8 @@ pub fn render_png_sequence_with_footage(
             "feature_counts": feature_counts_json(&feature_summary.counts),
             "asset_hashes": asset_hashes.clone(),
             "approximate": feature_summary.approximate.clone(),
-            "unsupported": feature_summary.unsupported.clone()
+            "unsupported": feature_summary.unsupported.clone(),
+            "output": render_output_json(&options)
         }),
     )?;
 
@@ -56,62 +127,52 @@ pub fn render_png_sequence_with_footage(
         let frame_render_started = Instant::now();
         let (canvas, trace) = render_frame_with_footage_traced(scene, frame, footage)?;
         let render_ms = elapsed_ms(frame_render_started);
-        let path = frames_dir.join(format!("frame_{frame:06}.png"));
-        let save_started = Instant::now();
-        canvas.save_png(path)?;
-        let save_ms = elapsed_ms(save_started);
+        let time = frame as f64 / scene.composition.fps;
+        let write_started = Instant::now();
+        let frame_output = on_frame(frame, time, &canvas)?;
+        let write_ms = elapsed_ms(write_started);
         let frame_total_ms = elapsed_ms(frame_started);
-        let frame_timing = json!({
-            "frame": frame,
-            "time": frame as f64 / scene.composition.fps,
-            "render_ms": render_ms,
-            "save_ms": save_ms,
-            "total_ms": frame_total_ms,
-            "path": format!("frames/frame_{frame:06}.png")
-        });
+        let frame_timing = frame_timing_json(
+            frame,
+            time,
+            render_ms,
+            &options.frame_write_timing_key,
+            write_ms,
+            frame_total_ms,
+            frame_output.path.as_deref(),
+        );
         frame_timings.push(frame_timing.clone());
         record_profile(&trace, &mut layer_profile, &mut effect_profile);
         write_json_line(
             &mut log,
-            &json!({
-                "event": "frame.rendered",
-                "frame": frame,
-                "time": frame as f64 / scene.composition.fps,
-                "render_ms": render_ms,
-                "save_ms": save_ms,
-                "duration_ms": frame_total_ms,
-                "path": format!("frames/frame_{frame:06}.png"),
-                "profile": frame_trace_json(&trace)
-            }),
+            &frame_log_json(
+                frame,
+                time,
+                render_ms,
+                &options.frame_write_timing_key,
+                write_ms,
+                frame_total_ms,
+                frame_output.path.as_deref(),
+                &trace,
+            ),
         )?;
     }
 
     let total_render_ms = elapsed_ms(render_started);
-    let manifest = json!({
-        "renderer": renderer_info(),
-        "composition": scene.composition.id,
-        "width": scene.composition.width,
-        "height": scene.composition.height,
-        "fps": scene.composition.fps,
-        "duration": scene.composition.duration,
-        "frames": frame_count,
-        "scene_hash": scene_hash,
-        "layers": scene.layers.len(),
-        "assets": scene.assets.len(),
-        "asset_hashes": asset_hashes,
-        "output": "frames/frame_%06d.png",
-        "timing": {
-            "total_ms": total_render_ms,
-            "frames": frame_timings
-        },
-        "profile": {
-            "layers": layer_profile_json(&layer_profile),
-            "effects": effect_profile_json(&effect_profile)
-        },
-        "feature_counts": feature_counts_json(&feature_summary.counts),
-        "approximate": feature_summary.approximate,
-        "unsupported": feature_summary.unsupported
-    });
+    let manifest = render_manifest_json(
+        scene,
+        frame_count,
+        scene_hash,
+        asset_hashes,
+        &options,
+        total_render_ms,
+        frame_timings,
+        layer_profile_json(&layer_profile),
+        effect_profile_json(&effect_profile),
+        feature_counts_json(&feature_summary.counts),
+        feature_summary.approximate,
+        feature_summary.unsupported,
+    );
     fs::write(
         out_dir.join("manifest.json"),
         serde_json::to_string_pretty(&manifest)?,
@@ -126,6 +187,117 @@ pub fn render_png_sequence_with_footage(
         }),
     )?;
     Ok(())
+}
+
+fn render_output_json(options: &RenderSequenceOptions) -> Value {
+    let mut output = Map::new();
+    output.insert("target".to_string(), json!(options.output));
+    if let Some(mode) = &options.output_mode {
+        output.insert("mode".to_string(), json!(mode));
+    }
+    if let Some(backend) = &options.output_backend {
+        output.insert("backend".to_string(), json!(backend));
+    }
+    Value::Object(output)
+}
+
+fn frame_timing_json(
+    frame: u32,
+    time: f64,
+    render_ms: f64,
+    write_timing_key: &str,
+    write_ms: f64,
+    total_ms: f64,
+    path: Option<&str>,
+) -> Value {
+    let mut timing = Map::new();
+    timing.insert("frame".to_string(), json!(frame));
+    timing.insert("time".to_string(), json!(time));
+    timing.insert("render_ms".to_string(), json!(render_ms));
+    timing.insert(write_timing_key.to_string(), json!(write_ms));
+    timing.insert("total_ms".to_string(), json!(total_ms));
+    if let Some(path) = path {
+        timing.insert("path".to_string(), json!(path));
+    }
+    Value::Object(timing)
+}
+
+fn frame_log_json(
+    frame: u32,
+    time: f64,
+    render_ms: f64,
+    write_timing_key: &str,
+    write_ms: f64,
+    duration_ms: f64,
+    path: Option<&str>,
+    trace: &FrameRenderTrace,
+) -> Value {
+    let mut event = Map::new();
+    event.insert("event".to_string(), json!("frame.rendered"));
+    event.insert("frame".to_string(), json!(frame));
+    event.insert("time".to_string(), json!(time));
+    event.insert("render_ms".to_string(), json!(render_ms));
+    event.insert(write_timing_key.to_string(), json!(write_ms));
+    event.insert("duration_ms".to_string(), json!(duration_ms));
+    if let Some(path) = path {
+        event.insert("path".to_string(), json!(path));
+    }
+    event.insert("profile".to_string(), frame_trace_json(trace));
+    Value::Object(event)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_manifest_json(
+    scene: &Scene,
+    frame_count: u32,
+    scene_hash: String,
+    asset_hashes: Vec<Value>,
+    options: &RenderSequenceOptions,
+    total_render_ms: f64,
+    frame_timings: Vec<Value>,
+    layer_profile: Value,
+    effect_profile: Value,
+    feature_counts: Value,
+    approximate: Vec<String>,
+    unsupported: Vec<String>,
+) -> Value {
+    let mut manifest = Map::new();
+    manifest.insert("renderer".to_string(), renderer_info());
+    manifest.insert("composition".to_string(), json!(scene.composition.id));
+    manifest.insert("width".to_string(), json!(scene.composition.width));
+    manifest.insert("height".to_string(), json!(scene.composition.height));
+    manifest.insert("fps".to_string(), json!(scene.composition.fps));
+    manifest.insert("duration".to_string(), json!(scene.composition.duration));
+    manifest.insert("frames".to_string(), json!(frame_count));
+    manifest.insert("scene_hash".to_string(), json!(scene_hash));
+    manifest.insert("layers".to_string(), json!(scene.layers.len()));
+    manifest.insert("assets".to_string(), json!(scene.assets.len()));
+    manifest.insert("asset_hashes".to_string(), json!(asset_hashes));
+    manifest.insert("output".to_string(), json!(options.output));
+    if let Some(mode) = &options.output_mode {
+        manifest.insert("output_mode".to_string(), json!(mode));
+    }
+    if let Some(backend) = &options.output_backend {
+        manifest.insert("output_backend".to_string(), json!(backend));
+    }
+    manifest.insert(
+        "timing".to_string(),
+        json!({
+            "total_ms": total_render_ms,
+            "frames": frame_timings
+        }),
+    );
+    manifest.insert(
+        "profile".to_string(),
+        json!({
+            "layers": layer_profile,
+            "effects": effect_profile
+        }),
+    );
+    manifest.insert("feature_counts".to_string(), feature_counts);
+    manifest.insert("approximate".to_string(), json!(approximate));
+    manifest.insert("unsupported".to_string(), json!(unsupported));
+    Value::Object(manifest)
 }
 
 #[derive(Debug, Clone, Default)]

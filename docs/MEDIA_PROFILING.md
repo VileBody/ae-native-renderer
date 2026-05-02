@@ -9,7 +9,7 @@ decode/encode plumbing. Profiling here should answer media questions only:
 - how many frame requests hit cache;
 - how many raw frames were decoded or skipped while advancing sequentially;
 - how expensive decoder spawn and frame reads are;
-- how expensive final mux is.
+- how expensive final mux or direct VideoSink writes are.
 
 ## Reports
 
@@ -57,6 +57,9 @@ derived.avg_frame_read_ms       frame_read_ms / frames_decoded
 ```
 
 `manifest.json` still contains render/save timings and layer/effect profiles.
+When direct MP4 output is enabled, frame timing uses `write_ms` for the
+VideoSink push instead of PNG `save_ms`, and the manifest output points at the
+MP4 path/backend.
 Use it to see whether the remaining bottleneck moved away from media I/O. Do not
 optimize transform/sampling/effects from this document unless the target is AE
 conformance, not raw speed.
@@ -66,6 +69,7 @@ conformance, not raw speed.
 ```text
 requested_backend              selected mux policy: auto, gstreamer, or ffmpeg
 backend                        actual backend used: gstreamer-appsrc-mp4 or ffmpeg-cli
+input.kind                     png_sequence or render_core_callback
 elapsed_ms                     encode/mux wall time
 sink_manifest                  VideoSink manifest for GStreamer outputs
 ```
@@ -75,6 +79,12 @@ sink_manifest                  VideoSink manifest for GStreamer outputs
 ```bash
 AE_RENDER_MEDIA_BACKEND=auto
 AE_RENDER_MUX_BACKEND=auto
+AE_RENDER_OUTPUT_MODE=png_sequence
+AE_RENDER_DIRECT_MP4=0
+AE_RENDER_X264_BITRATE_KBPS=8000
+AE_RENDER_X264_PRESET=ultrafast
+AE_RENDER_X264_TUNE=zerolatency
+AE_RENDER_VIDEO_SINK_QUEUE_BUFFERS=12
 AE_RENDER_MAX_OPEN_DECODERS=6
 AE_RENDER_MEDIA_FRAME_CACHE=4
 AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP=180
@@ -86,6 +96,18 @@ AE_RENDER_PREWARM_FRAMES=1
   source fails.
 - `AE_RENDER_MUX_BACKEND`: `auto`, `gstreamer`, or `ffmpeg`. `auto` tries the
   Rust GStreamer appsrc MP4 sink first and falls back to FFmpeg CLI.
+- `AE_RENDER_OUTPUT_MODE=direct_mp4` or `AE_RENDER_DIRECT_MP4=1`: for
+  `render --mp4`, render frames directly into the GStreamer `VideoSink` without
+  writing PNG frames. The default remains PNG sequence output; if the direct
+  GStreamer sink cannot open under mux backend `auto`, render falls back to the
+  PNG+MP4 path.
+- `AE_RENDER_X264_BITRATE_KBPS`, `AE_RENDER_X264_PRESET`,
+  `AE_RENDER_X264_TUNE`: tune the GStreamer MP4 sink. Defaults are an 8 Mbps
+  I420/yuv420p H.264 stream with `ultrafast` + `zerolatency`. Use `veryfast` or
+  slower presets when compression efficiency matters more than render throughput.
+- `AE_RENDER_VIDEO_SINK_QUEUE_BUFFERS`: number of raw frames the direct sink can
+  queue before applying backpressure. Higher values trade memory for more render
+  and encoder overlap.
 - `AE_RENDER_MAX_OPEN_DECODERS`: limits simultaneously running decoder pipes.
 - `AE_RENDER_MEDIA_FRAME_CACHE`: per-source decoded-frame LRU size; `0` disables it.
 - `AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP`: maximum frame gap to advance by reading

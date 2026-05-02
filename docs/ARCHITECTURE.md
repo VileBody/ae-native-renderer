@@ -194,15 +194,18 @@ rendering, uses it to open and decoder-start early sources, keeps a small
 per-source frame cache, and maintains a bounded pool of open decoders. Media
 reports include backend selection plus request/cache/decode/spawn/read timings
 and runtime tuning knobs for backend choice, cache size, decoder pool size,
-sequential decode gap, and prewarm window. The next server media target is a
-direct render-to-`VideoSink` path that avoids the PNG sequence as a production
-intermediate.
+sequential decode gap, and prewarm window. `render --mp4` can opt into a direct
+render-to-`VideoSink` path that avoids the PNG sequence as a production
+intermediate while preserving PNG output as the default debug/inspection path.
 
-`render-core` currently renders through a `FootageProvider` boundary and writes
-PNG sequences plus `manifest.json` and `render-log.jsonl`. The manifest includes
-aggregate layer/effect timing profiles, and the frame log includes per-frame
-profile detail. The CLI can still write a PNG sequence for inspectability, while
-MP4 output can be routed through the media-backend `VideoSink` boundary.
+`render-core` currently renders through a `FootageProvider` boundary and exposes
+a sequential frame callback for output adapters. Its PNG wrapper writes PNG
+sequences plus `manifest.json` and `render-log.jsonl`; direct MP4 mode reuses the
+same render loop and passes each `Canvas` to the CLI, which adapts it to the
+media-backend `VideoSink` boundary. The GStreamer MP4 sink converts RGBA frames
+to I420/yuv420p before x264 encoding and has bitrate/preset/tune/queue knobs for
+profiling production throughput. The manifest includes aggregate layer/effect
+timing profiles, and the frame log includes per-frame profile detail.
 
 The desired production formula:
 
@@ -254,7 +257,14 @@ Unknown effects must fail in strict mode.
 
 ## Render sequence reports
 
-`render-core::render_sequence` writes a PNG sequence plus `manifest.json` and `render-log.jsonl`. The manifest includes renderer crate/version metadata, deterministic scene and asset-spec hashes, per-frame timing (`render_ms`, `save_ms`, `total_ms`), total render time, and basic layer/effect feature counts. These fields are observational only and must not affect pixel rendering.
+`render-core::render_sequence` writes `manifest.json` and `render-log.jsonl` for
+both PNG and callback outputs. The PNG path records per-frame timing
+(`render_ms`, `save_ms`, `total_ms`) and relative PNG paths. Direct VideoSink
+outputs record `render_ms`, `write_ms`, `total_ms`, `output_mode: "video_sink"`,
+and the MP4 output/backend. The manifest also includes renderer
+crate/version metadata, deterministic scene and asset-spec hashes, total render
+time, and basic layer/effect feature counts. These fields are observational only
+and must not affect pixel rendering.
 
 ## Text
 

@@ -1,3 +1,4 @@
+use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use media_gst::{VideoSink, VideoSource};
 use serde_json::{json, Value};
@@ -459,28 +460,151 @@ fn render(
     mp4: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let scene = render_ir::load_scene(&scene_path)?;
-    let fps = scene.composition.fps;
-    let strict_media = assets_root.is_some() || job_archive.is_some();
-    let resolver = build_resolver(&scene_path, assets_root, job_archive)?;
-    let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
-    std::fs::create_dir_all(&out)?;
-    let media_plan = media_plan::build_timeline_media_plan(&scene)?;
-    let prepare_report = footage.prepare(&media_plan)?;
-    write_media_plan(&out, &media_plan, prepare_report)?;
-    render_core::render_png_sequence_with_footage(&scene, &out, &mut footage)?;
-    write_media_report(&out, &footage)?;
-    if let Some(mp4) = mp4 {
-        let frames_dir = out.join("frames");
-        let mux_report = encode_png_sequence_to_mp4(&frames_dir, fps, &mp4)?;
-        write_mux_report(&out, &frames_dir, fps, &mp4, "render", &mux_report)?;
-        println!("render.mp4={}", mp4.display());
+    if let Some(mp4_path) = mp4.as_ref().filter(|_| direct_mp4_enabled()) {
+        match render_direct_mp4(
+            &scene_path,
+            &scene,
+            &out,
+            assets_root.clone(),
+            job_archive.clone(),
+            mp4_path,
+        )? {
+            DirectMp4Attempt::Rendered => {
+                println!(
+                    "render.done scene={} out={}",
+                    scene_path.display(),
+                    out.display()
+                );
+                return Ok(());
+            }
+            DirectMp4Attempt::Fallback { reason } => {
+                eprintln!(
+                    "render.warn direct MP4 path unavailable; falling back to PNG sequence path: {reason}"
+                );
+            }
+        }
     }
+
+    render_png_output(&scene_path, &scene, &out, assets_root, job_archive, mp4.as_deref())?;
     println!(
         "render.done scene={} out={}",
         scene_path.display(),
         out.display()
     );
     Ok(())
+}
+
+fn render_png_output(
+    scene_path: &Path,
+    scene: &render_ir::Scene,
+    out: &Path,
+    assets_root: Option<PathBuf>,
+    job_archive: Option<PathBuf>,
+    mp4: Option<&Path>,
+) -> anyhow::Result<()> {
+    let fps = scene.composition.fps;
+    let strict_media = assets_root.is_some() || job_archive.is_some();
+    let resolver = build_resolver(scene_path, assets_root, job_archive)?;
+    let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
+    std::fs::create_dir_all(out)?;
+    let media_plan = media_plan::build_timeline_media_plan(scene)?;
+    let prepare_report = footage.prepare(&media_plan)?;
+    write_media_plan(out, &media_plan, prepare_report)?;
+    render_core::render_png_sequence_with_footage(scene, out, &mut footage)?;
+    write_media_report(out, &footage)?;
+    if let Some(mp4) = mp4 {
+        let frames_dir = out.join("frames");
+        let mux_report = encode_png_sequence_to_mp4(&frames_dir, fps, mp4)?;
+        write_mux_report(out, Some(&frames_dir), fps, mp4, "render", &mux_report)?;
+        println!("render.mp4={}", mp4.display());
+    }
+    Ok(())
+}
+
+enum DirectMp4Attempt {
+    Rendered,
+    Fallback { reason: String },
+}
+
+fn render_direct_mp4(
+    scene_path: &Path,
+    scene: &render_ir::Scene,
+    out: &Path,
+    assets_root: Option<PathBuf>,
+    job_archive: Option<PathBuf>,
+    mp4: &Path,
+) -> anyhow::Result<DirectMp4Attempt> {
+    let requested = mux_backend();
+    if requested == MuxBackend::Ffmpeg {
+        return Ok(DirectMp4Attempt::Fallback {
+            reason: "AE_RENDER_MUX_BACKEND=ffmpeg has no direct VideoSink implementation"
+                .to_string(),
+        });
+    }
+
+    let fps = scene.composition.fps;
+    let direct_started = Instant::now();
+    let mut sink = match media_gst::GstMp4VideoSink::open(
+        mp4,
+        scene.composition.width,
+        scene.composition.height,
+        fps,
+    ) {
+        Ok(sink) => sink,
+        Err(err) if requested == MuxBackend::Auto => {
+            return Ok(DirectMp4Attempt::Fallback {
+                reason: format!("GStreamer MP4 sink failed to open: {err:#}"),
+            });
+        }
+        Err(err) => {
+            return Err(err).with_context(|| {
+                format!("failed to open GStreamer MP4 sink for {}", mp4.display())
+            });
+        }
+    };
+
+    let strict_media = assets_root.is_some() || job_archive.is_some();
+    let resolver = build_resolver(scene_path, assets_root, job_archive)?;
+    let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
+    std::fs::create_dir_all(out)?;
+    let media_plan = media_plan::build_timeline_media_plan(scene)?;
+    let prepare_report = footage.prepare(&media_plan)?;
+    write_media_plan(out, &media_plan, prepare_report)?;
+
+    render_core::render_sequence_with_footage_callback(
+        scene,
+        out,
+        &mut footage,
+        render_core::RenderSequenceOptions::video_sink(
+            mp4.display().to_string(),
+            "gstreamer-appsrc-mp4",
+        ),
+        |frame, time, canvas| {
+            sink.write_frame(
+                &media_gst::VideoFrame {
+                    width: canvas.width,
+                    height: canvas.height,
+                    pts: time,
+                    rgba: canvas.data.clone(),
+                },
+                time,
+            )
+            .with_context(|| format!("failed to write frame {frame} to MP4 sink"))?;
+            Ok(render_core::RenderFrameOutput::default())
+        },
+    )?;
+
+    let sink_manifest = sink.finish()?;
+    write_media_report(out, &footage)?;
+    let mux_report = MuxEncodeReport {
+        requested_backend: requested.name(),
+        backend: sink_manifest.backend.clone(),
+        elapsed_ms: elapsed_ms(direct_started),
+        sink_manifest: Some(sink_manifest),
+    };
+    write_mux_report(out, None, fps, mp4, "render-direct", &mux_report)?;
+    println!("render.mp4={}", mp4.display());
+    Ok(DirectMp4Attempt::Rendered)
 }
 
 fn mux(frames: PathBuf, out: PathBuf, fps: Option<f64>) -> anyhow::Result<()> {
@@ -498,7 +622,7 @@ fn mux(frames: PathBuf, out: PathBuf, fps: Option<f64>) -> anyhow::Result<()> {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    write_mux_report(&report_dir, &frames_dir, fps, &out, "mux", &mux_report)?;
+    write_mux_report(&report_dir, Some(&frames_dir), fps, &out, "mux", &mux_report)?;
     println!(
         "mux.done frames={} fps={} out={}",
         frames_dir.display(),
@@ -1515,6 +1639,23 @@ fn mux_backend() -> MuxBackend {
     }
 }
 
+fn direct_mp4_enabled() -> bool {
+    let output_mode = std::env::var("AE_RENDER_OUTPUT_MODE")
+        .unwrap_or_default()
+        .to_lowercase();
+    if matches!(
+        output_mode.as_str(),
+        "direct_mp4" | "direct-mp4" | "video_sink" | "videosink"
+    ) {
+        return true;
+    }
+
+    let direct = std::env::var("AE_RENDER_DIRECT_MP4")
+        .unwrap_or_default()
+        .to_lowercase();
+    matches!(direct.as_str(), "1" | "true" | "yes" | "on")
+}
+
 fn media_prewarm_frames() -> u32 {
     std::env::var("AE_RENDER_PREWARM_FRAMES")
         .ok()
@@ -1641,7 +1782,7 @@ fn encode_png_sequence_gstreamer(
 
 fn write_mux_report(
     report_dir: &Path,
-    frames_dir: &Path,
+    frames_dir: Option<&Path>,
     fps: f64,
     out: &Path,
     mode: &str,
@@ -1649,13 +1790,24 @@ fn write_mux_report(
 ) -> anyhow::Result<()> {
     fs::create_dir_all(report_dir)?;
     let path = report_dir.join("mux-report.json");
+    let frames = frames_dir.map(|path| path.display().to_string());
+    let input = match &frames {
+        Some(frames) => json!({
+            "kind": "png_sequence",
+            "frames": frames
+        }),
+        None => json!({
+            "kind": "render_core_callback"
+        }),
+    };
     fs::write(
         &path,
         serde_json::to_string_pretty(&json!({
             "mode": mode,
             "requested_backend": report.requested_backend,
             "backend": report.backend,
-            "frames": frames_dir.display().to_string(),
+            "frames": frames,
+            "input": input,
             "fps": fps,
             "out": out.display().to_string(),
             "elapsed_ms": report.elapsed_ms,

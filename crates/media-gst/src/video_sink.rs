@@ -20,7 +20,10 @@ impl GstMp4VideoSink {
         fps: f64,
     ) -> anyhow::Result<Self> {
         gst::init().map_err(|err| anyhow::anyhow!("failed to initialize GStreamer: {err}"))?;
-        anyhow::ensure!(width > 0 && height > 0, "video sink dimensions must be positive");
+        anyhow::ensure!(
+            width > 0 && height > 0,
+            "video sink dimensions must be positive"
+        );
         anyhow::ensure!(fps > 0.0, "video sink fps must be positive");
 
         let output = output.as_ref().to_path_buf();
@@ -45,12 +48,33 @@ impl GstMp4VideoSink {
             .map_err(|_| anyhow::anyhow!("appsrc element had unexpected type"))?;
         appsrc.set_caps(Some(&caps));
 
+        let queue = gst::ElementFactory::make("queue")
+            .property("max-size-buffers", video_sink_queue_buffers())
+            .property("max-size-bytes", 0_u32)
+            .property("max-size-time", 0_u64)
+            .build()
+            .map_err(|err| anyhow::anyhow!("failed to create queue: {err}"))?;
         let videoconvert = gst::ElementFactory::make("videoconvert")
             .build()
             .map_err(|err| anyhow::anyhow!("failed to create videoconvert: {err}"))?;
+        let encode_caps = gst::Caps::builder("video/x-raw")
+            .field("format", "I420")
+            .field("width", width as i32)
+            .field("height", height as i32)
+            .field("framerate", fps_fraction(fps))
+            .build();
+        let capsfilter = gst::ElementFactory::make("capsfilter")
+            .property("caps", &encode_caps)
+            .build()
+            .map_err(|err| anyhow::anyhow!("failed to create capsfilter: {err}"))?;
         let encoder = gst::ElementFactory::make("x264enc")
-            .property("bitrate", 8_000_u32)
+            .property("bitrate", x264_bitrate_kbps())
             .property("key-int-max", fps.ceil().max(1.0) as u32)
+            .property("threads", 0_u32)
+            .property("rc-lookahead", 0_i32)
+            .property("sliced-threads", true)
+            .property_from_str("speed-preset", &x264_speed_preset())
+            .property_from_str("tune", &x264_tune())
             .build()
             .map_err(|err| anyhow::anyhow!("failed to create x264enc: {err}"))?;
         let parser = gst::ElementFactory::make("h264parse")
@@ -67,7 +91,9 @@ impl GstMp4VideoSink {
 
         pipeline.add_many(&[
             appsrc.upcast_ref::<gst::Element>(),
+            &queue,
             &videoconvert,
+            &capsfilter,
             &encoder,
             &parser,
             &muxer,
@@ -75,7 +101,9 @@ impl GstMp4VideoSink {
         ])?;
         gst::Element::link_many(&[
             appsrc.upcast_ref::<gst::Element>(),
+            &queue,
             &videoconvert,
+            &capsfilter,
             &encoder,
             &parser,
             &muxer,
@@ -123,9 +151,9 @@ impl VideoSink for GstMp4VideoSink {
             map.as_mut_slice().copy_from_slice(&frame.rgba);
         }
 
-        self.appsrc
-            .push_buffer(buffer)
-            .map_err(|err| anyhow::anyhow!("failed to push frame into GStreamer appsrc: {err:?}"))?;
+        self.appsrc.push_buffer(buffer).map_err(|err| {
+            anyhow::anyhow!("failed to push frame into GStreamer appsrc: {err:?}")
+        })?;
         self.frames += 1;
         Ok(())
     }
@@ -191,4 +219,34 @@ fn fps_fraction(fps: f64) -> gst::Fraction {
     } else {
         gst::Fraction::new((fps * 1000.0).round() as i32, 1000)
     }
+}
+
+fn x264_bitrate_kbps() -> u32 {
+    std::env::var("AE_RENDER_X264_BITRATE_KBPS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(8_000)
+}
+
+fn x264_speed_preset() -> String {
+    std::env::var("AE_RENDER_X264_PRESET")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "ultrafast".to_string())
+}
+
+fn x264_tune() -> String {
+    std::env::var("AE_RENDER_X264_TUNE")
+        .ok()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or_else(|| "zerolatency".to_string())
+}
+
+fn video_sink_queue_buffers() -> u32 {
+    std::env::var("AE_RENDER_VIDEO_SINK_QUEUE_BUFFERS")
+        .ok()
+        .and_then(|value| value.parse::<u32>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(12)
 }

@@ -155,7 +155,11 @@ recognized as a canvas-stage no-op. The CLI also has an AE conformance compare
 command and a production-style job runner with native/fallback routing reports.
 Media decode now supports a Rust GStreamer appsink backend with a persistent
 FFmpeg rawvideo pipe as fallback/debug tooling. MP4 output supports a Rust
-GStreamer appsrc sink with FFmpeg CLI fallback. Decode paths use a small
+GStreamer appsrc sink with FFmpeg CLI fallback; `render --mp4` can also opt into
+direct render-to-VideoSink output with `AE_RENDER_DIRECT_MP4=1` or
+`AE_RENDER_OUTPUT_MODE=direct_mp4`, avoiding the PNG intermediate while keeping
+the PNG/debug path as the default. The GStreamer MP4 sink writes yuv420p H.264
+and exposes x264 bitrate/preset/tune knobs for profiling. Decode paths use a small
 per-source frame cache and bounded open-decoder pool instead of spawning one
 FFmpeg process per requested frame. Render logs include per-frame layer/effect
 profile details, and manifests include aggregate layer/effect timing summaries.

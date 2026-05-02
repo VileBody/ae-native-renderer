@@ -620,6 +620,24 @@ Status: first native hardening pass implemented with controlled approximations.
 - [x] Accept AE numbered params and named/direct JSON params where practical.
 - [x] Expand effect unit tests for parameter parsing and time-varying params.
 
+### Remaining Math / AE Conformance Backlog
+- [ ] Motion blur v1: comp/layer flags, shutter angle/phase, subframe sampling,
+      static-layer skip, and AE reference micro-scenes.
+- [ ] True glyph-level text animator: real glyph/object metrics, per-glyph
+      selector weights, per-glyph position/scale/rotation/blur, and closer
+      paragraph/box text parity.
+- [ ] Expression evaluator v2: broader trait-based property evaluator, scalar
+      and vector coercion, more `thisLayer`/`thisComp` access, math functions,
+      and audio-level expressions when templates need them.
+- [ ] Bezier/ease parity: golden tests for common AE temporal ease cases and
+      tighter tangent/curve matching beyond the current cubic approximation.
+- [ ] Effects parity: AE-ish parameter mapping and golden PNGs for Drop Shadow,
+      Glow, Box Blur, Minimax, Posterize Time, Geometry2, and Turbulent Displace.
+- [ ] Collapse transformations parity: keep text/vector children sharp through
+      parent transforms, expand supported cases, and add AE reference tests.
+- [ ] Transform/math non-goals still outside V2: 3D layers, cameras, spatial
+      paths, roving keyframes, and full arbitrary ExtendScript.
+
 ### Performance / Production Maturity
 - [x] Add render manifest/log timing: total render, per-frame render/save/total ms.
 - [x] Add renderer metadata, feature counts, and deterministic asset-spec hashes.
@@ -633,6 +651,7 @@ Status: first native hardening pass implemented with controlled approximations.
 - [x] Add source prepare/prewarm before early render frames through `AE_RENDER_PREWARM_FRAMES`.
 - [x] Add Rust GStreamer appsink decode backend selectable through `AE_RENDER_MEDIA_BACKEND`.
 - [x] Add Rust GStreamer appsrc MP4 sink selectable through `AE_RENDER_MUX_BACKEND`.
+- [x] Add opt-in direct render-to-`VideoSink` MP4 path through `AE_RENDER_OUTPUT_MODE=direct_mp4` / `AE_RENDER_DIRECT_MP4=1`.
 - [x] Add repeatable backend profile/compare scripts for GStreamer vs fallback outputs.
 - [x] Add transformed-layer ROI bounds so transforms do not scan the full comp when avoidable.
 - [ ] Add precomp frame cache.
