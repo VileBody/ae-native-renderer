@@ -647,6 +647,31 @@ Suggested implementation order:
 6. Effects parity pass, one effect at a time, with per-effect thresholds.
 7. Color/compositing/sampling audit as a cross-cutting parity pass.
 
+### V2.3 — Remaining Gaps From V1 + V2 Roadmaps
+
+This section tracks roadmap items that are not simply "make math more AE-like"
+and should not disappear just because the V2 MVP renders current examples.
+
+| Gap | Old roadmap anchor | V2 anchor / status | Why it still matters |
+| --- | --- | --- | --- |
+| Doctor strict mode and runtime path checks | R1 | V2-R0 says doctor succeeds; no strict doctor mode | `doctor` reports plugins/binaries, but does not fail in strict mode or validate `/work/jobs`/runtime paths as a deployment preflight. |
+| `dump-frames` backend selection | R3 | V2-R5, V2.1 media backends | Render uses selectable GStreamer/FFmpeg media backends, but `dump-frames` is still hardwired to the FFmpeg source path. |
+| Real glyph-layout debug/export | R8 | V2-R7, V2-R13, V2.2 text backlog | `text-engine` has a glyph skeleton, but production rasterization does not expose inspectable shaped glyph layout/debug JSON. |
+| Vec3/color animated values | R11 | V2-R10 narrowed scope | Current runtime keyframes cover scalar and Vec2 paths needed by templates. Vec3/color animated values from V1 remain outside the implemented subset. |
+| Strict/permissive effect runtime policy | R13/R22 | V2-R2/V2-R17 capability routing | Unknown effects fail during render, and payload/job validation can route unsupported work, but there is no clean render-time `strict-effects` policy switch. |
+| Organized AE golden fixture suite | R14/R21/RXXX | V2-R16 exists | Compare CLI works, but we still lack per-feature AE golden fixtures/thresholds for effects, text, ease, collapse, sampling, and motion blur. |
+| SSIM/perceptual metric placeholder | R21 | V2-R16 non-goal-ish | Current compare reports max/mean/changed pixels and diff images; no SSIM/perceptual metric yet. |
+| Audio in final jobs | R2/R18/R20 adjacent | V2-R4 probes audio; audio muxing is V2-R9 non-goal | Audio assets are recognized/probed and audio layers are ignored with diagnostics. No audio decode/mix/mux, no audio-level expressions. |
+| Production resource controls | R20 | V2-R17 job runner | Job runner exists, but `RENDER_MAX_THREADS`, `RENDER_TMP_DIR`, `RENDER_STRICT` style deployment controls are not implemented as a cohesive contract. |
+| Peak memory logging | R23 | V2.1 performance timing | We log frame/layer/effect/media timings, but not peak RSS/memory pressure. |
+| Benchmark comparison harness | R23/R24 | Scripts exist for media backend profiling | We have media backend profile scripts, but no general renderer benchmark suite that compares commits and reports regressions. |
+| Precomp frame cache | R15/R24 | V2.1 unchecked | Still missing. Expensive nested/precomp renders are not cached across frames. |
+| Allocation reuse / buffer pools | R24 | V2.1 unchecked | Still missing. Canvas/effect/frame buffers are reallocated more than a production renderer should. |
+| Optional parallel rendering | R24 | V2.1 unchecked | Still missing. No optional parallel frame, row, or effect processing path yet. |
+| Mobile-readiness traits/feature flags | R25 | Architecture goal partially met | `render-core` stays media-backend-free, but stable text/raster backend traits and server-only feature flags are not fully split. |
+| Template feature manifests and cost model | RXXX | V2-R17 capability report exists | Jobs emit capabilities, but there is no persistent per-template feature manifest, renderer-feature status catalog, or cost/economics model. |
+| Native/future device/AE routing matrix | RXXX | V2-R17 native/fallback routing | Native vs AE fallback exists conceptually; future on-device routing and richer route economics remain unbuilt. |
+
 ### Performance / Production Maturity
 - [x] Add render manifest/log timing: total render, per-frame render/save/total ms.
 - [x] Add renderer metadata, feature counts, and deterministic asset-spec hashes.
