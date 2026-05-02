@@ -631,6 +631,7 @@ Status: first native hardening pass implemented with controlled approximations.
 - [x] Add media runtime contract structs for frame requests, source plans, timeline media plans, and video sinks.
 - [x] Add timeline media planner with `media-plan.json` output.
 - [x] Add source prepare/prewarm before early render frames through `AE_RENDER_PREWARM_FRAMES`.
+- [x] Add Rust GStreamer appsink decode backend selectable through `AE_RENDER_MEDIA_BACKEND`.
 - [x] Add transformed-layer ROI bounds so transforms do not scan the full comp when avoidable.
 - [ ] Add precomp frame cache.
 - [ ] Add allocation reuse / buffer pools.

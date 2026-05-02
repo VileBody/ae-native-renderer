@@ -1104,13 +1104,121 @@ fn asset_kind_name(kind: &render_ir::AssetKind) -> &'static str {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MediaBackend {
+    Auto,
+    Gstreamer,
+    Ffmpeg,
+}
+
+impl MediaBackend {
+    fn name(self) -> &'static str {
+        match self {
+            MediaBackend::Auto => "auto",
+            MediaBackend::Gstreamer => "gstreamer",
+            MediaBackend::Ffmpeg => "ffmpeg",
+        }
+    }
+
+    fn policy_name(self) -> &'static str {
+        match self {
+            MediaBackend::Auto => "GStreamer appsink preferred, FFmpeg fallback",
+            MediaBackend::Gstreamer => "GStreamer appsink",
+            MediaBackend::Ffmpeg => "persistent FFmpeg rawvideo pipe",
+        }
+    }
+}
+
+enum CliVideoSource {
+    Gstreamer(media_gst::GstVideoSource),
+    Ffmpeg(media_gst::FfmpegVideoSource),
+}
+
+impl CliVideoSource {
+    fn open(path: &str, backend: MediaBackend) -> anyhow::Result<Self> {
+        match backend {
+            MediaBackend::Gstreamer => Ok(Self::Gstreamer(media_gst::GstVideoSource::open(path)?)),
+            MediaBackend::Ffmpeg => Ok(Self::Ffmpeg(media_gst::FfmpegVideoSource::open(path)?)),
+            MediaBackend::Auto => match media_gst::GstVideoSource::open(path) {
+                Ok(source) => Ok(Self::Gstreamer(source)),
+                Err(gst_err) => {
+                    eprintln!(
+                        "render.warn gstreamer backend failed for '{}'; falling back to ffmpeg: {gst_err:#}",
+                        path
+                    );
+                    Ok(Self::Ffmpeg(media_gst::FfmpegVideoSource::open(path)?))
+                }
+            },
+        }
+    }
+
+    fn backend_name(&self) -> &'static str {
+        match self {
+            Self::Gstreamer(source) => source.backend_name(),
+            Self::Ffmpeg(source) => source.backend_name(),
+        }
+    }
+
+    fn path(&self) -> &Path {
+        match self {
+            Self::Gstreamer(source) => source.path(),
+            Self::Ffmpeg(source) => source.path(),
+        }
+    }
+
+    fn decoder_is_running(&self) -> bool {
+        match self {
+            Self::Gstreamer(source) => source.decoder_is_running(),
+            Self::Ffmpeg(source) => source.decoder_is_running(),
+        }
+    }
+
+    fn park_decoder(&mut self) {
+        match self {
+            Self::Gstreamer(source) => source.park_decoder(),
+            Self::Ffmpeg(source) => source.park_decoder(),
+        }
+    }
+}
+
+impl media_gst::VideoSource for CliVideoSource {
+    fn info(&self) -> media_gst::VideoInfo {
+        match self {
+            Self::Gstreamer(source) => source.info(),
+            Self::Ffmpeg(source) => source.info(),
+        }
+    }
+
+    fn prepare(&mut self, plan: &media_gst::SourcePlan) -> anyhow::Result<()> {
+        match self {
+            Self::Gstreamer(source) => source.prepare(plan),
+            Self::Ffmpeg(source) => source.prepare(plan),
+        }
+    }
+
+    fn frame_at(&mut self, time: f64) -> anyhow::Result<media_gst::VideoFrame> {
+        match self {
+            Self::Gstreamer(source) => source.frame_at(time),
+            Self::Ffmpeg(source) => source.frame_at(time),
+        }
+    }
+
+    fn stats(&self) -> media_gst::VideoSourceStats {
+        match self {
+            Self::Gstreamer(source) => source.stats(),
+            Self::Ffmpeg(source) => source.stats(),
+        }
+    }
+}
+
 struct CliFootageProvider {
     assets: HashMap<String, render_ir::Asset>,
     resolver: media_gst::JobAssetResolver,
-    sources: HashMap<String, media_gst::FfmpegVideoSource>,
+    sources: HashMap<String, CliVideoSource>,
     source_paths: HashMap<String, String>,
     decoder_lru: VecDeque<String>,
     max_open_decoders: usize,
+    backend: MediaBackend,
     missing_sources: HashSet<String>,
     strict_media: bool,
     prepare_report: Option<Value>,
@@ -1132,6 +1240,7 @@ impl CliFootageProvider {
             source_paths: HashMap::new(),
             decoder_lru: VecDeque::new(),
             max_open_decoders: max_open_decoders(),
+            backend: media_backend(),
             missing_sources: HashSet::new(),
             strict_media,
             prepare_report: None,
@@ -1258,7 +1367,11 @@ impl CliFootageProvider {
         missing_sources.sort();
 
         json!({
-            "backend_policy": "persistent decoder + per-source LRU frame cache",
+            "backend_policy": format!(
+                "{} + per-source LRU frame cache",
+                self.backend.policy_name()
+            ),
+            "requested_backend": self.backend.name(),
             "opened_sources": sources.len(),
             "max_open_decoders": self.max_open_decoders,
             "missing_sources": missing_sources,
@@ -1335,7 +1448,7 @@ impl CliFootageProvider {
         let resolved_path = path.clone();
         self.sources.insert(
             source.to_string(),
-            media_gst::FfmpegVideoSource::open(&resolved_path)?,
+            CliVideoSource::open(&resolved_path, self.backend)?,
         );
         self.source_paths.insert(source.to_string(), resolved_path);
         Ok(true)
@@ -1368,6 +1481,18 @@ fn max_open_decoders() -> usize {
         .and_then(|value| value.parse::<usize>().ok())
         .filter(|value| *value > 0)
         .unwrap_or(6)
+}
+
+fn media_backend() -> MediaBackend {
+    match std::env::var("AE_RENDER_MEDIA_BACKEND")
+        .unwrap_or_else(|_| "auto".to_string())
+        .to_lowercase()
+        .as_str()
+    {
+        "gstreamer" | "gst" | "appsink" => MediaBackend::Gstreamer,
+        "ffmpeg" | "ffmpeg-pipe" => MediaBackend::Ffmpeg,
+        _ => MediaBackend::Auto,
+    }
 }
 
 fn media_prewarm_frames() -> u32 {

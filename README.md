@@ -153,7 +153,8 @@ transforms, the generated expression-selector bounce, adjustment layers, and
 approximate Geometry2/Minimax/Turbulent Displace effects. Posterize Time is
 recognized as a canvas-stage no-op. The CLI also has an AE conformance compare
 command and a production-style job runner with native/fallback routing reports.
-Media decode now uses a persistent FFmpeg rawvideo pipe with a small per-source
+Media decode now supports a Rust GStreamer appsink backend with a persistent
+FFmpeg rawvideo pipe as fallback/debug tooling. Both paths use a small per-source
 frame cache and bounded open-decoder pool instead of spawning one FFmpeg process
 per requested frame. Render logs include per-frame layer/effect profile details,
 and manifests include aggregate layer/effect timing summaries. Renders also write

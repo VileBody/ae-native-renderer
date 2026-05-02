@@ -36,6 +36,8 @@ report.
 `media-report.json` is the main media I/O report. Important fields:
 
 ```text
+requested_backend              selected backend policy: auto, gstreamer, or ffmpeg
+sources[].backend              actual backend used for each opened source
 prepare.elapsed_ms              source open/prewarm wall time before frame rendering
 prepare.prewarm_frames          number of initial render frames eligible for source prewarm
 prepare.prepared_sources        sources opened and decoder-started before frame rendering
@@ -62,12 +64,16 @@ conformance, not raw speed.
 ## Tuning knobs
 
 ```bash
+AE_RENDER_MEDIA_BACKEND=auto
 AE_RENDER_MAX_OPEN_DECODERS=6
 AE_RENDER_MEDIA_FRAME_CACHE=4
 AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP=180
 AE_RENDER_PREWARM_FRAMES=1
 ```
 
+- `AE_RENDER_MEDIA_BACKEND`: `auto`, `gstreamer`, or `ffmpeg`. `auto` tries the
+  Rust GStreamer appsink backend first and falls back to FFmpeg if opening the
+  source fails.
 - `AE_RENDER_MAX_OPEN_DECODERS`: limits simultaneously running decoder pipes.
 - `AE_RENDER_MEDIA_FRAME_CACHE`: per-source decoded-frame LRU size; `0` disables it.
 - `AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP`: maximum frame gap to advance by reading
@@ -80,9 +86,11 @@ AE_RENDER_PREWARM_FRAMES=1
 
 ```bash
 docker run --rm \
+  -e AE_RENDER_MEDIA_BACKEND=gstreamer \
   -e AE_RENDER_MAX_OPEN_DECODERS=6 \
   -e AE_RENDER_MEDIA_FRAME_CACHE=4 \
   -e AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP=180 \
+  -e AE_RENDER_PREWARM_FRAMES=1 \
   -v "$PWD:/work" \
   ae-native-renderer:dev \
   render \

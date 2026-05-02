@@ -58,9 +58,35 @@ Done after this baseline:
    requests by source in render-frame order.
 2. Added source prepare/prewarm for sources needed in the initial render frames
    through `AE_RENDER_PREWARM_FRAMES`.
+3. Added Rust GStreamer appsink backend behind the same `VideoSource` stats and
+   selectable through `AE_RENDER_MEDIA_BACKEND`.
+
+## GStreamer AppSink Pass
+
+Follow-up profile from May 2, 2026. Same 2s/30fps scenes and media tuning knobs.
+
+```text
+profile             template      backend                 render_ms  prepare_ms  req_ms  read_ms  decoded  skipped  spawns
+ffmpeg_appsink_pass impulse_2nd   ffmpeg-persistent-pipe  1041       65          377     358      60       0        3
+ffmpeg_appsink_pass scenes_3rd    ffmpeg-persistent-pipe  1111       76          243     225      119      59       1
+ffmpeg_appsink_pass template_4th  ffmpeg-persistent-pipe  991        73          358     341      56       0        3
+gstreamer_appsink_pass impulse_2nd   gstreamer-appsink    830        277         168     102      60       0        3
+gstreamer_appsink_pass scenes_3rd    gstreamer-appsink    885        313         35      23       119      59       1
+gstreamer_appsink_pass template_4th  gstreamer-appsink    730        285         113     71       56       0        3
+```
+
+Read:
+
+- GStreamer appsink moved more cost into source open/prewarm, but reduced
+  per-frame media request/read time substantially.
+- Total render time improved on all three current samples despite higher
+  prewarm setup cost.
+- Backend sanity diffs against FFmpeg were low on mean absolute difference
+  (`1.39` to `1.86`), but not byte-identical. Keep backend choice visible in
+  reports and use AE conformance for final visual truth.
 
 Remaining:
 
-1. Add GStreamer appsink implementation behind the same `VideoSource` stats.
-2. Add appsrc/encoder `VideoSink` and compare it against PNG-sequence + FFmpeg
+1. Add appsrc/encoder `VideoSink` and compare it against PNG-sequence + FFmpeg
    mux in `mux-report.json`.
+2. Add backend conformance/profile gates for GStreamer vs fallback outputs.

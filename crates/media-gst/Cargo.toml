@@ -8,3 +8,6 @@ license.workspace = true
 anyhow.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+gst = { package = "gstreamer", version = "0.22" }
+gst-app = { package = "gstreamer-app", version = "0.22" }
+gst-video = { package = "gstreamer-video", version = "0.22" }

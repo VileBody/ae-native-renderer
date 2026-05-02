@@ -187,15 +187,15 @@ The mobile port should replace media adapters, not rewrite the renderer.
 `crates/media-gst` is the media-adapter crate. Today it is still a bootstrap
 backend: it checks GStreamer availability for `doctor`, has a `VideoSource` trait,
 `SourcePlan`/`TimelineMediaPlan` structs for scheduler input, and a `VideoSink`
-contract for future encoders. It uses FFmpeg/ffprobe-backed probing plus a
-persistent sequential FFmpeg pipe for active CLI frame extraction. The CLI writes
-`media-plan.json` before rendering, uses it to open and decoder-start early
-sources, keeps a small per-source frame cache, and maintains a bounded pool of
-open decoders so it no longer spawns one FFmpeg process per requested frame.
-Media reports include request/cache/decode/spawn/read timings and runtime tuning
-knobs for cache size, decoder pool size, sequential decode gap, and prewarm
-window. The target is still to replace the hot path with GStreamer Rust bindings
-and appsink/appsrc pipelines.
+contract for future encoders. It now has a Rust GStreamer appsink `VideoSource`
+for decode and keeps the persistent sequential FFmpeg pipe as an explicit
+fallback/debug backend. The CLI writes `media-plan.json` before rendering, uses it
+to open and decoder-start early sources, keeps a small per-source frame cache,
+and maintains a bounded pool of open decoders. Media reports include backend
+selection plus request/cache/decode/spawn/read timings and runtime tuning knobs
+for backend choice, cache size, decoder pool size, sequential decode gap, and
+prewarm window. The remaining server media target is appsrc/encoder output behind
+the `VideoSink` boundary.
 
 `render-core` currently renders through a `FootageProvider` boundary and writes
 PNG sequences plus `manifest.json` and `render-log.jsonl`. The manifest includes

@@ -3,7 +3,7 @@ set -euo pipefail
 
 root="${1:-target/media_profile_runs}"
 
-printf 'profile\ttemplate\tframes\trender_total_ms\tavg_render_ms\trequests\tdecoded\tskipped\tspawns\tparks\treq_ms\tspawn_ms\tread_ms\tavg_req_ms\tavg_read_ms\n'
+printf 'profile\ttemplate\tbackend\tframes\trender_total_ms\tavg_render_ms\tprepare_ms\trequests\tdecoded\tskipped\tspawns\tparks\treq_ms\tspawn_ms\tread_ms\tavg_req_ms\tavg_read_ms\n'
 
 find "$root" -mindepth 3 -maxdepth 3 -name media-report.json -print | sort | while read -r report; do
   dir="$(dirname "$report")"
@@ -23,9 +23,11 @@ find "$root" -mindepth 3 -maxdepth 3 -name media-report.json -print | sort | whi
     '[
       $profile,
       $template,
+      (.sources[0].backend // "none"),
       $frames,
       $render_total,
       $avg_render,
+      (.prepare.elapsed_ms // 0 | round),
       .totals.requests,
       .totals.frames_decoded,
       .totals.sequential_frames_skipped,
