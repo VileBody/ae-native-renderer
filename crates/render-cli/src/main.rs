@@ -1,7 +1,7 @@
 use clap::{Parser, Subcommand, ValueEnum};
 use media_gst::VideoSource;
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -433,7 +433,11 @@ fn dump_frames(
             "frames": count,
             "start": start,
             "step": step,
-            "output": "frame_%06d.png"
+            "output": "frame_%06d.png",
+            "media": {
+                "backend": source.backend_name(),
+                "stats": source.stats()
+            }
         }))?,
     )?;
     println!(
@@ -458,6 +462,7 @@ fn render(
     let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
     std::fs::create_dir_all(&out)?;
     render_core::render_png_sequence_with_footage(&scene, &out, &mut footage)?;
+    write_media_report(&out, &footage)?;
     if let Some(mp4) = mp4 {
         render_core::mux_png_sequence_to_mp4(out.join("frames"), fps, &mp4)?;
         println!("render.mp4={}", mp4.display());
@@ -612,6 +617,11 @@ fn compare_outputs(
         "ok": threshold_ok,
         "native": native.display().to_string(),
         "reference": reference.display().to_string(),
+        "reference_media": reference_video.as_ref().map(|source| json!({
+            "backend": source.backend_name(),
+            "path": source.path().display().to_string(),
+            "stats": source.stats()
+        })),
         "fps": fps,
         "start": start,
         "frames": frame_count,
@@ -1076,6 +1086,9 @@ struct CliFootageProvider {
     assets: HashMap<String, render_ir::Asset>,
     resolver: media_gst::JobAssetResolver,
     sources: HashMap<String, media_gst::FfmpegVideoSource>,
+    source_paths: HashMap<String, String>,
+    decoder_lru: VecDeque<String>,
+    max_open_decoders: usize,
     missing_sources: HashSet<String>,
     strict_media: bool,
 }
@@ -1093,9 +1106,89 @@ impl CliFootageProvider {
                 .collect(),
             resolver,
             sources: HashMap::new(),
+            source_paths: HashMap::new(),
+            decoder_lru: VecDeque::new(),
+            max_open_decoders: max_open_decoders(),
             missing_sources: HashSet::new(),
             strict_media,
         }
+    }
+
+    fn media_report(&self) -> Value {
+        let mut source_ids = self.sources.keys().cloned().collect::<Vec<_>>();
+        source_ids.sort();
+
+        let mut totals = media_gst::VideoSourceStats::default();
+        let sources = source_ids
+            .into_iter()
+            .filter_map(|source_id| {
+                let source = self.sources.get(&source_id)?;
+                let stats = source.stats();
+                totals.requests += stats.requests;
+                totals.cache_hits += stats.cache_hits;
+                totals.cache_misses += stats.cache_misses;
+                totals.frames_decoded += stats.frames_decoded;
+                totals.decoder_spawns += stats.decoder_spawns;
+                totals.decoder_restarts += stats.decoder_restarts;
+                totals.decoder_parks += stats.decoder_parks;
+                totals.sequential_frames_skipped += stats.sequential_frames_skipped;
+                totals.max_cache_entries = totals.max_cache_entries.max(stats.max_cache_entries);
+                Some(json!({
+                    "asset_id": source_id.clone(),
+                    "backend": source.backend_name(),
+                    "path": self.source_paths
+                        .get(&source_id)
+                        .cloned()
+                        .unwrap_or_else(|| source.path().display().to_string()),
+                    "stats": stats
+                }))
+            })
+            .collect::<Vec<_>>();
+
+        let hit_rate = if totals.requests == 0 {
+            0.0
+        } else {
+            totals.cache_hits as f64 / totals.requests as f64
+        };
+        let mut missing_sources = self.missing_sources.iter().cloned().collect::<Vec<_>>();
+        missing_sources.sort();
+
+        json!({
+            "backend_policy": "persistent decoder + per-source LRU frame cache",
+            "opened_sources": sources.len(),
+            "max_open_decoders": self.max_open_decoders,
+            "missing_sources": missing_sources,
+            "cache_hit_rate": hit_rate,
+            "totals": totals,
+            "sources": sources
+        })
+    }
+
+    fn mark_decoder_used(&mut self, source: &str) {
+        self.decoder_lru.retain(|existing| existing != source);
+        self.decoder_lru.push_back(source.to_string());
+
+        while self.running_decoder_count() > self.max_open_decoders {
+            let Some(candidate) = self.decoder_lru.pop_front() else {
+                break;
+            };
+            if candidate == source {
+                self.decoder_lru.push_back(candidate);
+                break;
+            }
+            if let Some(decoder) = self.sources.get_mut(&candidate) {
+                if decoder.decoder_is_running() {
+                    decoder.park_decoder();
+                }
+            }
+        }
+    }
+
+    fn running_decoder_count(&self) -> usize {
+        self.sources
+            .values()
+            .filter(|source| source.decoder_is_running())
+            .count()
     }
 }
 
@@ -1128,10 +1221,12 @@ impl render_core::FootageProvider for CliFootageProvider {
                 self.missing_sources.insert(source.to_string());
                 return Ok(None);
             };
+            let resolved_path = path.clone();
             self.sources.insert(
                 source.to_string(),
-                media_gst::FfmpegVideoSource::open(path)?,
+                media_gst::FfmpegVideoSource::open(&resolved_path)?,
             );
+            self.source_paths.insert(source.to_string(), resolved_path);
         }
 
         let decoded = self
@@ -1139,10 +1234,26 @@ impl render_core::FootageProvider for CliFootageProvider {
             .get_mut(source)
             .ok_or_else(|| anyhow::anyhow!("video source '{source}' was not opened"))?
             .frame_at(time)?;
+        self.mark_decoder_used(source);
         Ok(Some(raster_cpu::Canvas::from_rgba(
             decoded.width,
             decoded.height,
             decoded.rgba,
         )?))
     }
+}
+
+fn max_open_decoders() -> usize {
+    std::env::var("AE_RENDER_MAX_OPEN_DECODERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(6)
+}
+
+fn write_media_report(out: &Path, footage: &CliFootageProvider) -> anyhow::Result<()> {
+    let path = out.join("media-report.json");
+    fs::write(&path, serde_json::to_string_pretty(&footage.media_report())?)?;
+    println!("render.media_report={}", path.display());
+    Ok(())
 }

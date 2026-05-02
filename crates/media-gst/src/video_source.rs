@@ -1,6 +1,12 @@
 use crate::probe::probe;
+use serde::{Deserialize, Serialize};
+use std::collections::{HashMap, VecDeque};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Child, ChildStdout, Command, Stdio};
+
+const DEFAULT_CACHE_CAPACITY: usize = 4;
+const MAX_SEQUENTIAL_DECODE_GAP: u64 = 180;
 
 #[derive(Debug, Clone)]
 pub struct VideoInfo {
@@ -18,17 +24,36 @@ pub struct VideoFrame {
     pub rgba: Vec<u8>,
 }
 
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VideoSourceStats {
+    pub requests: u64,
+    pub cache_hits: u64,
+    pub cache_misses: u64,
+    pub frames_decoded: u64,
+    pub decoder_spawns: u64,
+    pub decoder_restarts: u64,
+    pub decoder_parks: u64,
+    pub sequential_frames_skipped: u64,
+    pub max_cache_entries: usize,
+}
+
 pub trait VideoSource {
     fn info(&self) -> VideoInfo;
     fn frame_at(&mut self, time: f64) -> anyhow::Result<VideoFrame>;
+
+    fn stats(&self) -> VideoSourceStats {
+        VideoSourceStats::default()
+    }
 }
 
 pub struct GstVideoSourceTodo;
 
-#[derive(Debug, Clone)]
 pub struct FfmpegVideoSource {
     path: PathBuf,
     info: VideoInfo,
+    decoder: Option<FfmpegPipe>,
+    cache: FrameCache,
+    stats: VideoSourceStats,
 }
 
 impl FfmpegVideoSource {
@@ -55,7 +80,143 @@ impl FfmpegVideoSource {
                 fps: media.fps.unwrap_or(30.0),
                 duration: media.duration.unwrap_or(0.0),
             },
+            decoder: None,
+            cache: FrameCache::new(DEFAULT_CACHE_CAPACITY),
+            stats: VideoSourceStats {
+                max_cache_entries: DEFAULT_CACHE_CAPACITY,
+                ..VideoSourceStats::default()
+            },
         })
+    }
+
+    pub fn backend_name(&self) -> &'static str {
+        "ffmpeg-persistent-pipe"
+    }
+
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
+    pub fn decoder_is_running(&self) -> bool {
+        self.decoder.is_some()
+    }
+
+    pub fn park_decoder(&mut self) {
+        if self.decoder.is_some() {
+            self.stats.decoder_parks += 1;
+        }
+        self.stop_decoder();
+    }
+
+    fn frame_index_for_time(&self, time: f64) -> u64 {
+        let fps = self.info.fps.max(0.000_001);
+        let frame_duration = 1.0 / fps;
+        let max_time = (self.info.duration - frame_duration).max(0.0);
+        let clamped = time.clamp(0.0, max_time);
+        let frame = (clamped * fps).round().max(0.0) as u64;
+        let max_frame = if self.info.duration > 0.0 {
+            (self.info.duration * fps).ceil().max(1.0) as u64 - 1
+        } else {
+            frame
+        };
+        frame.min(max_frame)
+    }
+
+    fn time_for_frame_index(&self, frame_index: u64) -> f64 {
+        frame_index as f64 / self.info.fps.max(0.000_001)
+    }
+
+    fn ensure_decoder_at(&mut self, frame_index: u64) -> anyhow::Result<()> {
+        let restart = match self.decoder.as_ref() {
+            Some(decoder) => {
+                frame_index < decoder.next_frame
+                    || frame_index.saturating_sub(decoder.next_frame) > MAX_SEQUENTIAL_DECODE_GAP
+            }
+            None => true,
+        };
+
+        if !restart {
+            return Ok(());
+        }
+
+        if self.decoder.is_some() {
+            self.stats.decoder_restarts += 1;
+        }
+        self.stop_decoder();
+
+        let time = self.time_for_frame_index(frame_index);
+        let mut child = Command::new("ffmpeg")
+            .arg("-v")
+            .arg("error")
+            .arg("-ss")
+            .arg(format!("{time:.6}"))
+            .arg("-i")
+            .arg(&self.path)
+            .arg("-an")
+            .arg("-sn")
+            .arg("-dn")
+            .arg("-f")
+            .arg("rawvideo")
+            .arg("-pix_fmt")
+            .arg("rgba")
+            .arg("pipe:1")
+            .stdin(Stdio::null())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::null())
+            .spawn()
+            .map_err(|err| anyhow::anyhow!("failed to spawn ffmpeg decoder: {err}"))?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| anyhow::anyhow!("ffmpeg decoder stdout was not captured"))?;
+        self.decoder = Some(FfmpegPipe {
+            child,
+            stdout,
+            next_frame: frame_index,
+        });
+        self.stats.decoder_spawns += 1;
+        Ok(())
+    }
+
+    fn read_next_frame(&mut self) -> anyhow::Result<(u64, VideoFrame)> {
+        let expected = (self.info.width * self.info.height * 4) as usize;
+        let decoder = self
+            .decoder
+            .as_mut()
+            .ok_or_else(|| anyhow::anyhow!("ffmpeg decoder was not started"))?;
+        let frame_index = decoder.next_frame;
+        let mut rgba = vec![0_u8; expected];
+        decoder.stdout.read_exact(&mut rgba).map_err(|err| {
+            anyhow::anyhow!(
+                "ffmpeg decoder ended before frame {} for {}: {err}",
+                frame_index,
+                self.path.display()
+            )
+        })?;
+        decoder.next_frame += 1;
+        self.stats.frames_decoded += 1;
+        Ok((
+            frame_index,
+            VideoFrame {
+                width: self.info.width,
+                height: self.info.height,
+                pts: self.time_for_frame_index(frame_index),
+                rgba,
+            },
+        ))
+    }
+
+    fn stop_decoder(&mut self) {
+        if let Some(mut decoder) = self.decoder.take() {
+            let _ = decoder.child.kill();
+            let _ = decoder.child.wait();
+        }
+    }
+}
+
+impl Drop for FfmpegVideoSource {
+    fn drop(&mut self) {
+        self.stop_decoder();
     }
 }
 
@@ -65,57 +226,78 @@ impl VideoSource for FfmpegVideoSource {
     }
 
     fn frame_at(&mut self, time: f64) -> anyhow::Result<VideoFrame> {
-        let frame_duration = if self.info.fps > 0.0 {
-            1.0 / self.info.fps
-        } else {
-            0.0
-        };
-        let max_time = (self.info.duration - frame_duration).max(0.0);
-        let time = time.clamp(0.0, max_time);
+        self.stats.requests += 1;
+        let frame_index = self.frame_index_for_time(time);
 
-        let output = Command::new("ffmpeg")
-            .arg("-v")
-            .arg("error")
-            .arg("-ss")
-            .arg(format!("{time:.6}"))
-            .arg("-i")
-            .arg(&self.path)
-            .arg("-frames:v")
-            .arg("1")
-            .arg("-an")
-            .arg("-sn")
-            .arg("-dn")
-            .arg("-f")
-            .arg("rawvideo")
-            .arg("-pix_fmt")
-            .arg("rgba")
-            .arg("pipe:1")
-            .output()
-            .map_err(|err| anyhow::anyhow!("failed to run ffmpeg: {err}"))?;
-
-        if !output.status.success() {
-            anyhow::bail!(
-                "ffmpeg failed to decode frame at {time:.3}s from {}: {}",
-                self.path.display(),
-                String::from_utf8_lossy(&output.stderr)
-            );
+        if let Some(frame) = self.cache.get(frame_index) {
+            self.stats.cache_hits += 1;
+            return Ok(frame);
         }
 
-        let expected = (self.info.width * self.info.height * 4) as usize;
-        if output.stdout.len() != expected {
-            anyhow::bail!(
-                "ffmpeg decoded {} bytes for {}, expected {} bytes",
-                output.stdout.len(),
-                self.path.display(),
-                expected
-            );
-        }
+        self.stats.cache_misses += 1;
+        self.ensure_decoder_at(frame_index)?;
 
-        Ok(VideoFrame {
-            width: self.info.width,
-            height: self.info.height,
-            pts: time,
-            rgba: output.stdout,
-        })
+        loop {
+            let (decoded_index, frame) = self.read_next_frame()?;
+            self.cache.insert(decoded_index, frame.clone());
+            if decoded_index == frame_index {
+                return Ok(frame);
+            }
+            self.stats.sequential_frames_skipped += 1;
+        }
+    }
+
+    fn stats(&self) -> VideoSourceStats {
+        self.stats.clone()
+    }
+}
+
+struct FfmpegPipe {
+    child: Child,
+    stdout: ChildStdout,
+    next_frame: u64,
+}
+
+struct FrameCache {
+    capacity: usize,
+    order: VecDeque<u64>,
+    frames: HashMap<u64, VideoFrame>,
+}
+
+impl FrameCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            capacity,
+            order: VecDeque::new(),
+            frames: HashMap::new(),
+        }
+    }
+
+    fn get(&mut self, frame_index: u64) -> Option<VideoFrame> {
+        let frame = self.frames.get(&frame_index).cloned()?;
+        self.order.retain(|existing| *existing != frame_index);
+        self.order.push_back(frame_index);
+        Some(frame)
+    }
+
+    fn insert(&mut self, frame_index: u64, frame: VideoFrame) {
+        if self.capacity == 0 {
+            return;
+        }
+        if self.frames.contains_key(&frame_index) {
+            self.order.retain(|existing| *existing != frame_index);
+            self.order.push_back(frame_index);
+            self.frames.insert(frame_index, frame);
+            return;
+        }
+        while self.frames.len() >= self.capacity {
+            if let Some(oldest) = self.order.pop_front() {
+                self.frames.remove(&oldest);
+            } else {
+                break;
+            }
+        }
+        self.order.push_back(frame_index);
+        self.frames.insert(frame_index, frame);
     }
 }

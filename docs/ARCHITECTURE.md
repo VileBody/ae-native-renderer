@@ -185,14 +185,18 @@ The mobile port should replace media adapters, not rewrite the renderer.
 
 `crates/media-gst` is the media-adapter crate. Today it is still a bootstrap
 backend: it checks GStreamer availability for `doctor`, has a `VideoSource` trait,
-and uses FFmpeg/ffprobe-backed probing and frame extraction in the active CLI
-paths. The target is to replace the hot path with GStreamer Rust bindings and
-appsink/appsrc pipelines.
+and uses FFmpeg/ffprobe-backed probing plus a persistent sequential FFmpeg pipe
+for active CLI frame extraction. The CLI now keeps a small per-source frame cache
+and a bounded pool of open decoders so it no longer spawns one FFmpeg process per
+requested frame. The target is still to replace the hot path with GStreamer Rust
+bindings and appsink/appsrc pipelines.
 
 `render-core` currently renders through a `FootageProvider` boundary and writes
-PNG sequences plus `manifest.json` and `render-log.jsonl`. The MP4 mux helper is
-still FFmpeg CLI based; treat it as startup tooling that should move behind a
-`VideoSink`/media-backend boundary before production.
+PNG sequences plus `manifest.json` and `render-log.jsonl`. The manifest includes
+aggregate layer/effect timing profiles, and the frame log includes per-frame
+profile detail. The MP4 mux helper is still FFmpeg CLI based; treat it as startup
+tooling that should move behind a `VideoSink`/media-backend boundary before
+production.
 
 The desired production formula:
 

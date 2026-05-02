@@ -5,10 +5,37 @@ use render_ir::{
     TextAnimatorSpec, TextExpressionSelector, TextSelectorBasedOn, TextSelectorShape, Vec2Keyframe,
 };
 use text_engine::{rasterize_text, TextLayoutRequest};
+use std::time::Instant;
 use transform_math::{Mat3, Transform2D, Vec2};
 
 pub trait FootageProvider {
     fn frame_at(&mut self, source: &str, time: f64) -> anyhow::Result<Option<Canvas>>;
+}
+
+#[derive(Debug, Clone)]
+pub struct FrameRenderTrace {
+    pub frame: u32,
+    pub time: f64,
+    pub layers: Vec<LayerTiming>,
+    pub effects: Vec<EffectTiming>,
+}
+
+#[derive(Debug, Clone)]
+pub struct LayerTiming {
+    pub composition: String,
+    pub layer_id: String,
+    pub layer_type: &'static str,
+    pub content_ms: f64,
+    pub effects_ms: f64,
+    pub total_ms: f64,
+}
+
+#[derive(Debug, Clone)]
+pub struct EffectTiming {
+    pub composition: String,
+    pub layer_id: String,
+    pub match_name: String,
+    pub elapsed_ms: f64,
 }
 
 pub struct CheckerboardFootageProvider;
@@ -31,7 +58,40 @@ pub fn render_frame_with_footage(
 ) -> anyhow::Result<Canvas> {
     let comp = &scene.composition;
     let time = frame_index as f64 / comp.fps;
-    render_composition_frame(scene, comp, &scene.layers, time, footage, &mut Vec::new())
+    render_composition_frame(
+        scene,
+        comp,
+        &scene.layers,
+        time,
+        footage,
+        &mut Vec::new(),
+        None,
+    )
+}
+
+pub fn render_frame_with_footage_traced(
+    scene: &Scene,
+    frame_index: u32,
+    footage: &mut dyn FootageProvider,
+) -> anyhow::Result<(Canvas, FrameRenderTrace)> {
+    let comp = &scene.composition;
+    let time = frame_index as f64 / comp.fps;
+    let mut trace = FrameRenderTrace {
+        frame: frame_index,
+        time,
+        layers: Vec::new(),
+        effects: Vec::new(),
+    };
+    let canvas = render_composition_frame(
+        scene,
+        comp,
+        &scene.layers,
+        time,
+        footage,
+        &mut Vec::new(),
+        Some(&mut trace),
+    )?;
+    Ok((canvas, trace))
 }
 
 fn render_composition_frame(
@@ -41,6 +101,7 @@ fn render_composition_frame(
     time: f64,
     footage: &mut dyn FootageProvider,
     stack: &mut Vec<String>,
+    mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
     let mut canvas = Canvas::new(comp.width, comp.height, comp.background);
 
@@ -50,11 +111,44 @@ fn render_composition_frame(
             continue;
         }
         if matches!(layer, Layer::Adjustment { .. }) {
-            canvas = apply_effects_to_canvas(effects_of(layer), &canvas, time, comp.fps)?;
+            let layer_started = Instant::now();
+            let effects_started = Instant::now();
+            canvas = apply_effects_to_canvas(
+                effects_of(layer),
+                &canvas,
+                time,
+                comp.fps,
+                trace.as_deref_mut(),
+                &comp.id,
+                layer.id(),
+            )?;
+            let effects_ms = elapsed_ms(effects_started);
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.layers.push(LayerTiming {
+                    composition: comp.id.clone(),
+                    layer_id: layer.id().to_string(),
+                    layer_type: layer_type(layer),
+                    content_ms: 0.0,
+                    effects_ms,
+                    total_ms: elapsed_ms(layer_started),
+                });
+            }
             continue;
         }
-        let layer_canvas = render_layer_stub(scene, comp, layer, time, footage, stack)?;
-        composite_normal(&mut canvas, &layer_canvas, opacity_of(layer, time));
+        let layer_opacity = opacity_of(layer, time);
+        if layer_opacity <= 0.0 {
+            continue;
+        }
+        let layer_canvas = render_layer_stub(
+            scene,
+            comp,
+            layer,
+            time,
+            footage,
+            stack,
+            trace.as_deref_mut(),
+        )?;
+        composite_normal(&mut canvas, &layer_canvas, layer_opacity);
     }
 
     Ok(canvas)
@@ -91,7 +185,10 @@ fn render_layer_stub(
     time: f64,
     footage: &mut dyn FootageProvider,
     stack: &mut Vec<String>,
+    mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
+    let layer_started = Instant::now();
+    let content_started = Instant::now();
     let mut canvas = match layer {
         Layer::Solid {
             color,
@@ -182,41 +279,65 @@ fn render_layer_stub(
             ..
         } => {
             if *collapse_transformations && can_collapse_composition(scene, composition, stack) {
-                return render_collapsed_precomp(
+                render_collapsed_precomp(
                     scene,
                     comp,
                     layer,
                     time,
                     footage,
                     stack,
-                );
+                    trace.as_deref_mut(),
+                )?
+            } else {
+                let node = scene
+                    .compositions
+                    .iter()
+                    .find(|node| node.composition.id == *composition)
+                    .ok_or_else(|| anyhow::anyhow!("precomp composition '{composition}' was not found"))?;
+                if stack.iter().any(|id| id == composition) {
+                    anyhow::bail!("precomp cycle detected: {} -> {}", stack.join(" -> "), composition);
+                }
+                stack.push(composition.clone());
+                let source_time = (time - *start).max(0.0);
+                let precomp_canvas = render_composition_frame(
+                    scene,
+                    &node.composition,
+                    &node.layers,
+                    source_time,
+                    footage,
+                    stack,
+                    trace.as_deref_mut(),
+                )?;
+                stack.pop();
+                let evaluated = evaluate_transform(transform, time, *start, *duration, comp.fps);
+                transform_canvas(&precomp_canvas, comp.width, comp.height, &evaluated, [0.0, 0.0])
             }
-            let node = scene
-                .compositions
-                .iter()
-                .find(|node| node.composition.id == *composition)
-                .ok_or_else(|| anyhow::anyhow!("precomp composition '{composition}' was not found"))?;
-            if stack.iter().any(|id| id == composition) {
-                anyhow::bail!("precomp cycle detected: {} -> {}", stack.join(" -> "), composition);
-            }
-            stack.push(composition.clone());
-            let source_time = (time - *start).max(0.0);
-            let precomp_canvas = render_composition_frame(
-                scene,
-                &node.composition,
-                &node.layers,
-                source_time,
-                footage,
-                stack,
-            )?;
-            stack.pop();
-            let evaluated = evaluate_transform(transform, time, *start, *duration, comp.fps);
-            transform_canvas(&precomp_canvas, comp.width, comp.height, &evaluated, [0.0, 0.0])
         }
         Layer::Adjustment { .. } => Canvas::transparent(comp.width, comp.height),
     };
+    let content_ms = elapsed_ms(content_started);
 
-    canvas = apply_effects_to_canvas(effects_of(layer), &canvas, time, comp.fps)?;
+    let effects_started = Instant::now();
+    canvas = apply_effects_to_canvas(
+        effects_of(layer),
+        &canvas,
+        time,
+        comp.fps,
+        trace.as_deref_mut(),
+        &comp.id,
+        layer.id(),
+    )?;
+    let effects_ms = elapsed_ms(effects_started);
+    if let Some(trace) = trace.as_deref_mut() {
+        trace.layers.push(LayerTiming {
+            composition: comp.id.clone(),
+            layer_id: layer.id().to_string(),
+            layer_type: layer_type(layer),
+            content_ms,
+            effects_ms,
+            total_ms: elapsed_ms(layer_started),
+        });
+    }
     Ok(canvas)
 }
 
@@ -227,6 +348,7 @@ fn render_collapsed_precomp(
     time: f64,
     footage: &mut dyn FootageProvider,
     stack: &mut Vec<String>,
+    mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
     let Layer::Precomp {
         start,
@@ -261,6 +383,7 @@ fn render_collapsed_precomp(
             footage,
             stack,
             parent_matrix,
+            trace.as_deref_mut(),
         )?;
         composite_normal(&mut canvas, &child_canvas, opacity_of(child, source_time));
     }
@@ -277,6 +400,7 @@ fn render_layer_with_parent_matrix(
     footage: &mut dyn FootageProvider,
     stack: &mut Vec<String>,
     parent_matrix: Mat3,
+    mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
     match layer {
         Layer::Solid {
@@ -380,13 +504,22 @@ fn render_layer_with_parent_matrix(
                     footage,
                     stack,
                     matrix,
+                    trace.as_deref_mut(),
                 )?;
                 composite_normal(&mut canvas, &child_canvas, opacity_of(child, source_time));
             }
             stack.pop();
             Ok(canvas)
         }
-        _ => render_layer_stub(scene, parent_comp, layer, time, footage, stack),
+        _ => render_layer_stub(
+            scene,
+            parent_comp,
+            layer,
+            time,
+            footage,
+            stack,
+            trace.as_deref_mut(),
+        ),
     }
 }
 
@@ -433,10 +566,14 @@ fn apply_effects_to_canvas(
     input: &Canvas,
     time: f64,
     fps: f64,
+    mut trace: Option<&mut FrameRenderTrace>,
+    composition: &str,
+    layer_id: &str,
 ) -> anyhow::Result<Canvas> {
     let mut canvas = input.clone();
     for spec in effects {
         if let Some(effect) = EffectRegistry::create(&spec.match_name) {
+            let started = Instant::now();
             canvas = effect.render(
                 &canvas,
                 &EffectContext {
@@ -445,11 +582,33 @@ fn apply_effects_to_canvas(
                 },
                 &spec.params,
             )?;
+            if let Some(trace) = trace.as_deref_mut() {
+                trace.effects.push(EffectTiming {
+                    composition: composition.to_string(),
+                    layer_id: layer_id.to_string(),
+                    match_name: spec.match_name.clone(),
+                    elapsed_ms: elapsed_ms(started),
+                });
+            }
         } else {
             anyhow::bail!("unknown effect matchName: {}", spec.match_name);
         }
     }
     Ok(canvas)
+}
+
+fn layer_type(layer: &Layer) -> &'static str {
+    match layer {
+        Layer::Solid { .. } => "solid",
+        Layer::Footage { .. } => "footage",
+        Layer::Text { .. } => "text",
+        Layer::Precomp { .. } => "precomp",
+        Layer::Adjustment { .. } => "adjustment",
+    }
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
 }
 
 fn checkerboard_canvas(width: u32, height: u32) -> Canvas {
@@ -492,8 +651,11 @@ fn transform_canvas_with_matrix(
     };
 
     let mut dst = Canvas::transparent(width, height);
-    for y in 0..height {
-        for x in 0..width {
+    let Some((x0, y0, x1, y1)) = transformed_bounds(src, width, height, matrix, local_origin) else {
+        return dst;
+    };
+    for y in y0..y1 {
+        for x in x0..x1 {
             let local = inverse.transform_point(Vec2::new(x as f32, y as f32));
             let sample_x = local.x - local_origin[0];
             let sample_y = local.y - local_origin[1];
@@ -509,6 +671,57 @@ fn transform_canvas_with_matrix(
         }
     }
     dst
+}
+
+fn transformed_bounds(
+    src: &Canvas,
+    width: u32,
+    height: u32,
+    matrix: Mat3,
+    local_origin: [f32; 2],
+) -> Option<(u32, u32, u32, u32)> {
+    if src.width == 0 || src.height == 0 || width == 0 || height == 0 {
+        return None;
+    }
+    let left = local_origin[0];
+    let top = local_origin[1];
+    let right = local_origin[0] + src.width as f32;
+    let bottom = local_origin[1] + src.height as f32;
+    let corners = [
+        matrix.transform_point(Vec2::new(left, top)),
+        matrix.transform_point(Vec2::new(right, top)),
+        matrix.transform_point(Vec2::new(right, bottom)),
+        matrix.transform_point(Vec2::new(left, bottom)),
+    ];
+    let min_x = corners
+        .iter()
+        .map(|point| point.x)
+        .fold(f32::INFINITY, f32::min)
+        .floor()
+        - 1.0;
+    let min_y = corners
+        .iter()
+        .map(|point| point.y)
+        .fold(f32::INFINITY, f32::min)
+        .floor()
+        - 1.0;
+    let max_x = corners
+        .iter()
+        .map(|point| point.x)
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil()
+        + 1.0;
+    let max_y = corners
+        .iter()
+        .map(|point| point.y)
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil()
+        + 1.0;
+    let x0 = min_x.max(0.0).min(width as f32) as u32;
+    let y0 = min_y.max(0.0).min(height as f32) as u32;
+    let x1 = max_x.max(0.0).min(width as f32) as u32;
+    let y1 = max_y.max(0.0).min(height as f32) as u32;
+    (x0 < x1 && y0 < y1).then_some((x0, y0, x1, y1))
 }
 
 fn transform_to_matrix(transform: &render_ir::Transform2D) -> Transform2D {

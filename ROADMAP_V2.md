@@ -623,8 +623,12 @@ Status: first native hardening pass implemented with controlled approximations.
 ### Performance / Production Maturity
 - [x] Add render manifest/log timing: total render, per-frame render/save/total ms.
 - [x] Add renderer metadata, feature counts, and deterministic asset-spec hashes.
-- [ ] Add per-layer/per-effect timing.
-- [ ] Add frame/precomp cache and allocation reuse.
+- [x] Add per-layer/per-effect timing to render logs and manifest profile summaries.
+- [x] Replace per-frame FFmpeg process spawning with a persistent sequential decoder pipe.
+- [x] Add per-source media frame cache and a bounded open-decoder pool.
+- [x] Add transformed-layer ROI bounds so transforms do not scan the full comp when avoidable.
+- [ ] Add precomp frame cache.
+- [ ] Add allocation reuse / buffer pools.
 - [ ] Add optional parallel frame rendering.
 
 ---

@@ -1,5 +1,6 @@
 use crate::layer_eval::{
-    render_frame_with_footage, CheckerboardFootageProvider, FootageProvider,
+    render_frame_with_footage_traced, CheckerboardFootageProvider, EffectTiming,
+    FootageProvider, FrameRenderTrace, LayerTiming,
 };
 use render_ir::{EffectSpec, Layer, Scene, Transform2D};
 use serde_json::json;
@@ -32,6 +33,8 @@ pub fn render_png_sequence_with_footage(
     let asset_hashes = asset_hashes(scene)?;
     let render_started = Instant::now();
     let mut frame_timings = Vec::with_capacity(frame_count as usize);
+    let mut layer_profile = BTreeMap::<String, LayerTimingAggregate>::new();
+    let mut effect_profile = BTreeMap::<String, EffectTimingAggregate>::new();
     let mut log = File::create(out_dir.join("render-log.jsonl"))?;
     write_json_line(
         &mut log,
@@ -51,7 +54,7 @@ pub fn render_png_sequence_with_footage(
     for frame in 0..frame_count {
         let frame_started = Instant::now();
         let frame_render_started = Instant::now();
-        let canvas = render_frame_with_footage(scene, frame, footage)?;
+        let (canvas, trace) = render_frame_with_footage_traced(scene, frame, footage)?;
         let render_ms = elapsed_ms(frame_render_started);
         let path = frames_dir.join(format!("frame_{frame:06}.png"));
         let save_started = Instant::now();
@@ -67,6 +70,7 @@ pub fn render_png_sequence_with_footage(
             "path": format!("frames/frame_{frame:06}.png")
         });
         frame_timings.push(frame_timing.clone());
+        record_profile(&trace, &mut layer_profile, &mut effect_profile);
         write_json_line(
             &mut log,
             &json!({
@@ -76,7 +80,8 @@ pub fn render_png_sequence_with_footage(
                 "render_ms": render_ms,
                 "save_ms": save_ms,
                 "duration_ms": frame_total_ms,
-                "path": format!("frames/frame_{frame:06}.png")
+                "path": format!("frames/frame_{frame:06}.png"),
+                "profile": frame_trace_json(&trace)
             }),
         )?;
     }
@@ -99,6 +104,10 @@ pub fn render_png_sequence_with_footage(
             "total_ms": total_render_ms,
             "frames": frame_timings
         },
+        "profile": {
+            "layers": layer_profile_json(&layer_profile),
+            "effects": effect_profile_json(&effect_profile)
+        },
         "feature_counts": feature_counts_json(&feature_summary.counts),
         "approximate": feature_summary.approximate,
         "unsupported": feature_summary.unsupported
@@ -117,6 +126,116 @@ pub fn render_png_sequence_with_footage(
         }),
     )?;
     Ok(())
+}
+
+#[derive(Debug, Clone, Default)]
+struct LayerTimingAggregate {
+    layer_type: &'static str,
+    calls: u64,
+    content_ms: f64,
+    effects_ms: f64,
+    total_ms: f64,
+    max_total_ms: f64,
+}
+
+#[derive(Debug, Clone, Default)]
+struct EffectTimingAggregate {
+    calls: u64,
+    total_ms: f64,
+    max_ms: f64,
+}
+
+fn record_profile(
+    trace: &FrameRenderTrace,
+    layer_profile: &mut BTreeMap<String, LayerTimingAggregate>,
+    effect_profile: &mut BTreeMap<String, EffectTimingAggregate>,
+) {
+    for layer in &trace.layers {
+        let key = format!("{}:{}", layer.composition, layer.layer_id);
+        let entry = layer_profile.entry(key).or_insert_with(|| LayerTimingAggregate {
+            layer_type: layer.layer_type,
+            ..LayerTimingAggregate::default()
+        });
+        entry.calls += 1;
+        entry.content_ms += layer.content_ms;
+        entry.effects_ms += layer.effects_ms;
+        entry.total_ms += layer.total_ms;
+        entry.max_total_ms = entry.max_total_ms.max(layer.total_ms);
+    }
+
+    for effect in &trace.effects {
+        let key = effect.match_name.clone();
+        let entry = effect_profile.entry(key).or_default();
+        entry.calls += 1;
+        entry.total_ms += effect.elapsed_ms;
+        entry.max_ms = entry.max_ms.max(effect.elapsed_ms);
+    }
+}
+
+fn frame_trace_json(trace: &FrameRenderTrace) -> serde_json::Value {
+    json!({
+        "frame": trace.frame,
+        "time": trace.time,
+        "layers": trace.layers.iter().map(layer_timing_json).collect::<Vec<_>>(),
+        "effects": trace.effects.iter().map(effect_timing_json).collect::<Vec<_>>()
+    })
+}
+
+fn layer_timing_json(timing: &LayerTiming) -> serde_json::Value {
+    json!({
+        "composition": timing.composition,
+        "layer_id": timing.layer_id,
+        "type": timing.layer_type,
+        "content_ms": timing.content_ms,
+        "effects_ms": timing.effects_ms,
+        "total_ms": timing.total_ms
+    })
+}
+
+fn effect_timing_json(timing: &EffectTiming) -> serde_json::Value {
+    json!({
+        "composition": timing.composition,
+        "layer_id": timing.layer_id,
+        "match_name": timing.match_name,
+        "elapsed_ms": timing.elapsed_ms
+    })
+}
+
+fn layer_profile_json(profile: &BTreeMap<String, LayerTimingAggregate>) -> serde_json::Value {
+    json!(
+        profile
+            .iter()
+            .map(|(key, aggregate)| {
+                json!({
+                    "layer": key,
+                    "type": aggregate.layer_type,
+                    "calls": aggregate.calls,
+                    "content_ms": aggregate.content_ms,
+                    "effects_ms": aggregate.effects_ms,
+                    "total_ms": aggregate.total_ms,
+                    "avg_total_ms": aggregate.total_ms / aggregate.calls.max(1) as f64,
+                    "max_total_ms": aggregate.max_total_ms
+                })
+            })
+            .collect::<Vec<_>>()
+    )
+}
+
+fn effect_profile_json(profile: &BTreeMap<String, EffectTimingAggregate>) -> serde_json::Value {
+    json!(
+        profile
+            .iter()
+            .map(|(match_name, aggregate)| {
+                json!({
+                    "match_name": match_name,
+                    "calls": aggregate.calls,
+                    "total_ms": aggregate.total_ms,
+                    "avg_ms": aggregate.total_ms / aggregate.calls.max(1) as f64,
+                    "max_ms": aggregate.max_ms
+                })
+            })
+            .collect::<Vec<_>>()
+    )
 }
 
 pub fn mux_png_sequence_to_mp4(

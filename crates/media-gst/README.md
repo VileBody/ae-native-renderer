@@ -5,8 +5,11 @@ Media adapter crate for probe/decode/encode boundaries.
 Current state:
 
 - `doctor` checks GStreamer availability through `gst-inspect-1.0`.
-- active probe/frame extraction paths use FFmpeg/ffprobe as bootstrap tooling.
+- active probe paths use FFmpeg/ffprobe as bootstrap tooling.
+- active frame extraction uses a persistent FFmpeg rawvideo pipe, not one process
+  per frame.
 - `VideoSource` is the boundary used by the CLI today.
+- the CLI adds a per-source frame cache and bounds the number of open decoders.
 
 Target state:
 
