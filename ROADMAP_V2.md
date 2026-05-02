@@ -534,15 +534,15 @@ Support the more complex `scenes_3rd` class.
 Compare native output against AE fallback output from the same generated payload.
 
 ### Checklist
-- [ ] Store small golden references or frame samples.
-- [ ] Compare PNG frames.
-- [ ] Report max diff, mean diff, changed pixel count.
-- [ ] Produce diff artifact image.
-- [ ] Track unsupported/ignored features alongside visual diff.
+- [x] Store small golden references or frame samples.
+- [x] Compare PNG frames.
+- [x] Report max diff, mean diff, changed pixel count.
+- [x] Produce diff artifact image.
+- [x] Track unsupported/ignored features alongside visual diff.
 
 ### Acceptance Criteria
-- [ ] A native render can be compared against `work/output.mp4` or selected AE frames.
-- [ ] Regression thresholds can be tuned per template mode.
+- [x] A native render can be compared against `work/output.mp4` or selected AE frames.
+- [x] Regression thresholds can be tuned per template mode.
 
 ### Non-goals
 - Full video perceptual QA.
@@ -556,21 +556,21 @@ Compare native output against AE fallback output from the same generated payload
 Turn the renderer into a reliable native/fallback routing component.
 
 ### Checklist
-- [ ] Define native job directory contract.
-- [ ] Add `render-cli job --job-dir ... --payload ...`.
-- [ ] Add exit codes:
-  - [ ] `0` success
-  - [ ] `1` config/input error
-  - [ ] `2` render error
-  - [ ] `3` unsupported template
-- [ ] Emit machine-readable logs.
-- [ ] Emit capability report before render.
-- [ ] Route unsupported jobs to AE fallback outside renderer.
+- [x] Define native job directory contract.
+- [x] Add `render-cli job --job-dir ... --payload ...`.
+- [x] Add exit codes:
+  - [x] `0` success
+  - [x] `1` config/input error
+  - [x] `2` render error
+  - [x] `3` unsupported template
+- [x] Emit machine-readable logs.
+- [x] Emit capability report before render.
+- [x] Route unsupported jobs to AE fallback outside renderer.
 
 ### Acceptance Criteria
-- [ ] Supported MVP jobs render natively.
-- [ ] Unsupported jobs fail early with actionable reasons.
-- [ ] No silent degradation in strict mode.
+- [x] Supported MVP jobs render natively.
+- [x] Unsupported jobs fail early with actionable reasons.
+- [x] No silent degradation in strict mode.
 
 ### Non-goals
 - Queue integration.

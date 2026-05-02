@@ -20,3 +20,4 @@ media-gst = { path = "../media-gst" }
 effects = { path = "../effects" }
 ae-bridge = { path = "../ae-bridge" }
 raster-cpu = { path = "../raster-cpu" }
+testkit = { path = "../testkit" }

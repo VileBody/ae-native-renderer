@@ -224,13 +224,14 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
                 .as_deref()
                 .is_some_and(|expr| !expr.trim().is_empty())
             {
+                let expression = prop.expression.as_deref().unwrap_or_default();
+                let (status, detail) = property_expression_status(prop_name, expression);
                 *expressions.entry(prop_name.clone()).or_insert(0) += 1;
                 findings.push(CapabilityFinding {
-                    status: CapabilityStatus::Unsupported,
+                    status,
                     feature: format!("expression.{prop_name}"),
                     layer: Some(layer.name.clone()),
-                    detail: "raw property expressions are not part of the MVP native path"
-                        .to_string(),
+                    detail: detail.to_string(),
                 });
             }
             if !prop.keyframes.is_empty() {
@@ -253,6 +254,28 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
                 layer: Some(layer.name.clone()),
                 detail: effect_detail(normalized).to_string(),
             });
+        }
+
+        for (effect_name, params) in &layer.effects {
+            let normalized = normalize_effect_name(effect_name);
+            for (param_name, param) in params {
+                if let Some(expression) = param.expression.as_deref() {
+                    if expression.trim().is_empty() {
+                        continue;
+                    }
+                    let (status, detail) =
+                        effect_expression_status(normalized, param_name, expression);
+                    *expressions
+                        .entry(format!("{normalized}.{param_name}"))
+                        .or_insert(0) += 1;
+                    findings.push(CapabilityFinding {
+                        status,
+                        feature: format!("expression.{normalized}.{param_name}"),
+                        layer: Some(layer.name.clone()),
+                        detail: detail.to_string(),
+                    });
+                }
+            }
         }
     }
 
@@ -659,6 +682,44 @@ fn classify_text_animator(layer: &PayloadLayer, findings: &mut Vec<CapabilityFin
     }
 }
 
+fn property_expression_status(
+    prop_name: &str,
+    expression: &str,
+) -> (CapabilityStatus, &'static str) {
+    if prop_name == "tf_position" && is_edge_wobble_position_expression(expression) {
+        return (
+            CapabilityStatus::Approximate,
+            "recognized generated edge_wobble position expression",
+        );
+    }
+
+    (
+        CapabilityStatus::Unsupported,
+        "raw property expression is outside the supported native subset",
+    )
+}
+
+fn effect_expression_status(
+    effect_name: &str,
+    param_name: &str,
+    expression: &str,
+) -> (CapabilityStatus, &'static str) {
+    if effect_name == "ADBE Turbulent Displace"
+        && param_name == "0006"
+        && expression.trim() == "time*500"
+    {
+        return (
+            CapabilityStatus::Approximate,
+            "recognized generated Turbulent Displace evolution expression",
+        );
+    }
+
+    (
+        CapabilityStatus::Unsupported,
+        "raw effect expression is outside the supported native subset",
+    )
+}
+
 fn layer_target_comp(layer: &PayloadLayer) -> Option<&str> {
     layer
         .text_data
@@ -928,12 +989,7 @@ fn based_on_code(code: i64) -> render_ir::TextSelectorBasedOn {
 
 fn position_expression(layer: &PayloadLayer) -> Option<render_ir::PositionExpression> {
     let expression = layer.props.get("tf_position")?.expression.as_deref()?;
-    if !(expression.contains("var intro=")
-        && expression.contains("var outro=")
-        && expression.contains("var amp=")
-        && expression.contains("var freq=")
-        && expression.contains("Math.exp(-2.4"))
-    {
+    if !is_edge_wobble_position_expression(expression) {
         return None;
     }
 
@@ -944,6 +1000,14 @@ fn position_expression(layer: &PayloadLayer) -> Option<render_ir::PositionExpres
         freq: extract_js_var(expression, "freq").unwrap_or(3.6),
         source: expression.to_string(),
     })
+}
+
+fn is_edge_wobble_position_expression(expression: &str) -> bool {
+    expression.contains("var intro=")
+        && expression.contains("var outro=")
+        && expression.contains("var amp=")
+        && expression.contains("var freq=")
+        && expression.contains("Math.exp(-2.4")
 }
 
 fn extract_js_var(expression: &str, name: &str) -> Option<f32> {

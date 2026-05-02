@@ -25,7 +25,7 @@ pub fn render_png_sequence_with_footage(
     fs::create_dir_all(&frames_dir)?;
 
     let frame_count = (scene.composition.duration * scene.composition.fps).ceil() as u32;
-    let feature_summary = feature_summary(scene);
+    let feature_summary = scene_feature_summary(scene);
     let scene_hash = scene_hash(scene)?;
     let mut log = File::create(out_dir.join("render-log.jsonl"))?;
     write_json_line(
@@ -116,13 +116,13 @@ pub fn mux_png_sequence_to_mp4(
     Ok(())
 }
 
-#[derive(Default)]
-struct FeatureSummary {
-    approximate: Vec<String>,
-    unsupported: Vec<String>,
+#[derive(Debug, Clone, Default)]
+pub struct FeatureSummary {
+    pub approximate: Vec<String>,
+    pub unsupported: Vec<String>,
 }
 
-fn feature_summary(scene: &Scene) -> FeatureSummary {
+pub fn scene_feature_summary(scene: &Scene) -> FeatureSummary {
     let mut approximate = BTreeSet::new();
     let mut unsupported = BTreeSet::new();
     for layer in &scene.layers {

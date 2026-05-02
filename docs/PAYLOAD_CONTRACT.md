@@ -166,13 +166,14 @@ Current import rules:
 
 - imports video `footage` layers as IR footage layers;
 - stores footage `source_start` from AE `layer_meta.startTime` when present;
-- imports static `text` layers as IR text layers;
+- imports `text` layers as IR text layers, including the current Range Selector opacity subset;
 - stores generated text boxes in layer-local coordinates so static transforms can place them;
-- flattens direct text children from precomps placed in `projectSpec.mainCompName`;
+- imports `adjustment` layers and applies known effects to the accumulated canvas;
+- flattens direct text/adjustment children from precomps placed in `projectSpec.mainCompName`;
 - applies parent precomp timing and static transform approximately to flattened text;
 - skips flattened precomp placeholders after their text children are imported;
 - skips audio layers with an `ignored` diagnostic;
-- skips adjustment layers, non-text nested content, and unsupported nested comps with diagnostics.
+- skips non-text nested content and unsupported nested comps with diagnostics.
 
 ## Text Rendering
 
@@ -182,10 +183,11 @@ back to common platform fonts such as DejaVu Sans. The v0 renderer supports:
 - readable Latin and Cyrillic glyph rasterization;
 - fill color and layer opacity;
 - multi-line text;
-- centered alignment for the subtitle boxes used by the current examples.
+- centered alignment for the subtitle boxes used by the current examples;
+- approximate Range Selector Start/End for characters, words, and lines with animator opacity.
 
-AE-perfect shaping, per-character styling, stroke, shadow, and text animators remain
-later roadmap items.
+AE-perfect shaping, per-character styling, stroke, and per-glyph animator
+position/scale/rotation remain later roadmap items.
 
 ## Native Job Assets
 
@@ -224,3 +226,60 @@ render-cli render \
   --out jobs/example/out \
   --job-archive jobs/example_job_folder.tar.gz
 ```
+
+## Conformance Compare
+
+Use `compare` after a native render to diff native PNG frames against AE fallback
+frames. `--reference` can be an AE `work/output.mp4` or a PNG frame directory.
+
+```bash
+render-cli compare \
+  --native jobs/example/out/native \
+  --reference jobs/example/work/output.mp4 \
+  --out jobs/example/out/conformance \
+  --threshold-mean 12 \
+  --threshold-max 255
+```
+
+The command writes:
+
+- `report.json` with max diff, mean diff, changed pixel count, thresholds, and native approximate/unsupported features from `manifest.json`;
+- `diff/frame_000000.png` style artifact images with amplified pixel differences.
+
+`fixtures/golden/frame_000000.png` is a tiny checked-in PNG sample for exercising
+the frame-directory compare path without proprietary AE output.
+
+## Production Job Contract
+
+The production runner accepts either a generated payload or an existing IR scene:
+
+```bash
+render-cli job --job-dir jobs/example --payload jobs/example/payload.json
+render-cli job --job-dir jobs/example --scene jobs/example/scene.json --no-mp4
+```
+
+Default directory contract:
+
+```text
+job/
+  payload.json              optional generated payload input
+  scene.json                optional pre-imported IR input
+  app/media/...             local assets
+  work/output.mp4           optional AE fallback reference
+  out/
+    scene.json              imported IR when payload input is used
+    capabilities.json       pre-render capability/routing report
+    job-log.jsonl           machine-readable job events
+    job-report.json         final native/fallback decision
+    native/frames/*.png     native render output
+    native.mp4              optional muxed native output
+    conformance/            optional AE diff report/artifacts
+```
+
+Exit codes:
+
+- `0`: native render completed;
+- `1`: config or input error;
+- `2`: render/conformance execution error;
+- `3`: unsupported template or explicit fallback route. The caller should hand
+  the job to the external AE fallback runner.
