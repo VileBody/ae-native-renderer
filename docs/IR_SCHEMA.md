@@ -13,6 +13,19 @@ The first IR is deliberately small. It represents a composition, assets, and a l
     "duration": 6.0,
     "background": [0, 0, 0, 0]
   },
+  "compositions": [
+    {
+      "composition": {
+        "id": "nested",
+        "width": 1080,
+        "height": 1920,
+        "fps": 30,
+        "duration": 6.0,
+        "background": [0, 0, 0, 0]
+      },
+      "layers": []
+    }
+  ],
   "assets": [
     { "id": "video_1", "type": "video", "path": "assets/video_1.mp4" },
     { "id": "font_1", "type": "font", "path": "assets/fonts/Montserrat-BoldItalic.ttf" }
@@ -61,11 +74,21 @@ The first IR is deliberately small. It represents a composition, assets, and a l
         {
           "name": "Animator 1",
           "opacity": 0,
+          "position": [0, 25],
+          "scale": [50, 50],
+          "rotation": 15,
           "selector": {
             "start": 0,
             "end": 100,
             "based_on": "words",
             "start_keyframes": [{ "time": 0.0, "value": 0 }]
+          },
+          "expression_selector": {
+            "type": "per_character_bounce",
+            "delay": 0.05,
+            "freq": 2,
+            "amplitude": 100,
+            "decay": 8
           }
         }
       ]
@@ -81,6 +104,12 @@ The first IR is deliberately small. It represents a composition, assets, and a l
 - `text`
 - `precomp`
 - `adjustment`
+
+`composition + layers` is the root comp. Optional `compositions` entries define
+nested comps addressable by `precomp.composition`. Graph validation rejects
+missing targets and cycles. v0 renders nested comps into an offscreen canvas, then
+applies the precomp layer transform; collapse transformations are planned and
+reported, with vector-only feasibility tracked separately from fatal graph errors.
 
 For `footage` layers, `source_start` is optional and defaults to `0`. It is the
 source-media time sampled at the layer's composition `start`.
@@ -105,7 +134,9 @@ Bezier/ease keyframes are evaluated linearly and marked as approximate.
 
 `text_animators` is optional on text layers. v0 supports one or more approximate
 Range Selectors with percent Start/End, Based On `characters`/`words`/`lines`,
-and animator opacity. Expression selectors are reported as unsupported.
+animator opacity, and per-character/group position, scale, and rotation by
+transforming alpha-derived units. The supported expression-selector fingerprint is
+the generated per-character bounce pattern used by `impulse_2nd`.
 
 `transform.animation.expression.position` currently supports the generated
 `edge_wobble` fingerprint used by `scenes_3rd`; it is not a general JavaScript

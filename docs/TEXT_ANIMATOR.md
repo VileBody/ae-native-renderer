@@ -23,10 +23,13 @@ local_anchor
 - Based On: characters, words, lines;
 - Shape: Square first;
 - Smoothness: 0/100 first;
-- Animator properties: Opacity.
+- Animator properties: Opacity, Position 3D projected to 2D, Scale 3D projected
+  to 2D, Rotation Z.
+- Expression Selector: generated per-character bounce pattern from `impulse_2nd`.
 
-Position 3D, Scale 3D, Rotation, Blur, wiggly selectors, randomized order, and
-expression selectors are reported but remain outside the v0 renderer subset.
+Blur is parsed and reported as approximate but is not rendered per glyph yet.
+Wiggly selectors, randomized order, and arbitrary expression selectors remain
+outside the v0 renderer subset.
 
 ## Evaluation rule
 

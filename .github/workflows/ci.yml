@@ -1,0 +1,33 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  rust:
+    name: Rust workspace
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust 1.88
+        run: |
+          rustup toolchain install 1.88.0 --profile minimal
+          rustup default 1.88.0
+
+      - name: Install native dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            ffmpeg \
+            fontconfig \
+            pkg-config
+
+      - name: Cargo check
+        run: cargo check --workspace
+
+      - name: Targeted tests
+        run: cargo test -p testkit -p effects -p render-core -p ae-bridge -p render-cli

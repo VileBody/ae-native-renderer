@@ -96,7 +96,7 @@ Keep the existing Rust workspace and Docker-first workflow as the foundation.
 - [x] CLI has `doctor`, `validate`, `render`, `job`.
 - [x] Demo PNG sequence render works for the current static scene.
 - [x] Private GitHub repository exists.
-- [ ] CI builds the Docker image or runs `cargo check`.
+- [x] CI builds the Docker image or runs `cargo check`.
 
 ### Acceptance Criteria
 - [x] `docker build -t ae-native-renderer:dev .` succeeds.
@@ -112,35 +112,37 @@ Keep the existing Rust workspace and Docker-first workflow as the foundation.
 
 ## V2-R1 — Generated Payload JSON Contract
 
+Status: implemented for the generated-payload MVP.
+
 ### Goal
 Define the JSON payload produced by the upstream generator as the native input.
 
 ### Checklist
-- [ ] Add `docs/PAYLOAD_CONTRACT.md`.
-- [ ] Add payload version field, for example `payloadVersion: "0.1"`.
-- [ ] Document required top-level objects:
-  - [ ] `projectSpec`
-  - [ ] `compsSpec`
-  - [ ] `footage_layers`
-  - [ ] `text_layers`
-- [ ] Document layer fields used by MVP:
-  - [ ] `type`
-  - [ ] `name`
-  - [ ] `in_point`
-  - [ ] `out_point`
-  - [ ] `z_index`
-  - [ ] `props`
-  - [ ] `text_data`
-- [ ] Document asset fields:
-  - [ ] local `file_name`
-  - [ ] local `file_path`
-  - [ ] optional `remote_url`
-- [ ] Store small representative payload fixtures without video blobs.
+- [x] Add `docs/PAYLOAD_CONTRACT.md`.
+- [x] Add payload version field, for example `payloadVersion: "0.1"`.
+- [x] Document required top-level objects:
+  - [x] `projectSpec`
+  - [x] `compsSpec`
+  - [x] `footage_layers`
+  - [x] `text_layers`
+- [x] Document layer fields used by MVP:
+  - [x] `type`
+  - [x] `name`
+  - [x] `in_point`
+  - [x] `out_point`
+  - [x] `z_index`
+  - [x] `props`
+  - [x] `text_data`
+- [x] Document asset fields:
+  - [x] local `file_name`
+  - [x] local `file_path`
+  - [x] optional `remote_url`
+- [x] Store small representative payload fixtures without video blobs.
 
 ### Acceptance Criteria
-- [ ] A generator payload can be validated without JSX.
-- [ ] Missing required fields produce explicit errors.
-- [ ] Unknown fields are preserved or ignored according to documented rules.
+- [x] A generator payload can be validated without JSX.
+- [x] Missing required fields produce explicit errors.
+- [x] Unknown fields are preserved in diagnostics or ignored according to documented rules.
 
 ### Non-goals
 - Parsing arbitrary JSX.
@@ -151,25 +153,27 @@ Define the JSON payload produced by the upstream generator as the native input.
 
 ## V2-R2 — Payload Validator and Capability Report
 
+Status: implemented with native/fallback capability categories.
+
 ### Goal
 Tell the caller what native renderer can and cannot render before spending time.
 
 ### Checklist
-- [ ] Add `render-cli validate-payload --payload ...`.
-- [ ] Validate composition dimensions, fps, duration.
-- [ ] Validate layer timing and layer type.
-- [ ] Validate required local assets exist.
-- [ ] Emit a machine-readable feature report:
-  - [ ] supported
-  - [ ] ignored
-  - [ ] approximate
-  - [ ] unsupported
-- [ ] Add strict and permissive modes.
+- [x] Add `render-cli validate-payload --payload ...`.
+- [x] Validate composition dimensions, fps, duration.
+- [x] Validate layer timing and layer type.
+- [x] Validate required local assets exist.
+- [x] Emit a machine-readable feature report:
+  - [x] supported
+  - [x] ignored
+  - [x] approximate
+  - [x] unsupported
+- [x] Add strict and permissive modes.
 
 ### Acceptance Criteria
-- [ ] `template_4th` reports a mostly-supported MVP path with effects ignored.
-- [ ] `impulse_2nd` reports keyframes/effects as pending until implemented.
-- [ ] `scenes_3rd` clearly reports expressions, adjustment effects, and advanced effects as unsupported.
+- [x] `template_4th` reports a mostly-supported MVP path with approximate effects/text animators where needed.
+- [x] `impulse_2nd` reports known expression-selector bounce as approximate instead of silently accepting arbitrary expressions.
+- [x] `scenes_3rd` reports supported known expressions and approximate adjustment/effect coverage.
 
 ### Non-goals
 - Auto-fixing invalid templates.
@@ -179,23 +183,25 @@ Tell the caller what native renderer can and cannot render before spending time.
 
 ## V2-R3 — Payload to Render IR Translator
 
+Status: implemented through `ae-bridge` and `render-cli import-payload`.
+
 ### Goal
 Convert generated payload JSON into the renderer's portable `scene.json`.
 
 ### Checklist
-- [ ] Add translator in `ae-bridge`.
-- [ ] Add `render-cli import-payload --payload ... --out scene.json`.
-- [ ] Map main comp from `projectSpec.mainCompName`.
-- [ ] Map dimensions/fps/duration from `compsSpec`.
-- [ ] Map footage layers to IR footage layers.
-- [ ] Map text layers to IR text layers.
-- [ ] Preserve unsupported fields in a diagnostics sidecar.
-- [ ] Sort/render layer order consistently using `z_index`.
+- [x] Add translator in `ae-bridge`.
+- [x] Add `render-cli import-payload --payload ... --out scene.json`.
+- [x] Map main comp from `projectSpec.mainCompName`.
+- [x] Map dimensions/fps/duration from `compsSpec`.
+- [x] Map footage layers to IR footage layers.
+- [x] Map text layers to IR text layers.
+- [x] Preserve unsupported fields in a diagnostics sidecar.
+- [x] Sort/render layer order consistently using `z_index`.
 
 ### Acceptance Criteria
-- [ ] Generated payload converts to valid `render-ir`.
-- [ ] Output scene is deterministic.
-- [ ] Unsupported effects/expressions are reported, not silently lost.
+- [x] Generated payload converts to valid `render-ir`.
+- [x] Output scene is deterministic.
+- [x] Unsupported effects/expressions are reported, not silently lost.
 
 ### Non-goals
 - JSX evaluation.
@@ -323,16 +329,16 @@ footage.
 Apply anchor, position, scale, rotation, and opacity to footage and text layers.
 
 ### Status
-Implemented with inverse nearest-neighbor sampling for static layer transforms.
-Bilinear sampling and focused matrix tests remain open.
+Implemented with inverse sampling for static layer transforms. Bilinear sampling
+is available for transformed layer canvases.
 
 ### Checklist
 - [x] Use transform matrix from `transform-math`.
 - [x] Implement transformed sampling for footage.
 - [x] Implement transformed rendering for text layer canvas.
 - [x] Support nearest-neighbor first.
-- [ ] Add bilinear sampling after correctness.
-- [ ] Add focused tests for anchor/position/scale/rotation.
+- [x] Add bilinear sampling after correctness.
+- [x] Add focused tests for anchor/position/scale/rotation.
 
 ### Acceptance Criteria
 - [x] Example footage fills the 1080x1960 frame according to payload scale/anchor.
@@ -400,7 +406,9 @@ Support the simple animated properties already present in the payload.
 Handle the common payload shape where text lives in a `Текст` precomp placed over main footage.
 
 ### Status
-Implemented for direct text precomps placed in the main comp. Unsupported nested/non-text content is reported; full cycle detection remains open.
+Implemented for direct payload text precomp flattening and IR-level nested
+composition rendering. Unsupported nested/non-text payload content is reported;
+IR graph validation rejects missing precomp targets and cycles.
 
 ### Checklist
 - [x] Resolve precomp layers by `precomp_source.comp_name`.
@@ -411,11 +419,11 @@ Implemented for direct text precomps placed in the main comp. Unsupported nested
 ### Acceptance Criteria
 - [x] `template_4th` and `impulse_2nd` text precomp structure maps to native layers.
 - [x] Flattened output is deterministic.
-- [ ] Cycles and unsupported nested content fail clearly.
+- [x] Cycles and unsupported nested content fail clearly.
 
 ### Non-goals
 - Full AE precomp behavior.
-- Collapse transformations.
+- Pixel-perfect collapse transformations.
 
 ---
 
@@ -454,13 +462,13 @@ Support the text reveal patterns used in the generated payloads.
 
 ### Checklist
 - [x] Implement Range Selector basics.
-- [ ] Support BasedOn:
+- [x] Support BasedOn:
   - [x] characters
   - [x] words
   - [x] lines
 - [x] Support Percent Start/End.
 - [x] Support animator opacity.
-- [ ] Support simple per-glyph position/scale/rotation later.
+- [x] Support simple per-glyph position/scale/rotation later.
 
 ### Acceptance Criteria
 - [x] `template_4th` reveal keyframes are visible.
@@ -482,12 +490,13 @@ Evaluate only the generated expression patterns that block real templates.
 ### Checklist
 - [x] Catalog expressions emitted by generator.
 - [x] Add expression fingerprints or named expression modes where possible.
-- [ ] Support variables:
+- [x] Support variables:
   - [x] `time`
   - [x] `inPoint`
   - [x] `outPoint`
   - [x] `value`
   - [x] `thisComp.frameDuration`
+- [x] Support generated text expression selector bounce pattern.
 - [x] Support math functions used by examples.
 - [x] Prefer structured generator parameters over raw JS where possible.
 

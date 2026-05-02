@@ -1,11 +1,11 @@
 use effects::{EffectContext, EffectRegistry};
-use raster_cpu::{composite_normal, Canvas};
+use raster_cpu::{composite_normal, BilinearSampler, Canvas, Sampler};
 use render_ir::{
-    EffectSpec, Layer, PositionExpression, Rect, ScalarKeyframe, Scene, TextAnimatorSpec,
-    TextSelectorBasedOn, Vec2Keyframe,
+    Composition, EffectSpec, Layer, PositionExpression, Rect, ScalarKeyframe, Scene,
+    TextAnimatorSpec, TextExpressionSelector, TextSelectorBasedOn, Vec2Keyframe,
 };
 use text_engine::{rasterize_text, TextLayoutRequest};
-use transform_math::{Transform2D, Vec2};
+use transform_math::{Mat3, Transform2D, Vec2};
 
 pub trait FootageProvider {
     fn frame_at(&mut self, source: &str, time: f64) -> anyhow::Result<Option<Canvas>>;
@@ -31,18 +31,29 @@ pub fn render_frame_with_footage(
 ) -> anyhow::Result<Canvas> {
     let comp = &scene.composition;
     let time = frame_index as f64 / comp.fps;
+    render_composition_frame(scene, comp, &scene.layers, time, footage, &mut Vec::new())
+}
+
+fn render_composition_frame(
+    scene: &Scene,
+    comp: &Composition,
+    layers: &[Layer],
+    time: f64,
+    footage: &mut dyn FootageProvider,
+    stack: &mut Vec<String>,
+) -> anyhow::Result<Canvas> {
     let mut canvas = Canvas::new(comp.width, comp.height, comp.background);
 
     // IR order is top-to-bottom like AE. Render bottom-to-top.
-    for layer in scene.layers.iter().rev() {
+    for layer in layers.iter().rev() {
         if !layer.is_active(time) {
             continue;
         }
         if matches!(layer, Layer::Adjustment { .. }) {
-            canvas = apply_effects_to_canvas(scene, effects_of(layer), &canvas, time)?;
+            canvas = apply_effects_to_canvas(effects_of(layer), &canvas, time, comp.fps)?;
             continue;
         }
-        let layer_canvas = render_layer_stub(scene, layer, time, footage)?;
+        let layer_canvas = render_layer_stub(scene, comp, layer, time, footage, stack)?;
         composite_normal(&mut canvas, &layer_canvas, opacity_of(layer, time));
     }
 
@@ -75,11 +86,12 @@ fn effects_of(layer: &Layer) -> &[EffectSpec] {
 
 fn render_layer_stub(
     scene: &Scene,
+    comp: &Composition,
     layer: &Layer,
     time: f64,
     footage: &mut dyn FootageProvider,
+    stack: &mut Vec<String>,
 ) -> anyhow::Result<Canvas> {
-    let comp = &scene.composition;
     let mut canvas = match layer {
         Layer::Solid {
             color,
@@ -134,7 +146,7 @@ fn render_layer_stub(
             if text_animators.is_empty() {
                 apply_horizontal_reveal(&mut text_canvas, reveal);
             } else {
-                apply_text_animators(&mut text_canvas, text, text_animators, time);
+                text_canvas = apply_text_animators(text_canvas, text, text_animators, time, *start);
             }
             transform_canvas(
                 &text_canvas,
@@ -161,19 +173,48 @@ fn render_layer_stub(
                 None => checkerboard_canvas(comp.width, comp.height),
             }
         }
-        Layer::Precomp { .. } => Canvas::transparent(comp.width, comp.height),
+        Layer::Precomp {
+            start,
+            duration,
+            composition,
+            collapse_transformations: _,
+            transform,
+            ..
+        } => {
+            let node = scene
+                .compositions
+                .iter()
+                .find(|node| node.composition.id == *composition)
+                .ok_or_else(|| anyhow::anyhow!("precomp composition '{composition}' was not found"))?;
+            if stack.iter().any(|id| id == composition) {
+                anyhow::bail!("precomp cycle detected: {} -> {}", stack.join(" -> "), composition);
+            }
+            stack.push(composition.clone());
+            let source_time = (time - *start).max(0.0);
+            let precomp_canvas = render_composition_frame(
+                scene,
+                &node.composition,
+                &node.layers,
+                source_time,
+                footage,
+                stack,
+            )?;
+            stack.pop();
+            let evaluated = evaluate_transform(transform, time, *start, *duration, comp.fps);
+            transform_canvas(&precomp_canvas, comp.width, comp.height, &evaluated, [0.0, 0.0])
+        }
         Layer::Adjustment { .. } => Canvas::transparent(comp.width, comp.height),
     };
 
-    canvas = apply_effects_to_canvas(scene, effects_of(layer), &canvas, time)?;
+    canvas = apply_effects_to_canvas(effects_of(layer), &canvas, time, comp.fps)?;
     Ok(canvas)
 }
 
 fn apply_effects_to_canvas(
-    scene: &Scene,
     effects: &[EffectSpec],
     input: &Canvas,
     time: f64,
+    fps: f64,
 ) -> anyhow::Result<Canvas> {
     let mut canvas = input.clone();
     for spec in effects {
@@ -182,7 +223,7 @@ fn apply_effects_to_canvas(
                 &canvas,
                 &EffectContext {
                     time,
-                    fps: scene.composition.fps,
+                    fps,
                 },
                 &spec.params,
             )?;
@@ -220,12 +261,14 @@ fn transform_canvas(
     for y in 0..height {
         for x in 0..width {
             let local = inverse.transform_point(Vec2::new(x as f32, y as f32));
-            let sx = (local.x - local_origin[0]).round() as i32;
-            let sy = (local.y - local_origin[1]).round() as i32;
+            let sample_x = local.x - local_origin[0];
+            let sample_y = local.y - local_origin[1];
+            let sx = sample_x.round() as i32;
+            let sy = sample_y.round() as i32;
             if sx < 0 || sy < 0 || sx >= src.width as i32 || sy >= src.height as i32 {
                 continue;
             }
-            let pixel = src.pixel(sx as u32, sy as u32);
+            let pixel = BilinearSampler.sample(src, sample_x, sample_y);
             if pixel[3] > 0 {
                 dst.set_pixel(x, y, pixel);
             }
@@ -376,11 +419,12 @@ fn apply_horizontal_reveal(canvas: &mut Canvas, reveal_percent: f32) {
 }
 
 fn apply_text_animators(
-    canvas: &mut Canvas,
+    mut canvas: Canvas,
     text: &str,
     animators: &[TextAnimatorSpec],
     time: f64,
-) {
+    layer_start: f64,
+) -> Canvas {
     for animator in animators {
         let start = evaluate_scalar_keyframes(
             &animator.selector.start_keyframes,
@@ -394,15 +438,32 @@ fn apply_text_animators(
             animator.selector.end,
         )
         .clamp(0.0, 100.0);
-        apply_range_opacity(
-            canvas,
-            text,
-            animator.selector.based_on,
-            start.min(end),
-            start.max(end),
-            animator.opacity,
-        );
+        if animator.position.is_some()
+            || animator.scale.is_some()
+            || animator.rotation.is_some()
+            || animator.expression_selector.is_some()
+        {
+            canvas = apply_unit_animator_transform(
+                &canvas,
+                text,
+                animator,
+                start.min(end),
+                start.max(end),
+                time,
+                layer_start,
+            );
+        } else {
+            apply_range_opacity(
+                &mut canvas,
+                text,
+                animator.selector.based_on,
+                start.min(end),
+                start.max(end),
+                animator.opacity,
+            );
+        }
     }
+    canvas
 }
 
 fn apply_range_opacity(
@@ -555,6 +616,181 @@ fn scale_alpha_rect(canvas: &mut Canvas, x0: u32, y0: u32, x1: u32, y1: u32, alp
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct UnitRect {
+    x0: u32,
+    y0: u32,
+    x1: u32,
+    y1: u32,
+    index: usize,
+    total: usize,
+}
+
+fn apply_unit_animator_transform(
+    canvas: &Canvas,
+    text: &str,
+    animator: &TextAnimatorSpec,
+    start_percent: f32,
+    end_percent: f32,
+    time: f64,
+    layer_start: f64,
+) -> Canvas {
+    let units = unit_rects(canvas, text, animator.selector.based_on);
+    if units.is_empty() {
+        return canvas.clone();
+    }
+
+    let mut output = Canvas::transparent(canvas.width, canvas.height);
+    for unit in units {
+        let midpoint = ((unit.index as f32 + 0.5) / unit.total as f32) * 100.0;
+        let range_weight = if midpoint >= start_percent && midpoint <= end_percent {
+            1.0
+        } else {
+            0.0
+        };
+        let expression_weight =
+            text_expression_weight(animator.expression_selector.as_ref(), unit.index, unit.total, time, layer_start);
+        let weight = range_weight * expression_weight;
+        draw_transformed_unit(&mut output, canvas, unit, animator, weight);
+    }
+    output
+}
+
+fn text_expression_weight(
+    selector: Option<&TextExpressionSelector>,
+    index: usize,
+    _total: usize,
+    time: f64,
+    layer_start: f64,
+) -> f32 {
+    match selector {
+        Some(TextExpressionSelector::PerCharacterBounce {
+            delay,
+            freq,
+            amplitude,
+            decay,
+            ..
+        }) => {
+            let text_index = index as f32 + 1.0;
+            let t = (time - layer_start) as f32 - *delay * text_index;
+            if t < 0.0 {
+                return 0.0;
+            }
+            let amount = *amplitude
+                * (freq * t * 2.0 * std::f32::consts::PI).cos()
+                / (*decay * t).exp();
+            (amount / 100.0).clamp(-2.0, 2.0)
+        }
+        None => 1.0,
+    }
+}
+
+fn draw_transformed_unit(
+    output: &mut Canvas,
+    input: &Canvas,
+    unit: UnitRect,
+    animator: &TextAnimatorSpec,
+    weight: f32,
+) {
+    let cx = (unit.x0 + unit.x1) as f32 * 0.5;
+    let cy = (unit.y0 + unit.y1) as f32 * 0.5;
+    let position = animator.position.unwrap_or([0.0, 0.0]);
+    let scale = animator.scale.unwrap_or([100.0, 100.0]);
+    let sx = (100.0 + (scale[0] - 100.0) * weight) / 100.0;
+    let sy = (100.0 + (scale[1] - 100.0) * weight) / 100.0;
+    let rotation = animator.rotation.unwrap_or(0.0) * weight;
+    let tx = position[0] * weight;
+    let ty = position[1] * weight;
+    let alpha_scale = (1.0 + ((animator.opacity / 100.0) - 1.0) * weight).clamp(0.0, 2.0);
+    let matrix = Mat3::translate(Vec2::new(cx + tx, cy + ty))
+        .mul(Mat3::rotate_degrees(rotation))
+        .mul(Mat3::scale(Vec2::new(sx, sy)))
+        .mul(Mat3::translate(Vec2::new(-cx, -cy)));
+
+    for y in unit.y0..unit.y1 {
+        for x in unit.x0..unit.x1 {
+            let mut pixel = input.pixel(x, y);
+            if pixel[3] == 0 {
+                continue;
+            }
+            pixel[3] = (pixel[3] as f32 * alpha_scale)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+            let p = matrix.transform_point(Vec2::new(x as f32, y as f32));
+            let dx = p.x.round() as i32;
+            let dy = p.y.round() as i32;
+            if dx < 0 || dy < 0 || dx >= output.width as i32 || dy >= output.height as i32 {
+                continue;
+            }
+            output.set_pixel(dx as u32, dy as u32, pixel);
+        }
+    }
+}
+
+fn unit_rects(canvas: &Canvas, text: &str, based_on: TextSelectorBasedOn) -> Vec<UnitRect> {
+    match based_on {
+        TextSelectorBasedOn::Lines => line_unit_rects(canvas, text),
+        TextSelectorBasedOn::Words => inline_unit_rects(canvas, text, UnitMode::Words),
+        TextSelectorBasedOn::Characters => inline_unit_rects(canvas, text, UnitMode::Characters),
+    }
+}
+
+fn line_unit_rects(canvas: &Canvas, text: &str) -> Vec<UnitRect> {
+    let total = text.lines().count().max(1);
+    let mut units = Vec::new();
+    for index in 0..total {
+        let y0 = ((index as f32 / total as f32) * canvas.height as f32).floor() as u32;
+        let y1 = (((index + 1) as f32 / total as f32) * canvas.height as f32).ceil() as u32;
+        units.push(UnitRect {
+            x0: 0,
+            y0,
+            x1: canvas.width,
+            y1: y1.min(canvas.height),
+            index,
+            total,
+        });
+    }
+    units
+}
+
+fn inline_unit_rects(canvas: &Canvas, text: &str, mode: UnitMode) -> Vec<UnitRect> {
+    let lines: Vec<&str> = text.lines().collect();
+    let lines = if lines.is_empty() { vec![text] } else { lines };
+    let total = lines
+        .iter()
+        .map(|line| unit_count(line, mode))
+        .sum::<usize>()
+        .max(1);
+    let mut units = Vec::new();
+    let mut global = 0_usize;
+    for (line_index, line) in lines.iter().enumerate() {
+        let line_units = unit_count(line, mode);
+        if line_units == 0 {
+            continue;
+        }
+        let y0 = ((line_index as f32 / lines.len() as f32) * canvas.height as f32).floor() as u32;
+        let y1 =
+            (((line_index + 1) as f32 / lines.len() as f32) * canvas.height as f32).ceil() as u32;
+        let (x0, x1) =
+            alpha_bounds_x(canvas, y0, y1.min(canvas.height)).unwrap_or((0, canvas.width));
+        let span = (x1.saturating_sub(x0)).max(1);
+        for local in 0..line_units {
+            let ux0 = x0 + ((local as f32 / line_units as f32) * span as f32).floor() as u32;
+            let ux1 = x0 + (((local + 1) as f32 / line_units as f32) * span as f32).ceil() as u32;
+            units.push(UnitRect {
+                x0: ux0.min(canvas.width),
+                y0,
+                x1: ux1.min(canvas.width),
+                y1: y1.min(canvas.height),
+                index: global,
+                total,
+            });
+            global += 1;
+        }
+    }
+    units
+}
+
 fn canvas_dim(value: f32) -> u32 {
     value.ceil().max(1.0).min(u32::MAX as f32) as u32
 }
@@ -562,6 +798,7 @@ fn canvas_dim(value: f32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use render_ir::{Composition, CompositionNode, TextRangeSelector};
 
     #[test]
     fn scalar_keyframes_interpolate_linearly() {
@@ -604,5 +841,97 @@ mod tests {
             evaluate_vec2_keyframes(&keyframes, 2.0, [0.0, 0.0]),
             [10.0, 20.0]
         );
+    }
+
+    #[test]
+    fn transform_canvas_applies_position() {
+        let mut src = Canvas::transparent(2, 2);
+        src.set_pixel(0, 0, [255, 0, 0, 255]);
+        let transform = render_ir::Transform2D {
+            position: [2.0, 1.0],
+            ..render_ir::Transform2D::default()
+        };
+
+        let dst = transform_canvas(&src, 4, 4, &transform, [0.0, 0.0]);
+
+        assert_eq!(dst.pixel(2, 1), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn render_frame_renders_nested_precomp_composition() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 4,
+                height: 4,
+                fps: 1.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+            },
+            compositions: vec![CompositionNode {
+                composition: Composition {
+                    id: "child".to_string(),
+                    width: 4,
+                    height: 4,
+                    fps: 1.0,
+                    duration: 1.0,
+                    background: [0, 0, 0, 0],
+                },
+                layers: vec![Layer::Solid {
+                    id: "red".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    color: [255, 0, 0, 255],
+                    rect: Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 1.0,
+                        h: 1.0,
+                    },
+                    transform: render_ir::Transform2D::default(),
+                    effects: Vec::new(),
+                }],
+            }],
+            assets: Vec::new(),
+            layers: vec![Layer::Precomp {
+                id: "child_pre".to_string(),
+                start: 0.0,
+                duration: 1.0,
+                composition: "child".to_string(),
+                collapse_transformations: false,
+                transform: render_ir::Transform2D::default(),
+                effects: Vec::new(),
+            }],
+        };
+
+        let frame = render_frame(&scene, 0).unwrap();
+
+        assert_eq!(frame.pixel(0, 0), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn text_animator_position_moves_character_unit() {
+        let mut canvas = Canvas::transparent(4, 1);
+        canvas.set_pixel(0, 0, [255, 255, 255, 255]);
+        let animator = TextAnimatorSpec {
+            name: "move".to_string(),
+            opacity: 100.0,
+            position: Some([1.0, 0.0]),
+            scale: None,
+            rotation: None,
+            blur: None,
+            selector: TextRangeSelector {
+                start: 0.0,
+                end: 100.0,
+                ..TextRangeSelector::default()
+            },
+            expression_selector: None,
+        };
+
+        let animated = apply_unit_animator_transform(&canvas, "A", &animator, 0.0, 100.0, 0.0, 0.0);
+
+        assert_eq!(animated.pixel(1, 0), [255, 255, 255, 255]);
+        assert_eq!(animated.pixel(0, 0), [0, 0, 0, 0]);
     }
 }

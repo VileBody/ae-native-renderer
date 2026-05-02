@@ -439,6 +439,7 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
             duration: main_comp.dur,
             background: bg_color_to_rgba(main_comp.bg_color),
         },
+        compositions: Vec::new(),
         assets,
         layers,
     };
@@ -671,13 +672,26 @@ fn classify_text_animator(layer: &PayloadLayer, findings: &mut Vec<CapabilityFin
         });
     }
 
-    if animator.get("expressible_selector").is_some() {
+    if let Some(expression) = animator
+        .pointer("/expressible_selector/amount/expression")
+        .and_then(Value::as_str)
+    {
+        let (status, detail) = if text_expression_selector_from_expression(expression).is_some() {
+            (
+                CapabilityStatus::Approximate,
+                "recognized generated per-character bounce expression selector",
+            )
+        } else {
+            (
+                CapabilityStatus::Unsupported,
+                "expression selector is outside the supported native subset",
+            )
+        };
         findings.push(CapabilityFinding {
-            status: CapabilityStatus::Unsupported,
+            status,
             feature: "text_animator.expressible_selector".to_string(),
             layer: Some(layer.name.clone()),
-            detail: "expression selectors are cataloged but not part of the v0 text animator subset"
-                .to_string(),
+            detail: detail.to_string(),
         });
     }
 }
@@ -960,6 +974,10 @@ fn text_animators_of(layer: &PayloadLayer) -> Vec<render_ir::TextAnimatorSpec> {
             .unwrap_or("Animator")
             .to_string(),
         opacity,
+        position: text_animator_vec2(animator, "ADBE Text Position 3D"),
+        scale: text_animator_vec2(animator, "ADBE Text Scale 3D"),
+        rotation: text_animator_f32(animator, "ADBE Text Rotation"),
+        blur: text_animator_vec2(animator, "ADBE Text Blur"),
         selector: render_ir::TextRangeSelector {
             start,
             end,
@@ -976,7 +994,50 @@ fn text_animators_of(layer: &PayloadLayer) -> Vec<render_ir::TextAnimatorSpec> {
                 .and_then(Value::as_f64)
                 .unwrap_or(100.0) as f32,
         },
+        expression_selector: animator
+            .pointer("/expressible_selector/amount/expression")
+            .and_then(Value::as_str)
+            .and_then(text_expression_selector_from_expression),
     }]
+}
+
+fn text_animator_property_value<'a>(animator: &'a Value, match_name: &str) -> Option<&'a Value> {
+    animator
+        .get("properties")?
+        .as_array()?
+        .iter()
+        .find(|property| property.get("match_name").and_then(Value::as_str) == Some(match_name))?
+        .get("value")
+}
+
+fn text_animator_vec2(animator: &Value, match_name: &str) -> Option<[f32; 2]> {
+    value_to_vec2(text_animator_property_value(animator, match_name)?)
+}
+
+fn text_animator_f32(animator: &Value, match_name: &str) -> Option<f32> {
+    text_animator_property_value(animator, match_name)?
+        .as_f64()
+        .map(|value| value as f32)
+}
+
+fn text_expression_selector_from_expression(
+    expression: &str,
+) -> Option<render_ir::TextExpressionSelector> {
+    if !(expression.contains("myDelay")
+        && expression.contains("textIndex")
+        && expression.contains("Math.cos")
+        && expression.contains("Math.exp"))
+    {
+        return None;
+    }
+
+    Some(render_ir::TextExpressionSelector::PerCharacterBounce {
+        delay: extract_js_assignment(expression, "delay").unwrap_or(0.05),
+        freq: extract_js_assignment(expression, "freq").unwrap_or(2.0),
+        amplitude: extract_js_assignment(expression, "amplitude").unwrap_or(100.0),
+        decay: extract_js_assignment(expression, "decay").unwrap_or(8.0),
+        source: expression.to_string(),
+    })
 }
 
 fn based_on_code(code: i64) -> render_ir::TextSelectorBasedOn {
@@ -1013,6 +1074,14 @@ fn is_edge_wobble_position_expression(expression: &str) -> bool {
 fn extract_js_var(expression: &str, name: &str) -> Option<f32> {
     let needle = format!("var {name}=");
     let rest = expression.split(&needle).nth(1)?;
+    let raw = rest.split(';').next()?.trim();
+    raw.parse::<f32>().ok()
+}
+
+fn extract_js_assignment(expression: &str, name: &str) -> Option<f32> {
+    let compact = expression.replace(' ', "");
+    let needle = format!("{name}=");
+    let rest = compact.split(&needle).nth(1)?;
     let raw = rest.split(';').next()?.trim();
     raw.parse::<f32>().ok()
 }

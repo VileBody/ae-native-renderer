@@ -1,0 +1,60 @@
+{
+  "version": "v0",
+  "composition": {
+    "id": "root",
+    "width": 64,
+    "height": 64,
+    "fps": 30.0,
+    "duration": 0.1,
+    "background": [0, 0, 0, 255]
+  },
+  "compositions": [
+    {
+      "composition": {
+        "id": "badge",
+        "width": 24,
+        "height": 24,
+        "fps": 30.0,
+        "duration": 0.1,
+        "background": [0, 0, 0, 0]
+      },
+      "layers": [
+        {
+          "type": "solid",
+          "id": "badge_square",
+          "start": 0.0,
+          "duration": 0.1,
+          "color": [255, 64, 48, 255],
+          "rect": { "x": 0.0, "y": 0.0, "w": 24.0, "h": 24.0 },
+          "transform": {
+            "anchor": [0.0, 0.0],
+            "position": [0.0, 0.0],
+            "scale": [100.0, 100.0],
+            "rotation": 0.0,
+            "opacity": 100.0
+          },
+          "effects": []
+        }
+      ]
+    }
+  ],
+  "assets": [],
+  "layers": [
+    {
+      "type": "precomp",
+      "id": "badge_precomp",
+      "start": 0.0,
+      "duration": 0.1,
+      "composition": "badge",
+      "collapse_transformations": true,
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [20.0, 20.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    }
+  ]
+}

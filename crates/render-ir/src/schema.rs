@@ -5,7 +5,16 @@ pub struct Scene {
     pub version: String,
     pub composition: Composition,
     #[serde(default)]
+    pub compositions: Vec<CompositionNode>,
+    #[serde(default)]
     pub assets: Vec<Asset>,
+    #[serde(default)]
+    pub layers: Vec<Layer>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CompositionNode {
+    pub composition: Composition,
     #[serde(default)]
     pub layers: Vec<Layer>,
 }
@@ -141,7 +150,17 @@ pub struct TextAnimatorSpec {
     #[serde(default = "default_animator_opacity")]
     pub opacity: f32,
     #[serde(default)]
+    pub position: Option<[f32; 2]>,
+    #[serde(default)]
+    pub scale: Option<[f32; 2]>,
+    #[serde(default)]
+    pub rotation: Option<f32>,
+    #[serde(default)]
+    pub blur: Option<[f32; 2]>,
+    #[serde(default)]
     pub selector: TextRangeSelector,
+    #[serde(default)]
+    pub expression_selector: Option<TextExpressionSelector>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -188,6 +207,20 @@ pub enum TextSelectorBasedOn {
     Characters,
     Words,
     Lines,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum TextExpressionSelector {
+    #[serde(rename = "per_character_bounce")]
+    PerCharacterBounce {
+        delay: f32,
+        freq: f32,
+        amplitude: f32,
+        decay: f32,
+        #[serde(default)]
+        source: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

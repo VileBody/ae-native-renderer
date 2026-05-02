@@ -1,0 +1,55 @@
+{
+  "version": "v0",
+  "composition": {
+    "id": "text_expression_selector",
+    "width": 128,
+    "height": 72,
+    "fps": 30.0,
+    "duration": 0.2,
+    "background": [12, 16, 24, 255]
+  },
+  "assets": [],
+  "layers": [
+    {
+      "type": "text",
+      "id": "bounce_text",
+      "start": 0.0,
+      "duration": 0.2,
+      "text": "BOUNCE",
+      "font": "DejaVu Sans Bold",
+      "fontSize": 24.0,
+      "fill": [255, 255, 255, 255],
+      "box": { "x": 0.0, "y": 0.0, "w": 128.0, "h": 72.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [0.0, 0.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "text_animators": [
+        {
+          "name": "bounce",
+          "opacity": 0.0,
+          "position": [0.0, 10.0],
+          "scale": [50.0, 50.0],
+          "rotation": 12.0,
+          "selector": {
+            "start": 0.0,
+            "end": 100.0,
+            "based_on": "characters",
+            "smoothness": 100.0
+          },
+          "expression_selector": {
+            "type": "per_character_bounce",
+            "delay": 0.03,
+            "freq": 2.0,
+            "amplitude": 100.0,
+            "decay": 8.0
+          }
+        }
+      ],
+      "effects": []
+    }
+  ]
+}

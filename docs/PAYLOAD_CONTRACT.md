@@ -184,10 +184,11 @@ back to common platform fonts such as DejaVu Sans. The v0 renderer supports:
 - fill color and layer opacity;
 - multi-line text;
 - centered alignment for the subtitle boxes used by the current examples;
-- approximate Range Selector Start/End for characters, words, and lines with animator opacity.
+- approximate Range Selector Start/End for characters, words, and lines with animator opacity;
+- approximate per-character/group Position 3D, Scale 3D, Rotation, and the generated `impulse_2nd` expression selector bounce.
 
-AE-perfect shaping, per-character styling, stroke, and per-glyph animator
-position/scale/rotation remain later roadmap items.
+AE-perfect shaping, per-character styling, stroke, per-glyph blur, wiggly selectors,
+and arbitrary expression selectors remain later roadmap items.
 
 ## Native Job Assets
 

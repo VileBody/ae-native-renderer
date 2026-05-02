@@ -20,6 +20,7 @@ pub fn render_png_sequence_with_footage(
     out_dir: impl AsRef<Path>,
     footage: &mut dyn FootageProvider,
 ) -> anyhow::Result<()> {
+    crate::graph::validate_graph(scene)?;
     let out_dir = out_dir.as_ref();
     let frames_dir = out_dir.join("frames");
     fs::create_dir_all(&frames_dir)?;
@@ -125,14 +126,59 @@ pub struct FeatureSummary {
 pub fn scene_feature_summary(scene: &Scene) -> FeatureSummary {
     let mut approximate = BTreeSet::new();
     let mut unsupported = BTreeSet::new();
-    for layer in &scene.layers {
+    collect_layer_features(&scene.layers, &mut approximate, &mut unsupported);
+    for composition in &scene.compositions {
+        collect_layer_features(&composition.layers, &mut approximate, &mut unsupported);
+    }
+    FeatureSummary {
+        approximate: approximate.into_iter().collect(),
+        unsupported: unsupported.into_iter().collect(),
+    }
+}
+
+fn collect_layer_features(
+    layers: &[Layer],
+    approximate: &mut BTreeSet<String>,
+    unsupported: &mut BTreeSet<String>,
+) {
+    for layer in layers {
         for feature in approximate_keyframes(transform_of(layer)) {
             approximate.insert(format!("layer.{}.{}", layer.id(), feature));
         }
         if let Layer::Text { text_animators, .. } = layer {
             if !text_animators.is_empty() {
                 approximate.insert(format!("layer.{}.text_animator.range_selector", layer.id()));
+                if text_animators.iter().any(|animator| {
+                    animator.position.is_some()
+                        || animator.scale.is_some()
+                        || animator.rotation.is_some()
+                        || animator.blur.is_some()
+                }) {
+                    approximate.insert(format!(
+                        "layer.{}.text_animator.per_glyph_transform",
+                        layer.id()
+                    ));
+                }
+                if text_animators
+                    .iter()
+                    .any(|animator| animator.expression_selector.is_some())
+                {
+                    approximate.insert(format!(
+                        "layer.{}.text_animator.expression_selector",
+                        layer.id()
+                    ));
+                }
             }
+        }
+        if let Layer::Precomp {
+            collapse_transformations: true,
+            ..
+        } = layer
+        {
+            approximate.insert(format!(
+                "layer.{}.precomp.collapse_transformations",
+                layer.id()
+            ));
         }
         for effect in effects_of(layer) {
             match effect.match_name.as_str() {
@@ -158,10 +204,6 @@ pub fn scene_feature_summary(scene: &Scene) -> FeatureSummary {
                 }
             }
         }
-    }
-    FeatureSummary {
-        approximate: approximate.into_iter().collect(),
-        unsupported: unsupported.into_iter().collect(),
     }
 }
 
