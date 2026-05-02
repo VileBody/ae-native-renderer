@@ -620,23 +620,32 @@ Status: first native hardening pass implemented with controlled approximations.
 - [x] Accept AE numbered params and named/direct JSON params where practical.
 - [x] Expand effect unit tests for parameter parsing and time-varying params.
 
-### Remaining Math / AE Conformance Backlog
-- [ ] Motion blur v1: comp/layer flags, shutter angle/phase, subframe sampling,
-      static-layer skip, and AE reference micro-scenes.
-- [ ] True glyph-level text animator: real glyph/object metrics, per-glyph
-      selector weights, per-glyph position/scale/rotation/blur, and closer
-      paragraph/box text parity.
-- [ ] Expression evaluator v2: broader trait-based property evaluator, scalar
-      and vector coercion, more `thisLayer`/`thisComp` access, math functions,
-      and audio-level expressions when templates need them.
-- [ ] Bezier/ease parity: golden tests for common AE temporal ease cases and
-      tighter tangent/curve matching beyond the current cubic approximation.
-- [ ] Effects parity: AE-ish parameter mapping and golden PNGs for Drop Shadow,
-      Glow, Box Blur, Minimax, Posterize Time, Geometry2, and Turbulent Displace.
-- [ ] Collapse transformations parity: keep text/vector children sharp through
-      parent transforms, expand supported cases, and add AE reference tests.
-- [ ] Transform/math non-goals still outside V2: 3D layers, cameras, spatial
-      paths, roving keyframes, and full arbitrary ExtendScript.
+### V2.2 — Math / AE Conformance Crosswalk
+
+This is the current source of truth for the remaining visual-math work. The old
+`ROADMAP.md` milestone numbers are preserved here as anchors; V2 marks many of
+these features as implemented only in controlled or approximate form.
+
+| Remaining block | Old roadmap anchor | V2 anchor / current state | What is done now | What remains for AE-like parity |
+| --- | --- | --- | --- | --- |
+| Motion blur | R10 non-goal, R19 target | V2-R8 non-goal; V2.1 backlog | Not implemented. | Composition/layer blur flags, shutter angle/phase, subframe sampling, animated transform evaluation at subframe time, static-layer skip, AE reference micro-scenes. |
+| True glyph-level text animator | R8 text glyph instances, R17 text animator | V2-R13, Text Animator v2 | Range selector basics, characters/words/lines, opacity, simple position/scale/rotation/blur, deterministic randomize/wiggly approximations. | Real glyph/object metrics from text layout, per-glyph/per-word/per-line selector weights, index units, per-glyph transform/blur application, paragraph/box text parity, AE references. |
+| Expression evaluator v2 | R18 expression subset | V2-R14, Expression Engine v2 | Deterministic named/fingerprint evaluator for generated patterns, `value`, time-ish context vars, simple numeric/Vec2 expressions, generated bounce selector. | Trait-based evaluator per property, scalar/vector coercion, more `thisLayer`/`thisComp` access, math functions with AE-ish coercion, expression selector amount, audio-level expressions if templates need them. |
+| Bezier/ease parity | R11 non-goal, R12 target | V2-R10, Bezier/Ease Keyframes | Hold/linear plus compact cubic ease approximation for scalar/Vec2 properties. | AE temporal ease tangent mapping, monotonic solving thresholds, golden ease-in/ease-out micro-scenes, closer spatial/temporal behavior. Spatial paths and roving keys remain later scope. |
+| Effects golden parity | R13 module system, R14 effects, R21 conformance | V2-R12, V2-R15, V2-R16, Effect System Hardening | Supported effect registry/params for Drop Shadow, Glow, Box Blur, Geometry2, Posterize Time, Minimax, Turbulent Displace; adjustment layers; approximate reports. | AE-ish parameter mapping, per-effect golden PNGs, tighter math for blur/glow/shadow/minimax/turbulent displacement, strict thresholds per effect/template class. |
+| Collapse transformations parity | R15 precomp, R16 collapse, R21 conformance | V2-R11, True Collapse Transformations | Nested precomp graph, cycle detection, text/solid-only collapse flattening, matrix composition for supported cases, raster fallback reports. | Defer rasterization for more text/vector children, preserve sharp text under parent scale, expand supported nested cases, AE reference tests, clear fallback/fail policy. |
+| Color/compositing/sampling parity | R6 canvas/composite, R10 transforms, R21 conformance | V2-R8, V2-R16; not yet isolated as its own V2 block | Alpha-over, transforms, ROI bounds, deterministic output. | Premultiplied/straight alpha audit, AE sampling/filtering behavior, gamma/color-space assumptions, blend-mode/matte/mask inventory if templates start using them. |
+| Later AE expansion | R10/R11/R12/R16/R18 non-goals | Explicit V2 non-goals | 2D controlled subset only. | 3D layers, cameras, spatial paths, roving keyframes, arbitrary ExtendScript, broad property graph access. |
+
+Suggested implementation order:
+
+1. Build/refresh AE golden micro-scenes for each block before changing math.
+2. Motion blur v1, because it is currently absent and has clear acceptance tests.
+3. True glyph-level text animator, because current text animation is visibly approximate.
+4. Expression evaluator v2, limited to properties/patterns emitted by current templates.
+5. Bezier/ease parity and collapse parity, driven by failing golden fixtures.
+6. Effects parity pass, one effect at a time, with per-effect thresholds.
+7. Color/compositing/sampling audit as a cross-cutting parity pass.
 
 ### Performance / Production Maturity
 - [x] Add render manifest/log timing: total render, per-frame render/save/total ms.

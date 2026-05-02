@@ -2,6 +2,10 @@
 
 This roadmap is intentionally written as an implementation contract. Each milestone has a scope, checklist, acceptance criteria, and non-goals.
 
+Status note: this is the original V1 milestone contract. The current
+implementation status and the V1-to-V2 visual-math crosswalk live in
+`ROADMAP_V2.md`, especially the "V2.2 — Math / AE Conformance Crosswalk" section.
+
 ## North Star
 
 Build a Docker-first Rust renderer that consumes a controlled AE-like IR and renders PNG sequences natively on Linux. The renderer starts with a minimal layer graph and evolves into a modular AE-subset engine.
