@@ -60,19 +60,23 @@ Done after this baseline:
    through `AE_RENDER_PREWARM_FRAMES`.
 3. Added Rust GStreamer appsink backend behind the same `VideoSource` stats and
    selectable through `AE_RENDER_MEDIA_BACKEND`.
+4. Added Rust GStreamer appsrc MP4 sink behind `VideoSink`, selectable through
+   `AE_RENDER_MUX_BACKEND`.
+5. Added repeatable backend profile/compare scripts:
+   `scripts/profile_media_backends.sh` and `scripts/compare_media_backends.sh`.
 
-## GStreamer AppSink Pass
+## GStreamer AppSink / Backend Gate Pass
 
 Follow-up profile from May 2, 2026. Same 2s/30fps scenes and media tuning knobs.
 
 ```text
 profile             template      backend                 render_ms  prepare_ms  req_ms  read_ms  decoded  skipped  spawns
-ffmpeg_appsink_pass impulse_2nd   ffmpeg-persistent-pipe  1041       65          377     358      60       0        3
-ffmpeg_appsink_pass scenes_3rd    ffmpeg-persistent-pipe  1111       76          243     225      119      59       1
-ffmpeg_appsink_pass template_4th  ffmpeg-persistent-pipe  991        73          358     341      56       0        3
-gstreamer_appsink_pass impulse_2nd   gstreamer-appsink    830        277         168     102      60       0        3
-gstreamer_appsink_pass scenes_3rd    gstreamer-appsink    885        313         35      23       119      59       1
-gstreamer_appsink_pass template_4th  gstreamer-appsink    730        285         113     71       56       0        3
+ffmpeg_p5_gate     impulse_2nd   ffmpeg-persistent-pipe  887        60          315     299      60       0        3
+ffmpeg_p5_gate     scenes_3rd    ffmpeg-persistent-pipe  956        54          165     148      119      59       1
+ffmpeg_p5_gate     template_4th  ffmpeg-persistent-pipe  898        54          300     283      56       0        3
+gstreamer_p5_gate  impulse_2nd   gstreamer-appsink       721        256         136     84       60       0        3
+gstreamer_p5_gate  scenes_3rd    gstreamer-appsink       807        247         26      15       119      59       1
+gstreamer_p5_gate  template_4th  gstreamer-appsink       667        248         92      57       56       0        3
 ```
 
 Read:
@@ -84,9 +88,12 @@ Read:
 - Backend sanity diffs against FFmpeg were low on mean absolute difference
   (`1.39` to `1.86`), but not byte-identical. Keep backend choice visible in
   reports and use AE conformance for final visual truth.
+- GStreamer appsrc MP4 sink smoke passed for `render --mp4` and `mux`; output
+  probed as 270x490, 30 fps, 2.0 s MP4.
 
 Remaining:
 
-1. Add appsrc/encoder `VideoSink` and compare it against PNG-sequence + FFmpeg
-   mux in `mux-report.json`.
-2. Add backend conformance/profile gates for GStreamer vs fallback outputs.
+1. Add direct render-to-`VideoSink` path so production MP4 output can avoid
+   writing and rereading PNG frames.
+2. Add CI or nightly hooks for backend profile gates when media fixtures are
+   available in the runner.

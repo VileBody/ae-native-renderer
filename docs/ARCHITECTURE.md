@@ -187,22 +187,22 @@ The mobile port should replace media adapters, not rewrite the renderer.
 `crates/media-gst` is the media-adapter crate. Today it is still a bootstrap
 backend: it checks GStreamer availability for `doctor`, has a `VideoSource` trait,
 `SourcePlan`/`TimelineMediaPlan` structs for scheduler input, and a `VideoSink`
-contract for future encoders. It now has a Rust GStreamer appsink `VideoSource`
-for decode and keeps the persistent sequential FFmpeg pipe as an explicit
-fallback/debug backend. The CLI writes `media-plan.json` before rendering, uses it
-to open and decoder-start early sources, keeps a small per-source frame cache,
-and maintains a bounded pool of open decoders. Media reports include backend
-selection plus request/cache/decode/spawn/read timings and runtime tuning knobs
-for backend choice, cache size, decoder pool size, sequential decode gap, and
-prewarm window. The remaining server media target is appsrc/encoder output behind
-the `VideoSink` boundary.
+contract for encoders. It now has a Rust GStreamer appsink `VideoSource` for
+decode, a Rust GStreamer appsrc MP4 `VideoSink` for encode/mux, and keeps FFmpeg
+paths as explicit fallback/debug backends. The CLI writes `media-plan.json` before
+rendering, uses it to open and decoder-start early sources, keeps a small
+per-source frame cache, and maintains a bounded pool of open decoders. Media
+reports include backend selection plus request/cache/decode/spawn/read timings
+and runtime tuning knobs for backend choice, cache size, decoder pool size,
+sequential decode gap, and prewarm window. The next server media target is a
+direct render-to-`VideoSink` path that avoids the PNG sequence as a production
+intermediate.
 
 `render-core` currently renders through a `FootageProvider` boundary and writes
 PNG sequences plus `manifest.json` and `render-log.jsonl`. The manifest includes
 aggregate layer/effect timing profiles, and the frame log includes per-frame
-profile detail. The MP4 mux helper is still FFmpeg CLI based; treat it as startup
-tooling that should move behind a `VideoSink`/media-backend boundary before
-production.
+profile detail. The CLI can still write a PNG sequence for inspectability, while
+MP4 output can be routed through the media-backend `VideoSink` boundary.
 
 The desired production formula:
 

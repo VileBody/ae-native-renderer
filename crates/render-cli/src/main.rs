@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand, ValueEnum};
-use media_gst::VideoSource;
+use media_gst::{VideoSink, VideoSource};
 use serde_json::{json, Value};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
@@ -471,9 +471,8 @@ fn render(
     write_media_report(&out, &footage)?;
     if let Some(mp4) = mp4 {
         let frames_dir = out.join("frames");
-        let mux_started = Instant::now();
-        render_core::mux_png_sequence_to_mp4(&frames_dir, fps, &mp4)?;
-        write_mux_report(&out, &frames_dir, fps, &mp4, elapsed_ms(mux_started), "render")?;
+        let mux_report = encode_png_sequence_to_mp4(&frames_dir, fps, &mp4)?;
+        write_mux_report(&out, &frames_dir, fps, &mp4, "render", &mux_report)?;
         println!("render.mp4={}", mp4.display());
     }
     println!(
@@ -494,20 +493,12 @@ fn mux(frames: PathBuf, out: PathBuf, fps: Option<f64>) -> anyhow::Result<()> {
         .or_else(|| read_manifest_fps(&frames))
         .or_else(|| frames.parent().and_then(read_manifest_fps))
         .unwrap_or(30.0);
-    let mux_started = Instant::now();
-    render_core::mux_png_sequence_to_mp4(&frames_dir, fps, &out)?;
+    let mux_report = encode_png_sequence_to_mp4(&frames_dir, fps, &out)?;
     let report_dir = out
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    write_mux_report(
-        &report_dir,
-        &frames_dir,
-        fps,
-        &out,
-        elapsed_ms(mux_started),
-        "mux",
-    )?;
+    write_mux_report(&report_dir, &frames_dir, fps, &out, "mux", &mux_report)?;
     println!(
         "mux.done frames={} fps={} out={}",
         frames_dir.display(),
@@ -1129,6 +1120,23 @@ impl MediaBackend {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum MuxBackend {
+    Auto,
+    Gstreamer,
+    Ffmpeg,
+}
+
+impl MuxBackend {
+    fn name(self) -> &'static str {
+        match self {
+            MuxBackend::Auto => "auto",
+            MuxBackend::Gstreamer => "gstreamer",
+            MuxBackend::Ffmpeg => "ffmpeg",
+        }
+    }
+}
+
 enum CliVideoSource {
     Gstreamer(media_gst::GstVideoSource),
     Ffmpeg(media_gst::FfmpegVideoSource),
@@ -1495,6 +1503,18 @@ fn media_backend() -> MediaBackend {
     }
 }
 
+fn mux_backend() -> MuxBackend {
+    match std::env::var("AE_RENDER_MUX_BACKEND")
+        .unwrap_or_else(|_| "auto".to_string())
+        .to_lowercase()
+        .as_str()
+    {
+        "gstreamer" | "gst" | "appsrc" => MuxBackend::Gstreamer,
+        "ffmpeg" | "ffmpeg-cli" => MuxBackend::Ffmpeg,
+        _ => MuxBackend::Auto,
+    }
+}
+
 fn media_prewarm_frames() -> u32 {
     std::env::var("AE_RENDER_PREWARM_FRAMES")
         .ok()
@@ -1526,13 +1546,106 @@ fn write_media_report(out: &Path, footage: &CliFootageProvider) -> anyhow::Resul
     Ok(())
 }
 
+struct MuxEncodeReport {
+    requested_backend: &'static str,
+    backend: String,
+    elapsed_ms: f64,
+    sink_manifest: Option<media_gst::VideoSinkManifest>,
+}
+
+fn encode_png_sequence_to_mp4(
+    frames_dir: &Path,
+    fps: f64,
+    out: &Path,
+) -> anyhow::Result<MuxEncodeReport> {
+    let requested = mux_backend();
+    match requested {
+        MuxBackend::Gstreamer => encode_png_sequence_gstreamer(frames_dir, fps, out, requested),
+        MuxBackend::Ffmpeg => encode_png_sequence_ffmpeg(frames_dir, fps, out, requested),
+        MuxBackend::Auto => match encode_png_sequence_gstreamer(frames_dir, fps, out, requested) {
+            Ok(report) => Ok(report),
+            Err(gst_err) => {
+                eprintln!(
+                    "mux.warn gstreamer sink failed for '{}'; falling back to ffmpeg: {gst_err:#}",
+                    out.display()
+                );
+                encode_png_sequence_ffmpeg(frames_dir, fps, out, requested)
+            }
+        },
+    }
+}
+
+fn encode_png_sequence_ffmpeg(
+    frames_dir: &Path,
+    fps: f64,
+    out: &Path,
+    requested: MuxBackend,
+) -> anyhow::Result<MuxEncodeReport> {
+    let started = Instant::now();
+    render_core::mux_png_sequence_to_mp4(frames_dir, fps, out)?;
+    Ok(MuxEncodeReport {
+        requested_backend: requested.name(),
+        backend: "ffmpeg-cli".to_string(),
+        elapsed_ms: elapsed_ms(started),
+        sink_manifest: None,
+    })
+}
+
+fn encode_png_sequence_gstreamer(
+    frames_dir: &Path,
+    fps: f64,
+    out: &Path,
+    requested: MuxBackend,
+) -> anyhow::Result<MuxEncodeReport> {
+    let started = Instant::now();
+    let frame_count = count_native_frames(frames_dir)?;
+    anyhow::ensure!(frame_count > 0, "no PNG frames found in {}", frames_dir.display());
+    let first = testkit::load_rgba_png(frames_dir.join("frame_000000.png"))?;
+    let mut sink = media_gst::GstMp4VideoSink::open(out, first.width, first.height, fps)?;
+
+    for frame in 0..frame_count {
+        let path = frames_dir.join(format!("frame_{frame:06}.png"));
+        let image = if frame == 0 {
+            first.clone()
+        } else {
+            testkit::load_rgba_png(&path)?
+        };
+        anyhow::ensure!(
+            image.width == first.width && image.height == first.height,
+            "frame {} dimensions differ: expected {}x{}, got {}x{}",
+            path.display(),
+            first.width,
+            first.height,
+            image.width,
+            image.height
+        );
+        sink.write_frame(
+            &media_gst::VideoFrame {
+                width: image.width,
+                height: image.height,
+                pts: frame as f64 / fps,
+                rgba: image.data,
+            },
+            frame as f64 / fps,
+        )?;
+    }
+
+    let manifest = sink.finish()?;
+    Ok(MuxEncodeReport {
+        requested_backend: requested.name(),
+        backend: manifest.backend.clone(),
+        elapsed_ms: elapsed_ms(started),
+        sink_manifest: Some(manifest),
+    })
+}
+
 fn write_mux_report(
     report_dir: &Path,
     frames_dir: &Path,
     fps: f64,
     out: &Path,
-    elapsed_ms: f64,
     mode: &str,
+    report: &MuxEncodeReport,
 ) -> anyhow::Result<()> {
     fs::create_dir_all(report_dir)?;
     let path = report_dir.join("mux-report.json");
@@ -1540,11 +1653,13 @@ fn write_mux_report(
         &path,
         serde_json::to_string_pretty(&json!({
             "mode": mode,
-            "backend": "ffmpeg-cli",
+            "requested_backend": report.requested_backend,
+            "backend": report.backend,
             "frames": frames_dir.display().to_string(),
             "fps": fps,
             "out": out.display().to_string(),
-            "elapsed_ms": elapsed_ms
+            "elapsed_ms": report.elapsed_ms,
+            "sink_manifest": report.sink_manifest
         }))?,
     )?;
     println!("mux.report={}", path.display());

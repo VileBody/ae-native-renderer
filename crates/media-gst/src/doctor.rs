@@ -1,7 +1,15 @@
 use std::process::Command;
 
 pub fn doctor() -> anyhow::Result<Vec<String>> {
-    let required = ["decodebin", "appsink", "appsrc", "videoconvert"];
+    let required = [
+        "decodebin",
+        "appsink",
+        "appsrc",
+        "videoconvert",
+        "x264enc",
+        "h264parse",
+        "mp4mux",
+    ];
     let mut lines = Vec::new();
     lines.push(format!(
         "gstreamer.tools.gst-inspect={}",

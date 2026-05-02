@@ -28,9 +28,10 @@
 - QuickJS/Boa backend later
 - AE-like variables only for controlled subset
 
-## Server-only adapters
+## Server Media Adapters
 
-- GStreamer-first decode/probe through appsink/appsrc pipelines
+- GStreamer-first decode/probe through appsink pipelines
+- GStreamer-first MP4 encode/mux through appsrc pipelines
 - FFmpeg/libav fallback and CLI debug/mux tooling
 
 ## Future mobile adapters

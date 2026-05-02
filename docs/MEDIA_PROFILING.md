@@ -61,10 +61,20 @@ Use it to see whether the remaining bottleneck moved away from media I/O. Do not
 optimize transform/sampling/effects from this document unless the target is AE
 conformance, not raw speed.
 
+`mux-report.json` records MP4 output backend choice:
+
+```text
+requested_backend              selected mux policy: auto, gstreamer, or ffmpeg
+backend                        actual backend used: gstreamer-appsrc-mp4 or ffmpeg-cli
+elapsed_ms                     encode/mux wall time
+sink_manifest                  VideoSink manifest for GStreamer outputs
+```
+
 ## Tuning knobs
 
 ```bash
 AE_RENDER_MEDIA_BACKEND=auto
+AE_RENDER_MUX_BACKEND=auto
 AE_RENDER_MAX_OPEN_DECODERS=6
 AE_RENDER_MEDIA_FRAME_CACHE=4
 AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP=180
@@ -74,6 +84,8 @@ AE_RENDER_PREWARM_FRAMES=1
 - `AE_RENDER_MEDIA_BACKEND`: `auto`, `gstreamer`, or `ffmpeg`. `auto` tries the
   Rust GStreamer appsink backend first and falls back to FFmpeg if opening the
   source fails.
+- `AE_RENDER_MUX_BACKEND`: `auto`, `gstreamer`, or `ffmpeg`. `auto` tries the
+  Rust GStreamer appsrc MP4 sink first and falls back to FFmpeg CLI.
 - `AE_RENDER_MAX_OPEN_DECODERS`: limits simultaneously running decoder pipes.
 - `AE_RENDER_MEDIA_FRAME_CACHE`: per-source decoded-frame LRU size; `0` disables it.
 - `AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP`: maximum frame gap to advance by reading
@@ -87,6 +99,7 @@ AE_RENDER_PREWARM_FRAMES=1
 ```bash
 docker run --rm \
   -e AE_RENDER_MEDIA_BACKEND=gstreamer \
+  -e AE_RENDER_MUX_BACKEND=gstreamer \
   -e AE_RENDER_MAX_OPEN_DECODERS=6 \
   -e AE_RENDER_MEDIA_FRAME_CACHE=4 \
   -e AE_RENDER_MAX_SEQUENTIAL_DECODE_GAP=180 \
@@ -112,6 +125,13 @@ use:
 
 ```bash
 scripts/profile_media_summary.sh target/media_profile_runs
+```
+
+To rerun the current backend profile and backend compare gate:
+
+```bash
+scripts/profile_media_backends.sh
+scripts/compare_media_backends.sh
 ```
 
 Current baseline findings are tracked in
