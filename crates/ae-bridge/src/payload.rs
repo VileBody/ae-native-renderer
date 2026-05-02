@@ -216,6 +216,7 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
         *layer_types.entry(layer.kind.clone()).or_insert(0) += 1;
         validate_layer_timing(layer, &mut errors);
         classify_layer(layer, &mut findings);
+        classify_text_animator(layer, &mut findings);
 
         for (prop_name, prop) in &layer.props {
             if prop
@@ -318,15 +319,15 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         let target_comp = layer_target_comp(layer).unwrap_or(&main_comp.name);
         if target_comp != main_comp.name {
             if let Some(parent) = precomp_sources.get(target_comp) {
-                if layer.kind == "text" {
+                if layer.kind == "text" || layer.kind == "adjustment" {
                     match import_flattened_text_layer(layer, parent, main_comp) {
                         Some(imported) => {
                             diagnostics.imported_layers += 1;
                             diagnostics.findings.push(CapabilityFinding {
                                 status: CapabilityStatus::Approximate,
-                                feature: "import.flatten_text_precomp".to_string(),
+                                feature: format!("import.flatten_{}_precomp", layer.kind),
                                 layer: Some(layer.name.clone()),
-                                detail: format!("flattened text layer from comp '{target_comp}' through precomp '{}'", parent.name),
+                                detail: format!("flattened {} layer from comp '{target_comp}' through precomp '{}'", layer.kind, parent.name),
                             });
                             layer_items.push((flattened_sort_key(parent, layer), imported));
                         }
@@ -334,9 +335,9 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
                             diagnostics.skipped_layers += 1;
                             diagnostics.findings.push(CapabilityFinding {
                                 status: CapabilityStatus::Unsupported,
-                                feature: "import.skip_flattened_text".to_string(),
+                                feature: format!("import.skip_flattened_{}", layer.kind),
                                 layer: Some(layer.name.clone()),
-                                detail: "flattened text layer has no active time range after parent clipping".to_string(),
+                                detail: format!("flattened {} layer has no active time range after parent clipping", layer.kind),
                             });
                         }
                     }
@@ -440,7 +441,10 @@ fn precomp_has_text_children(payload: &GeneratedPayload, comp_name: &str) -> boo
     payload
         .text_layers
         .iter()
-        .any(|layer| layer.kind == "text" && layer_target_comp(layer) == Some(comp_name))
+        .any(|layer| {
+            matches!(layer.kind.as_str(), "text" | "adjustment")
+                && layer_target_comp(layer) == Some(comp_name)
+        })
 }
 
 fn import_flattened_text_layer(
@@ -452,6 +456,15 @@ fn import_flattened_text_layer(
     let end = (parent.in_point + layer.out_point).min(parent.out_point);
     if end <= start {
         return None;
+    }
+
+    if layer.kind == "adjustment" {
+        return Some(render_ir::Layer::Adjustment {
+            id: layer_id(layer),
+            start,
+            duration: end - start,
+            effects: effects_of(layer),
+        });
     }
 
     let child_transform = transform_of(layer);
@@ -579,6 +592,7 @@ fn import_text_layer(
         fill: color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255]),
         box_: Some(text_box_for(&transform, font_size, comp)),
         transform,
+        text_animators: text_animators_of(layer),
         effects: effects_of(layer),
     }
 }
@@ -602,8 +616,8 @@ fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
             "simple text precomps will be flattened before full precomp support",
         ),
         "adjustment" => (
-            CapabilityStatus::Unsupported,
-            "adjustment layers require the later effect-on-accumulated-buffer pipeline",
+            CapabilityStatus::Approximate,
+            "adjustment layers apply known effects to the accumulated buffer",
         ),
         _ => (CapabilityStatus::Unsupported, "unknown layer type"),
     };
@@ -618,6 +632,31 @@ fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
         layer: Some(layer.name.clone()),
         detail: detail.to_string(),
     });
+}
+
+fn classify_text_animator(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
+    let Some(animator) = layer.text_data.get("text_animator") else {
+        return;
+    };
+
+    if animator.get("selector").is_some() {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Approximate,
+            feature: "text_animator.range_selector".to_string(),
+            layer: Some(layer.name.clone()),
+            detail: "range selector start/end, basedOn, and opacity are approximated".to_string(),
+        });
+    }
+
+    if animator.get("expressible_selector").is_some() {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Unsupported,
+            feature: "text_animator.expressible_selector".to_string(),
+            layer: Some(layer.name.clone()),
+            detail: "expression selectors are cataloged but not part of the v0 text animator subset"
+                .to_string(),
+        });
+    }
 }
 
 fn layer_target_comp(layer: &PayloadLayer) -> Option<&str> {
@@ -685,6 +724,9 @@ fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
                 .or_else(|| prop_f32_keyframes(layer, "text_reveal"))
                 .or_else(|| prop_f32_keyframes(layer, "reveal"))
                 .unwrap_or_default(),
+            expression: render_ir::Transform2DExpression {
+                position: position_expression(layer),
+            },
         },
     }
 }
@@ -807,6 +849,7 @@ fn compose_precomp_animation(
         scale,
         opacity,
         reveal: child.animation.reveal.clone(),
+        expression: child.animation.expression.clone(),
     }
 }
 
@@ -819,6 +862,95 @@ fn effects_of(layer: &PayloadLayer) -> Vec<render_ir::EffectSpec> {
             params: serde_json::to_value(params).unwrap_or_else(|_| json!({})),
         })
         .collect()
+}
+
+fn text_animators_of(layer: &PayloadLayer) -> Vec<render_ir::TextAnimatorSpec> {
+    let Some(animator) = layer.text_data.get("text_animator") else {
+        return Vec::new();
+    };
+
+    let selector = &animator["selector"];
+    let advanced = &selector["advanced"];
+    let opacity = prop_f32(layer, "anim_opacity").unwrap_or_else(|| {
+        animator
+            .get("opacity")
+            .and_then(Value::as_f64)
+            .unwrap_or(100.0) as f32
+    });
+    let start_keyframes = prop_f32_keyframes(layer, "reveal").unwrap_or_default();
+    let end_keyframes = prop_f32_keyframes(layer, "reveal_end")
+        .or_else(|| prop_f32_keyframes(layer, "text_reveal_end"))
+        .unwrap_or_default();
+    let start = prop_f32(layer, "reveal").unwrap_or_else(|| {
+        selector
+            .get("percentStart")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0) as f32
+    });
+    let end = selector
+        .get("percentEnd")
+        .and_then(Value::as_f64)
+        .unwrap_or(100.0) as f32;
+
+    vec![render_ir::TextAnimatorSpec {
+        name: animator
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or("Animator")
+            .to_string(),
+        opacity,
+        selector: render_ir::TextRangeSelector {
+            start,
+            end,
+            start_keyframes,
+            end_keyframes,
+            based_on: based_on_code(
+                advanced
+                    .get("basedOn")
+                    .and_then(Value::as_i64)
+                    .unwrap_or(1),
+            ),
+            smoothness: advanced
+                .get("smoothness")
+                .and_then(Value::as_f64)
+                .unwrap_or(100.0) as f32,
+        },
+    }]
+}
+
+fn based_on_code(code: i64) -> render_ir::TextSelectorBasedOn {
+    match code {
+        3 => render_ir::TextSelectorBasedOn::Words,
+        4 => render_ir::TextSelectorBasedOn::Lines,
+        _ => render_ir::TextSelectorBasedOn::Characters,
+    }
+}
+
+fn position_expression(layer: &PayloadLayer) -> Option<render_ir::PositionExpression> {
+    let expression = layer.props.get("tf_position")?.expression.as_deref()?;
+    if !(expression.contains("var intro=")
+        && expression.contains("var outro=")
+        && expression.contains("var amp=")
+        && expression.contains("var freq=")
+        && expression.contains("Math.exp(-2.4"))
+    {
+        return None;
+    }
+
+    Some(render_ir::PositionExpression::EdgeWobble {
+        intro: extract_js_var(expression, "intro").unwrap_or(0.63),
+        outro: extract_js_var(expression, "outro").unwrap_or(0.63),
+        amp: extract_js_var(expression, "amp").unwrap_or(22.0),
+        freq: extract_js_var(expression, "freq").unwrap_or(3.6),
+        source: expression.to_string(),
+    })
+}
+
+fn extract_js_var(expression: &str, name: &str) -> Option<f32> {
+    let needle = format!("var {name}=");
+    let rest = expression.split(&needle).nth(1)?;
+    let raw = rest.split(';').next()?.trim();
+    raw.parse::<f32>().ok()
 }
 
 fn prop_vec2(layer: &PayloadLayer, name: &str) -> Option<[f32; 2]> {
@@ -994,10 +1126,13 @@ fn text_box_for(
 
 fn effect_status(effect_name: &str) -> CapabilityStatus {
     match effect_name {
-        "ADBE Drop Shadow" | "ADBE Glo2" | "ADBE Box Blur2" => CapabilityStatus::Approximate,
-        "ADBE Geometry2" | "ADBE Posterize Time" | "ADBE Minimax" | "ADBE Turbulent Displace" => {
-            CapabilityStatus::Unsupported
-        }
+        "ADBE Drop Shadow"
+        | "ADBE Glo2"
+        | "ADBE Box Blur2"
+        | "ADBE Geometry2"
+        | "ADBE Posterize Time"
+        | "ADBE Minimax"
+        | "ADBE Turbulent Displace" => CapabilityStatus::Approximate,
         _ => CapabilityStatus::Unsupported,
     }
 }
@@ -1007,10 +1142,10 @@ fn effect_detail(effect_name: &str) -> &'static str {
         "ADBE Drop Shadow" => "implemented as an approximate text/canvas shadow",
         "ADBE Glo2" => "implemented as an approximate alpha/luminance glow",
         "ADBE Box Blur2" => "implemented as an approximate RGBA box blur",
-        "ADBE Geometry2" => "planned later with adjustment layer support",
-        "ADBE Posterize Time" => "planned later after keyframe/time pipeline is stable",
-        "ADBE Minimax" => "planned later for complex text templates",
-        "ADBE Turbulent Displace" => "planned later as an approximate displacement effect",
+        "ADBE Geometry2" => "implemented as an approximate canvas transform",
+        "ADBE Posterize Time" => "recognized as a stateless canvas-stage no-op",
+        "ADBE Minimax" => "implemented as an approximate alpha/RGBA minimax",
+        "ADBE Turbulent Displace" => "implemented as an approximate deterministic displacement",
         _ => "unknown effect is unsupported",
     }
 }

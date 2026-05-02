@@ -453,19 +453,19 @@ Implement the effects that quickly improve visual match for easier templates.
 Support the text reveal patterns used in the generated payloads.
 
 ### Checklist
-- [ ] Implement Range Selector basics.
+- [x] Implement Range Selector basics.
 - [ ] Support BasedOn:
-  - [ ] characters
-  - [ ] words
-  - [ ] lines
-- [ ] Support Percent Start/End.
-- [ ] Support animator opacity.
+  - [x] characters
+  - [x] words
+  - [x] lines
+- [x] Support Percent Start/End.
+- [x] Support animator opacity.
 - [ ] Support simple per-glyph position/scale/rotation later.
 
 ### Acceptance Criteria
-- [ ] `template_4th` reveal keyframes are visible.
-- [ ] `scenes_3rd` line/word reveal can be approximated.
-- [ ] Unsupported animator properties are reported.
+- [x] `template_4th` reveal keyframes are visible.
+- [x] `scenes_3rd` line/word reveal can be approximated.
+- [x] Unsupported animator properties are reported.
 
 ### Non-goals
 - Wiggly selector.
@@ -480,20 +480,20 @@ Support the text reveal patterns used in the generated payloads.
 Evaluate only the generated expression patterns that block real templates.
 
 ### Checklist
-- [ ] Catalog expressions emitted by generator.
-- [ ] Add expression fingerprints or named expression modes where possible.
+- [x] Catalog expressions emitted by generator.
+- [x] Add expression fingerprints or named expression modes where possible.
 - [ ] Support variables:
-  - [ ] `time`
-  - [ ] `inPoint`
-  - [ ] `outPoint`
-  - [ ] `value`
-  - [ ] `thisComp.frameDuration`
-- [ ] Support math functions used by examples.
-- [ ] Prefer structured generator parameters over raw JS where possible.
+  - [x] `time`
+  - [x] `inPoint`
+  - [x] `outPoint`
+  - [x] `value`
+  - [x] `thisComp.frameDuration`
+- [x] Support math functions used by examples.
+- [x] Prefer structured generator parameters over raw JS where possible.
 
 ### Acceptance Criteria
-- [ ] `scenes_3rd` footage position wobble expression can be evaluated or replaced by a named native mode.
-- [ ] Expression failures are explicit and local to the layer/property.
+- [x] `scenes_3rd` footage position wobble expression can be evaluated or replaced by a named native mode.
+- [x] Expression failures are explicit and local to the layer/property.
 
 ### Non-goals
 - Full ExtendScript.
@@ -513,14 +513,14 @@ Support the more complex `scenes_3rd` class.
 4. `ADBE Turbulent Displace`
 
 ### Checklist
-- [ ] Implement adjustment-layer pipeline over accumulated buffer.
-- [ ] Apply effect stack to layer or accumulated canvas depending on layer type.
-- [ ] Add effect timing/keyframe support.
-- [ ] Add approximation status to reports.
+- [x] Implement adjustment-layer pipeline over accumulated buffer.
+- [x] Apply effect stack to layer or accumulated canvas depending on layer type.
+- [x] Add effect timing/keyframe support.
+- [x] Add approximation status to reports.
 
 ### Acceptance Criteria
-- [ ] Adjustment layers no longer silently render as transparent no-ops.
-- [ ] `scenes_3rd` can render with approximate native effects.
+- [x] Adjustment layers no longer silently render as transparent no-ops.
+- [x] `scenes_3rd` can render with approximate native effects.
 
 ### Non-goals
 - Third-party plugins.

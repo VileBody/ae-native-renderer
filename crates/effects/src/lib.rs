@@ -43,6 +43,24 @@ pub(crate) fn param_f32(params: &Value, name: &str, default: f32) -> f32 {
         .unwrap_or(default)
 }
 
+pub(crate) fn param_f32_at(params: &Value, name: &str, time: f64, default: f32) -> f32 {
+    let Some(raw) = params.get(name) else {
+        return default;
+    };
+    if let Some(expression) = raw.get("expression").and_then(Value::as_str) {
+        if expression.trim() == "time*500" {
+            return (time * 500.0) as f32;
+        }
+    }
+    if let Some(value) = raw.get("value").or(Some(raw)).and_then(Value::as_f64) {
+        return value as f32;
+    }
+    let Some(keyframes) = raw.get("keyframes").and_then(Value::as_array) else {
+        return default;
+    };
+    evaluate_scalar_keyframes(keyframes, time).unwrap_or(default)
+}
+
 pub(crate) fn param_bool(params: &Value, name: &str, default: bool) -> bool {
     param_value(params, name)
         .and_then(|value| {
@@ -81,4 +99,29 @@ pub(crate) fn param_rgba(params: &Value, name: &str, default: [u8; 4]) -> [u8; 4
 fn param_value<'a>(params: &'a Value, name: &str) -> Option<&'a Value> {
     let value = params.get(name)?;
     value.get("value").or(Some(value))
+}
+
+fn evaluate_scalar_keyframes(keyframes: &[Value], time: f64) -> Option<f32> {
+    if keyframes.is_empty() {
+        return None;
+    }
+    let value_at = |key: &Value| key.get("v").and_then(Value::as_f64).map(|value| value as f32);
+    let time_at = |key: &Value| key.get("t").and_then(Value::as_f64);
+    if time <= time_at(&keyframes[0])? {
+        return value_at(&keyframes[0]);
+    }
+    for pair in keyframes.windows(2) {
+        let a_time = time_at(&pair[0])?;
+        let b_time = time_at(&pair[1])?;
+        if time <= b_time {
+            let a_value = value_at(&pair[0])?;
+            let b_value = value_at(&pair[1])?;
+            if b_time <= a_time {
+                return Some(a_value);
+            }
+            let t = ((time - a_time) / (b_time - a_time)).clamp(0.0, 1.0) as f32;
+            return Some(a_value + (b_value - a_value) * t);
+        }
+    }
+    keyframes.last().and_then(value_at)
 }

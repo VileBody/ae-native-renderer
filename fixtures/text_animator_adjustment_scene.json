@@ -1,0 +1,100 @@
+{
+  "version": "v0",
+  "composition": {
+    "id": "text_animator_adjustment_smoke",
+    "width": 96,
+    "height": 64,
+    "fps": 30.0,
+    "duration": 0.1,
+    "background": [0, 0, 0, 255]
+  },
+  "assets": [],
+  "layers": [
+    {
+      "type": "adjustment",
+      "id": "adjust_fx",
+      "start": 0.0,
+      "duration": 0.1,
+      "effects": [
+        {
+          "match_name": "ADBE Geometry2",
+          "params": {
+            "0001": [48, 32],
+            "0002": [48, 32],
+            "0003": 95
+          }
+        },
+        {
+          "match_name": "ADBE Minimax",
+          "params": {
+            "0001": 1,
+            "0002": 1,
+            "0003": 1
+          }
+        },
+        {
+          "match_name": "ADBE Posterize Time",
+          "params": {
+            "0001": 5
+          }
+        },
+        {
+          "match_name": "ADBE Turbulent Displace",
+          "params": {
+            "0002": 2,
+            "0003": 24,
+            "0005": 1,
+            "0006": { "expression": "time*500" }
+          }
+        }
+      ]
+    },
+    {
+      "type": "text",
+      "id": "text_animator",
+      "start": 0.0,
+      "duration": 0.1,
+      "text": "ONE TWO",
+      "font": "DejaVu Sans Bold",
+      "fontSize": 20.0,
+      "fill": [255, 255, 255, 255],
+      "box": { "x": -48.0, "y": -18.0, "w": 96.0, "h": 36.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [48.0, 34.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "text_animators": [
+        {
+          "name": "word_reveal",
+          "opacity": 0.0,
+          "selector": {
+            "start": 50.0,
+            "end": 100.0,
+            "based_on": "words",
+            "smoothness": 0.0
+          }
+        }
+      ],
+      "effects": []
+    },
+    {
+      "type": "solid",
+      "id": "backing",
+      "start": 0.0,
+      "duration": 0.1,
+      "color": [18, 28, 42, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 96.0, "h": 64.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [0.0, 0.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    }
+  ]
+}

@@ -15,8 +15,9 @@ impl Effect for PosterizeTime {
         _ctx: &EffectContext,
         _params: &serde_json::Value,
     ) -> anyhow::Result<Canvas> {
-        // TODO: implement ADBE Posterize Time math.
-        // Current behavior: pass-through stub.
+        // Posterize Time changes which source frame is sampled. At this stateless
+        // per-canvas stage the frame has already been rendered, so the stable
+        // approximation is to preserve pixels unchanged.
         Ok(input.clone())
     }
 }

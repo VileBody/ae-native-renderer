@@ -118,7 +118,10 @@ crates/testkit         golden frame tests and image diff helpers
 This is an early native-renderer slice with a working Docker build, payload import,
 asset resolution/probing, FFmpeg frame decode, static footage timelines, readable
 text rendering, basic 2D layer transforms, PNG manifests/logs, MP4 muxing,
-hold/linear transform keyframes, and approximate Drop Shadow/Glow/Box Blur.
+hold/linear transform keyframes, approximate Drop Shadow/Glow/Box Blur,
+text Range Selector opacity reveals, the generated `edge_wobble` position
+expression, adjustment layers, and approximate Geometry2/Minimax/Turbulent
+Displace effects. Posterize Time is recognized as a canvas-stage no-op.
 The active implementation plan is `ROADMAP_V2.md`: consume generated payload JSON
 directly, translate it into render IR, then build native footage, text, transforms,
 keyframes, effects, text animators, and expressions incrementally.

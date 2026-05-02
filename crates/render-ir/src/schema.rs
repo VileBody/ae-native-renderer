@@ -84,6 +84,28 @@ pub struct Transform2DAnimation {
     pub opacity: Vec<ScalarKeyframe>,
     #[serde(default)]
     pub reveal: Vec<ScalarKeyframe>,
+    #[serde(default)]
+    pub expression: Transform2DExpression,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct Transform2DExpression {
+    #[serde(default)]
+    pub position: Option<PositionExpression>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(tag = "type")]
+pub enum PositionExpression {
+    #[serde(rename = "edge_wobble")]
+    EdgeWobble {
+        intro: f32,
+        outro: f32,
+        amp: f32,
+        freq: f32,
+        #[serde(default)]
+        source: String,
+    },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -111,6 +133,61 @@ pub struct EffectSpec {
     pub match_name: String,
     #[serde(default)]
     pub params: serde_json::Value,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TextAnimatorSpec {
+    pub name: String,
+    #[serde(default = "default_animator_opacity")]
+    pub opacity: f32,
+    #[serde(default)]
+    pub selector: TextRangeSelector,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextRangeSelector {
+    #[serde(default)]
+    pub start: f32,
+    #[serde(default = "default_selector_end")]
+    pub end: f32,
+    #[serde(default)]
+    pub start_keyframes: Vec<ScalarKeyframe>,
+    #[serde(default)]
+    pub end_keyframes: Vec<ScalarKeyframe>,
+    #[serde(default)]
+    pub based_on: TextSelectorBasedOn,
+    #[serde(default)]
+    pub smoothness: f32,
+}
+
+impl Default for TextRangeSelector {
+    fn default() -> Self {
+        Self {
+            start: 0.0,
+            end: 100.0,
+            start_keyframes: Vec::new(),
+            end_keyframes: Vec::new(),
+            based_on: TextSelectorBasedOn::default(),
+            smoothness: 100.0,
+        }
+    }
+}
+
+fn default_selector_end() -> f32 {
+    100.0
+}
+
+fn default_animator_opacity() -> f32 {
+    100.0
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextSelectorBasedOn {
+    #[default]
+    Characters,
+    Words,
+    Lines,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -154,6 +231,8 @@ pub enum Layer {
         box_: Option<Rect>,
         #[serde(default)]
         transform: Transform2D,
+        #[serde(default)]
+        text_animators: Vec<TextAnimatorSpec>,
         #[serde(default)]
         effects: Vec<EffectSpec>,
     },

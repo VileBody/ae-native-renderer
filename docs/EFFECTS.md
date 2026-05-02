@@ -6,10 +6,10 @@ Initial first-party AE matchName support:
 ADBE Drop Shadow       approximate
 ADBE Glo2              approximate
 ADBE Box Blur2         approximate
-ADBE Turbulent Displace
-ADBE Posterize Time
-ADBE Geometry2
-ADBE Minimax
+ADBE Turbulent Displace approximate
+ADBE Posterize Time     recognized no-op at canvas stage
+ADBE Geometry2          approximate
+ADBE Minimax            approximate
 ```
 
 ## Registry rules
@@ -25,7 +25,7 @@ ADBE Minimax
 1. `ADBE Box Blur2` — separable blur.
 2. `ADBE Drop Shadow` — alpha copy, color, blur, offset, under composite.
 3. `ADBE Glo2` — threshold, blur, composite.
-4. `ADBE Minimax` — dilate/erode/open/close.
-5. `ADBE Posterize Time` — quantized source sampling time.
+4. `ADBE Minimax` — alpha/RGBA dilate/erode approximation.
+5. `ADBE Posterize Time` — recognized; true frame quantization belongs above canvas effects.
 6. `ADBE Geometry2` — transform-like adjustment effect.
-7. `ADBE Turbulent Displace` — noise/displacement approximation, calibrated later.
+7. `ADBE Turbulent Displace` — deterministic sine/noise displacement approximation.

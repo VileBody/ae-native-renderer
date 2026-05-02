@@ -45,9 +45,30 @@ The first IR is deliberately small. It represents a composition, assets, and a l
           "position": [{ "time": 0.0, "value": [100, 200] }],
           "scale": [{ "time": 0.0, "value": [100, 100] }],
           "opacity": [{ "time": 0.0, "value": 100 }],
-          "reveal": [{ "time": 0.0, "value": 100 }]
+          "reveal": [{ "time": 0.0, "value": 100 }],
+          "expression": {
+            "position": {
+              "type": "edge_wobble",
+              "intro": 0.63,
+              "outro": 0.63,
+              "amp": 22.0,
+              "freq": 3.6
+            }
+          }
         }
-      }
+      },
+      "text_animators": [
+        {
+          "name": "Animator 1",
+          "opacity": 0,
+          "selector": {
+            "start": 0,
+            "end": 100,
+            "based_on": "words",
+            "start_keyframes": [{ "time": 0.0, "value": 0 }]
+          }
+        }
+      ]
     }
   ]
 }
@@ -81,3 +102,11 @@ All deviations must be validated against golden frames.
 `transform.animation` is optional. v0 supports hold and linear keyframes for
 `position`, `scale`, `opacity`, and a simple text `reveal` percent. Imported AE
 Bezier/ease keyframes are evaluated linearly and marked as approximate.
+
+`text_animators` is optional on text layers. v0 supports one or more approximate
+Range Selectors with percent Start/End, Based On `characters`/`words`/`lines`,
+and animator opacity. Expression selectors are reported as unsupported.
+
+`transform.animation.expression.position` currently supports the generated
+`edge_wobble` fingerprint used by `scenes_3rd`; it is not a general JavaScript
+expression runtime.

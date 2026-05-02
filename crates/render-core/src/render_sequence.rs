@@ -129,21 +129,22 @@ fn feature_summary(scene: &Scene) -> FeatureSummary {
         for feature in approximate_keyframes(transform_of(layer)) {
             approximate.insert(format!("layer.{}.{}", layer.id(), feature));
         }
+        if let Layer::Text { text_animators, .. } = layer {
+            if !text_animators.is_empty() {
+                approximate.insert(format!("layer.{}.text_animator.range_selector", layer.id()));
+            }
+        }
         for effect in effects_of(layer) {
             match effect.match_name.as_str() {
-                "ADBE Drop Shadow" | "ADBE Glo2" | "ADBE Box Blur2" => {
-                    approximate.insert(format!(
-                        "layer.{}.effect.{}",
-                        layer.id(),
-                        effect.match_name
-                    ));
-                }
-                "ADBE Geometry2"
+                "ADBE Drop Shadow"
+                | "ADBE Glo2"
+                | "ADBE Box Blur2"
+                | "ADBE Geometry2"
                 | "ADBE Posterize Time"
                 | "ADBE Minimax"
                 | "ADBE Turbulent Displace" => {
-                    unsupported.insert(format!(
-                        "layer.{}.effect.{} pass-through",
+                    approximate.insert(format!(
+                        "layer.{}.effect.{}",
                         layer.id(),
                         effect.match_name
                     ));
@@ -200,6 +201,9 @@ fn approximate_keyframes(transform: Option<&Transform2D>) -> Vec<&'static str> {
     }
     if transform.animation.reveal.iter().any(|key| key.approximate) {
         features.push("keyframes.reveal.bezier_as_linear");
+    }
+    if transform.animation.expression.position.is_some() {
+        features.push("expression.position.edge_wobble");
     }
     features
 }

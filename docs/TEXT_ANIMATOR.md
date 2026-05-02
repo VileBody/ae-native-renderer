@@ -1,6 +1,7 @@
 # Text Animator Notes
 
-Text animators are implemented as glyph/object weights plus per-glyph property evaluation.
+Text animators are currently approximated from text alpha bounds and selector units.
+The target model is glyph/object weights plus per-glyph property evaluation.
 
 ## Required layout data
 
@@ -19,10 +20,13 @@ local_anchor
 
 - Range Selector;
 - Percent Start/End;
-- Based On: characters, words;
+- Based On: characters, words, lines;
 - Shape: Square first;
 - Smoothness: 0/100 first;
-- Animator properties: Opacity, Position 3D, Scale 3D, Rotation, Blur placeholder.
+- Animator properties: Opacity.
+
+Position 3D, Scale 3D, Rotation, Blur, wiggly selectors, randomized order, and
+expression selectors are reported but remain outside the v0 renderer subset.
 
 ## Evaluation rule
 
