@@ -1,4 +1,4 @@
-use crate::{param_f32, Effect, EffectContext};
+use crate::{param_f32_any, Effect, EffectContext};
 use raster_cpu::Canvas;
 use serde_json::Value;
 
@@ -16,8 +16,23 @@ impl Effect for BoxBlur2 {
         _ctx: &EffectContext,
         params: &Value,
     ) -> anyhow::Result<Canvas> {
-        let radius = param_f32(params, "0001", param_f32(params, "0002", 0.0));
-        Ok(blur_canvas(input, blur_radius(radius)))
+        let params = BoxBlurParams::from_json(params);
+        Ok(blur_canvas(input, blur_radius(params.radius)))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct BoxBlurParams {
+    pub radius: f32,
+    pub iterations: f32,
+}
+
+impl BoxBlurParams {
+    pub(crate) fn from_json(params: &Value) -> Self {
+        Self {
+            radius: param_f32_any(params, &["radius", "Radius", "0001", "0002"], 0.0),
+            iterations: param_f32_any(params, &["iterations", "Iterations", "0002"], 1.0),
+        }
     }
 }
 
@@ -114,5 +129,21 @@ mod tests {
         assert!(output.pixel(0, 0)[3] > 0);
         assert!(output.pixel(1, 0)[3] > 0);
         assert!(output.pixel(2, 0)[3] > 0);
+    }
+
+    #[test]
+    fn params_accept_direct_named_and_ae_numbered_values() {
+        assert_eq!(
+            BoxBlurParams::from_json(&serde_json::json!({ "radius": 2.4 })).radius,
+            2.4
+        );
+        assert_eq!(
+            BoxBlurParams::from_json(&serde_json::json!({ "0001": { "value": 7 } })).radius,
+            7.0
+        );
+        assert_eq!(
+            BoxBlurParams::from_json(&serde_json::json!({ "0002": 3 })).radius,
+            3.0
+        );
     }
 }

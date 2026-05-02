@@ -4,14 +4,12 @@
 //! v1: cache precomp frames.
 //! v2: implement controlled collapse transformations.
 
+pub use crate::collapse::CollapseMode;
+use crate::collapse::{
+    plan_precomp_collapse, plan_target_collapse, PrecompCollapsePlan, ISSUE_TARGET_MISSING,
+};
 use render_ir::{Layer, Scene};
 use std::collections::{BTreeMap, BTreeSet};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum CollapseMode {
-    RasterizeFirst,
-    CollapseSupportedVectors,
-}
 
 #[derive(Debug, Clone, Copy)]
 pub struct CompositionNode<'a> {
@@ -163,6 +161,34 @@ impl<'a> PrecompGraph<'a> {
         issues
     }
 
+    pub fn collapse_plan_for_precomp_layer(
+        &self,
+        parent_composition: &str,
+        layer_id: &str,
+    ) -> anyhow::Result<PrecompCollapsePlan<'a>> {
+        let (parent_composition, layers) = self
+            .compositions
+            .iter()
+            .find(|(id, _)| **id == parent_composition)
+            .map(|(id, layers)| (*id, *layers))
+            .ok_or_else(|| anyhow::anyhow!("composition '{}' is missing", parent_composition))?;
+
+        let layer = layers
+            .iter()
+            .find(|layer| layer.id() == layer_id)
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "layer '{}' in composition '{}' is missing",
+                    layer_id,
+                    parent_composition
+                )
+            })?;
+
+        plan_precomp_collapse(parent_composition, layer, |composition_id| {
+            self.layers_for(composition_id)
+        })
+    }
+
     pub fn validate_collapse_feasibility(&self) -> anyhow::Result<()> {
         let issues = self.collapse_issues();
         if issues.is_empty() {
@@ -261,53 +287,10 @@ impl<'a> PrecompGraph<'a> {
     }
 
     fn collapse_issues_for_target(&self, target: &str) -> Vec<&'static str> {
-        let Some(layers) = self.layers_for(target) else {
-            return vec!["target composition is missing"];
+        let Some((target, _)) = self.compositions.iter().find(|(id, _)| **id == target) else {
+            return vec![ISSUE_TARGET_MISSING];
         };
-        let mut issues = Vec::new();
-        for layer in layers {
-            if layer_has_effects(layer) {
-                push_unique(
-                    &mut issues,
-                    "layer effects require offscreen rasterization before collapse",
-                );
-            }
-            match layer {
-                Layer::Footage { .. } => push_unique(
-                    &mut issues,
-                    "footage layers require raster source sampling before collapse",
-                ),
-                Layer::Adjustment { .. } => push_unique(
-                    &mut issues,
-                    "adjustment layers depend on the offscreen composite before collapse",
-                ),
-                Layer::Precomp {
-                    collapse_transformations,
-                    ..
-                } if !*collapse_transformations => push_unique(
-                    &mut issues,
-                    "nested precomp rasterizes before the requested collapse boundary",
-                ),
-                _ => {}
-            }
-        }
-        issues
-    }
-}
-
-fn layer_has_effects(layer: &Layer) -> bool {
-    match layer {
-        Layer::Solid { effects, .. }
-        | Layer::Footage { effects, .. }
-        | Layer::Text { effects, .. }
-        | Layer::Precomp { effects, .. }
-        | Layer::Adjustment { effects, .. } => !effects.is_empty(),
-    }
-}
-
-fn push_unique(values: &mut Vec<&'static str>, value: &'static str) {
-    if !values.contains(&value) {
-        values.push(value);
+        plan_target_collapse(target, |composition_id| self.layers_for(composition_id)).issues
     }
 }
 
@@ -424,6 +407,13 @@ mod tests {
         assert_eq!(plan.entries[0].collapse_mode, CollapseMode::RasterizeFirst);
         assert_eq!(plan.entries[0].collapse_issues.len(), 3);
         assert!(graph.validate_collapse_feasibility().is_err());
+
+        let collapse_plan = graph
+            .collapse_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+        assert!(!collapse_plan.can_flatten_with_parent_matrix());
+        assert_eq!(collapse_plan.mode, CollapseMode::RasterizeFirst);
+        assert_eq!(collapse_plan.issues.len(), 3);
     }
 
     #[test]
@@ -451,6 +441,152 @@ mod tests {
             plan.entries[0].collapse_mode,
             CollapseMode::CollapseSupportedVectors
         );
+
+        let collapse_plan = graph
+            .collapse_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+        assert!(collapse_plan.can_flatten_with_parent_matrix());
+        assert_eq!(collapse_plan.flattened_layers.len(), 2);
+        assert!(collapse_plan
+            .flattened_layers
+            .iter()
+            .all(|layer| layer.nested_precomp_path.is_empty()));
+    }
+
+    #[test]
+    fn marks_nested_collapsed_vector_precomp_as_supported() {
+        let root_layers = vec![precomp_layer("root_pre", "child", true)];
+        let child_layers = vec![
+            solid_layer("shape"),
+            precomp_layer("child_pre", "grandchild", true),
+        ];
+        let grandchild_layers = vec![text_layer("title")];
+        let graph = PrecompGraph::from_nodes(
+            "root",
+            [
+                CompositionNode {
+                    id: "root",
+                    layers: &root_layers,
+                },
+                CompositionNode {
+                    id: "child",
+                    layers: &child_layers,
+                },
+                CompositionNode {
+                    id: "grandchild",
+                    layers: &grandchild_layers,
+                },
+            ],
+        )
+        .unwrap();
+
+        graph.validate_collapse_feasibility().unwrap();
+        let plan = graph.render_plan().unwrap();
+        assert_eq!(plan.entries.len(), 2);
+        assert!(plan
+            .entries
+            .iter()
+            .all(|entry| entry.collapse_mode == CollapseMode::CollapseSupportedVectors));
+
+        let collapse_plan = graph
+            .collapse_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+        assert!(collapse_plan.can_flatten_with_parent_matrix());
+        assert_eq!(collapse_plan.flattened_layers.len(), 2);
+        let nested_leaf = collapse_plan
+            .flattened_layers
+            .iter()
+            .find(|layer| layer.layer.id() == "title")
+            .unwrap();
+        assert_eq!(nested_leaf.composition_id, "grandchild");
+        assert_eq!(nested_leaf.nested_precomp_path.len(), 1);
+        assert_eq!(nested_leaf.nested_precomp_path[0].layer_id, "child_pre");
+    }
+
+    #[test]
+    fn rejects_nested_non_collapsed_precomp_for_collapse() {
+        let root_layers = vec![precomp_layer("root_pre", "child", true)];
+        let child_layers = vec![precomp_layer("child_pre", "grandchild", false)];
+        let grandchild_layers = vec![text_layer("title")];
+        let graph = PrecompGraph::from_nodes(
+            "root",
+            [
+                CompositionNode {
+                    id: "root",
+                    layers: &root_layers,
+                },
+                CompositionNode {
+                    id: "child",
+                    layers: &child_layers,
+                },
+                CompositionNode {
+                    id: "grandchild",
+                    layers: &grandchild_layers,
+                },
+            ],
+        )
+        .unwrap();
+
+        let collapse_plan = graph
+            .collapse_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+        assert_eq!(collapse_plan.mode, CollapseMode::RasterizeFirst);
+        assert!(collapse_plan
+            .issues
+            .contains(&crate::collapse::ISSUE_NESTED_PRECOMP_RASTERIZES));
+    }
+
+    #[test]
+    fn collapse_planning_keeps_missing_refs_as_graph_errors() {
+        let root_layers = vec![precomp_layer("root_pre", "missing", true)];
+        let graph = PrecompGraph::from_nodes(
+            "root",
+            [CompositionNode {
+                id: "root",
+                layers: &root_layers,
+            }],
+        )
+        .unwrap();
+
+        let error = graph.render_plan().unwrap_err().to_string();
+        assert!(error.contains("references missing composition 'missing'"));
+        let collapse_plan = graph
+            .collapse_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+        assert_eq!(collapse_plan.mode, CollapseMode::RasterizeFirst);
+        assert!(collapse_plan
+            .issues
+            .contains(&crate::collapse::ISSUE_TARGET_MISSING));
+    }
+
+    #[test]
+    fn collapse_planning_keeps_cycles_as_graph_errors() {
+        let root_layers = vec![precomp_layer("root_pre", "child", true)];
+        let child_layers = vec![precomp_layer("child_pre", "root", true)];
+        let graph = PrecompGraph::from_nodes(
+            "root",
+            [
+                CompositionNode {
+                    id: "root",
+                    layers: &root_layers,
+                },
+                CompositionNode {
+                    id: "child",
+                    layers: &child_layers,
+                },
+            ],
+        )
+        .unwrap();
+
+        let error = graph.render_plan().unwrap_err().to_string();
+        assert!(error.contains("precomp composition cycle detected: root -> child -> root"));
+        let collapse_plan = graph
+            .collapse_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+        assert_eq!(collapse_plan.mode, CollapseMode::RasterizeFirst);
+        assert!(collapse_plan
+            .issues
+            .contains(&crate::collapse::ISSUE_NESTED_PRECOMP_CYCLE));
     }
 
     fn scene_with_layers(id: &str, layers: Vec<Layer>) -> Scene {

@@ -1,3 +1,4 @@
+use crate::collapse::PrecompCollapsePlan;
 use crate::precomp::{PrecompGraph, PrecompRenderPlan};
 use render_ir::Scene;
 
@@ -11,6 +12,14 @@ pub fn validate_graph(scene: &Scene) -> anyhow::Result<()> {
 
 pub fn precomp_render_plan(scene: &Scene) -> anyhow::Result<PrecompRenderPlan<'_>> {
     PrecompGraph::from_scene(scene)?.render_plan()
+}
+
+pub fn precomp_collapse_plan<'a>(
+    scene: &'a Scene,
+    parent_composition: &str,
+    layer_id: &str,
+) -> anyhow::Result<PrecompCollapsePlan<'a>> {
+    PrecompGraph::from_scene(scene)?.collapse_plan_for_precomp_layer(parent_composition, layer_id)
 }
 
 #[cfg(test)]

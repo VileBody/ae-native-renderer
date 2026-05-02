@@ -125,6 +125,8 @@ pub struct Vec2Keyframe {
     pub hold: bool,
     #[serde(default)]
     pub approximate: bool,
+    #[serde(default)]
+    pub ease: Option<KeyframeEase>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,6 +137,16 @@ pub struct ScalarKeyframe {
     pub hold: bool,
     #[serde(default)]
     pub approximate: bool,
+    #[serde(default)]
+    pub ease: Option<KeyframeEase>,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct KeyframeEase {
+    pub x1: f32,
+    pub y1: f32,
+    pub x2: f32,
+    pub y2: f32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -177,6 +189,12 @@ pub struct TextRangeSelector {
     pub based_on: TextSelectorBasedOn,
     #[serde(default)]
     pub smoothness: f32,
+    #[serde(default)]
+    pub shape: TextSelectorShape,
+    #[serde(default)]
+    pub randomize_order: bool,
+    #[serde(default)]
+    pub wiggly: Option<TextWigglySelector>,
 }
 
 impl Default for TextRangeSelector {
@@ -188,6 +206,9 @@ impl Default for TextRangeSelector {
             end_keyframes: Vec::new(),
             based_on: TextSelectorBasedOn::default(),
             smoothness: 100.0,
+            shape: TextSelectorShape::default(),
+            randomize_order: false,
+            wiggly: None,
         }
     }
 }
@@ -207,6 +228,26 @@ pub enum TextSelectorBasedOn {
     Characters,
     Words,
     Lines,
+}
+
+#[derive(Debug, Clone, Copy, Default, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextSelectorShape {
+    #[default]
+    Square,
+    RampUp,
+    RampDown,
+    Triangle,
+    Round,
+    Smooth,
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct TextWigglySelector {
+    pub amount: f32,
+    pub frequency: f32,
+    #[serde(default)]
+    pub seed: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

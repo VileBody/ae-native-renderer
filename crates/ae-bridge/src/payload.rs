@@ -845,6 +845,7 @@ fn compose_precomp_animation(
                 ],
                 hold: key.hold,
                 approximate: true,
+                ease: key.ease,
             })
             .collect()
     } else {
@@ -860,6 +861,7 @@ fn compose_precomp_animation(
                 ],
                 hold: key.hold,
                 approximate: key.approximate,
+                ease: key.ease,
             })
             .collect()
     };
@@ -877,6 +879,7 @@ fn compose_precomp_animation(
                 ],
                 hold: key.hold,
                 approximate: true,
+                ease: key.ease,
             })
             .collect()
     } else {
@@ -889,6 +892,7 @@ fn compose_precomp_animation(
                 value: [key.value[0] * sx, key.value[1] * sy],
                 hold: key.hold,
                 approximate: key.approximate,
+                ease: key.ease,
             })
             .collect()
     };
@@ -903,6 +907,7 @@ fn compose_precomp_animation(
                 value: key.value * child.opacity / 100.0,
                 hold: key.hold,
                 approximate: true,
+                ease: key.ease,
             })
             .collect()
     } else {
@@ -915,6 +920,7 @@ fn compose_precomp_animation(
                 value: parent.opacity * key.value / 100.0,
                 hold: key.hold,
                 approximate: key.approximate,
+                ease: key.ease,
             })
             .collect()
     };
@@ -993,6 +999,13 @@ fn text_animators_of(layer: &PayloadLayer) -> Vec<render_ir::TextAnimatorSpec> {
                 .get("smoothness")
                 .and_then(Value::as_f64)
                 .unwrap_or(100.0) as f32,
+            shape: selector_shape_code(advanced.get("shape").and_then(Value::as_i64).unwrap_or(1)),
+            randomize_order: advanced
+                .get("randomizeOrder")
+                .and_then(Value::as_i64)
+                .map(|value| value != 0)
+                .unwrap_or(false),
+            wiggly: text_wiggly_selector(advanced),
         },
         expression_selector: animator
             .pointer("/expressible_selector/amount/expression")
@@ -1046,6 +1059,40 @@ fn based_on_code(code: i64) -> render_ir::TextSelectorBasedOn {
         4 => render_ir::TextSelectorBasedOn::Lines,
         _ => render_ir::TextSelectorBasedOn::Characters,
     }
+}
+
+fn selector_shape_code(code: i64) -> render_ir::TextSelectorShape {
+    match code {
+        2 => render_ir::TextSelectorShape::RampUp,
+        3 => render_ir::TextSelectorShape::RampDown,
+        4 => render_ir::TextSelectorShape::Triangle,
+        5 => render_ir::TextSelectorShape::Round,
+        6 => render_ir::TextSelectorShape::Smooth,
+        _ => render_ir::TextSelectorShape::Square,
+    }
+}
+
+fn text_wiggly_selector(advanced: &Value) -> Option<render_ir::TextWigglySelector> {
+    let amount = advanced
+        .get("wigglyAmount")
+        .or_else(|| advanced.get("amount"))
+        .and_then(Value::as_f64)? as f32;
+    let frequency = advanced
+        .get("wigglesPerSecond")
+        .or_else(|| advanced.get("frequency"))
+        .and_then(Value::as_f64)
+        .unwrap_or(1.0) as f32;
+    let seed = advanced
+        .get("randomSeed")
+        .or_else(|| advanced.get("seed"))
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .min(u32::MAX as u64) as u32;
+    Some(render_ir::TextWigglySelector {
+        amount,
+        frequency,
+        seed,
+    })
 }
 
 fn position_expression(layer: &PayloadLayer) -> Option<render_ir::PositionExpression> {
@@ -1112,6 +1159,7 @@ fn prop_vec2_keyframes(layer: &PayloadLayer, name: &str) -> Option<Vec<render_ir
                 value,
                 hold,
                 approximate,
+                ease: keyframe_ease(key),
             })
         })
         .collect();
@@ -1132,6 +1180,7 @@ fn prop_f32_keyframes(layer: &PayloadLayer, name: &str) -> Option<Vec<render_ir:
                 value,
                 hold,
                 approximate,
+                ease: keyframe_ease(key),
             })
         })
         .collect();
@@ -1149,6 +1198,38 @@ fn keyframe_flags(key: &KeyframeSpec) -> (bool, bool) {
     let bezier = key.iit.as_deref() == Some("6613") || key.oit.as_deref() == Some("6613");
     let has_ease = !key.ease_in.is_empty() || !key.ease_out.is_empty();
     (hold, bezier || has_ease)
+}
+
+fn keyframe_ease(key: &KeyframeSpec) -> Option<render_ir::KeyframeEase> {
+    let (_, approximate) = keyframe_flags(key);
+    if !approximate {
+        return None;
+    }
+
+    let out_influence = key
+        .ease_out
+        .first()
+        .and_then(ease_influence)
+        .unwrap_or(33.333);
+    let in_influence = key
+        .ease_in
+        .first()
+        .and_then(ease_influence)
+        .unwrap_or(33.333);
+    Some(render_ir::KeyframeEase {
+        x1: (out_influence / 100.0).clamp(0.05, 0.95),
+        y1: 0.0,
+        x2: (1.0 - in_influence / 100.0).clamp(0.05, 0.95),
+        y2: 1.0,
+    })
+}
+
+fn ease_influence(value: &Value) -> Option<f32> {
+    value
+        .get("influence")
+        .or_else(|| value.get("i"))
+        .and_then(Value::as_f64)
+        .map(|value| value as f32)
 }
 
 fn footage_path(layer: &PayloadLayer) -> String {

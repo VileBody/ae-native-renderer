@@ -43,6 +43,15 @@ pub(crate) fn param_f32(params: &Value, name: &str, default: f32) -> f32 {
         .unwrap_or(default)
 }
 
+pub(crate) fn param_f32_any(params: &Value, names: &[&str], default: f32) -> f32 {
+    for name in names {
+        if params.get(*name).is_some() {
+            return param_f32(params, name, default);
+        }
+    }
+    default
+}
+
 pub(crate) fn param_f32_at(params: &Value, name: &str, time: f64, default: f32) -> f32 {
     let Some(raw) = params.get(name) else {
         return default;
@@ -61,6 +70,15 @@ pub(crate) fn param_f32_at(params: &Value, name: &str, time: f64, default: f32) 
     evaluate_scalar_keyframes(keyframes, time).unwrap_or(default)
 }
 
+pub(crate) fn param_f32_at_any(params: &Value, names: &[&str], time: f64, default: f32) -> f32 {
+    for name in names {
+        if params.get(*name).is_some() {
+            return param_f32_at(params, name, time, default);
+        }
+    }
+    default
+}
+
 pub(crate) fn param_bool(params: &Value, name: &str, default: bool) -> bool {
     param_value(params, name)
         .and_then(|value| {
@@ -69,6 +87,15 @@ pub(crate) fn param_bool(params: &Value, name: &str, default: bool) -> bool {
                 .or_else(|| value.as_f64().map(|number| number.abs() > f64::EPSILON))
         })
         .unwrap_or(default)
+}
+
+pub(crate) fn param_bool_any(params: &Value, names: &[&str], default: bool) -> bool {
+    for name in names {
+        if params.get(*name).is_some() {
+            return param_bool(params, name, default);
+        }
+    }
+    default
 }
 
 pub(crate) fn param_rgba(params: &Value, name: &str, default: [u8; 4]) -> [u8; 4] {
@@ -96,7 +123,19 @@ pub(crate) fn param_rgba(params: &Value, name: &str, default: [u8; 4]) -> [u8; 4
     ]
 }
 
-fn param_value<'a>(params: &'a Value, name: &str) -> Option<&'a Value> {
+pub(crate) fn param_rgba_any(params: &Value, names: &[&str], default: [u8; 4]) -> [u8; 4] {
+    for name in names {
+        if param_value(params, name)
+            .and_then(Value::as_array)
+            .is_some()
+        {
+            return param_rgba(params, name, default);
+        }
+    }
+    default
+}
+
+pub(crate) fn param_value<'a>(params: &'a Value, name: &str) -> Option<&'a Value> {
     let value = params.get(name)?;
     value.get("value").or(Some(value))
 }

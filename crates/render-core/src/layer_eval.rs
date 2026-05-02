@@ -2,7 +2,7 @@ use effects::{EffectContext, EffectRegistry};
 use raster_cpu::{composite_normal, BilinearSampler, Canvas, Sampler};
 use render_ir::{
     Composition, EffectSpec, Layer, PositionExpression, Rect, ScalarKeyframe, Scene,
-    TextAnimatorSpec, TextExpressionSelector, TextSelectorBasedOn, Vec2Keyframe,
+    TextAnimatorSpec, TextExpressionSelector, TextSelectorBasedOn, TextSelectorShape, Vec2Keyframe,
 };
 use text_engine::{rasterize_text, TextLayoutRequest};
 use transform_math::{Mat3, Transform2D, Vec2};
@@ -177,10 +177,20 @@ fn render_layer_stub(
             start,
             duration,
             composition,
-            collapse_transformations: _,
+            collapse_transformations,
             transform,
             ..
         } => {
+            if *collapse_transformations && can_collapse_composition(scene, composition, stack) {
+                return render_collapsed_precomp(
+                    scene,
+                    comp,
+                    layer,
+                    time,
+                    footage,
+                    stack,
+                );
+            }
             let node = scene
                 .compositions
                 .iter()
@@ -208,6 +218,214 @@ fn render_layer_stub(
 
     canvas = apply_effects_to_canvas(effects_of(layer), &canvas, time, comp.fps)?;
     Ok(canvas)
+}
+
+fn render_collapsed_precomp(
+    scene: &Scene,
+    parent_comp: &Composition,
+    layer: &Layer,
+    time: f64,
+    footage: &mut dyn FootageProvider,
+    stack: &mut Vec<String>,
+) -> anyhow::Result<Canvas> {
+    let Layer::Precomp {
+        start,
+        duration,
+        composition,
+        transform,
+        ..
+    } = layer
+    else {
+        anyhow::bail!("render_collapsed_precomp called for non-precomp layer");
+    };
+    if stack.iter().any(|value| value == composition) {
+        anyhow::bail!("precomp cycle detected: {} -> {}", stack.join(" -> "), composition);
+    }
+    let node = composition_node(scene, composition)
+        .ok_or_else(|| anyhow::anyhow!("precomp composition '{composition}' was not found"))?;
+    let source_time = (time - *start).max(0.0);
+    let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
+    let parent_matrix = transform_to_matrix(&evaluated).matrix();
+    let mut canvas = Canvas::transparent(parent_comp.width, parent_comp.height);
+
+    stack.push(composition.clone());
+    for child in node.layers.iter().rev() {
+        if !child.is_active(source_time) {
+            continue;
+        }
+        let child_canvas = render_layer_with_parent_matrix(
+            scene,
+            parent_comp,
+            child,
+            source_time,
+            footage,
+            stack,
+            parent_matrix,
+        )?;
+        composite_normal(&mut canvas, &child_canvas, opacity_of(child, source_time));
+    }
+    stack.pop();
+
+    Ok(canvas)
+}
+
+fn render_layer_with_parent_matrix(
+    scene: &Scene,
+    parent_comp: &Composition,
+    layer: &Layer,
+    time: f64,
+    footage: &mut dyn FootageProvider,
+    stack: &mut Vec<String>,
+    parent_matrix: Mat3,
+) -> anyhow::Result<Canvas> {
+    match layer {
+        Layer::Solid {
+            color,
+            rect,
+            transform,
+            start,
+            duration,
+            ..
+        } => {
+            let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
+            let mut c = Canvas::transparent(canvas_dim(rect.w), canvas_dim(rect.h));
+            for y in 0..c.height {
+                for x in 0..c.width {
+                    c.set_pixel(x, y, *color);
+                }
+            }
+            let matrix = parent_matrix.mul(transform_to_matrix(&evaluated).matrix());
+            Ok(transform_canvas_with_matrix(
+                &c,
+                parent_comp.width,
+                parent_comp.height,
+                matrix,
+                [rect.x, rect.y],
+            ))
+        }
+        Layer::Text {
+            text,
+            font,
+            fontSize,
+            fill,
+            box_,
+            transform,
+            text_animators,
+            start,
+            duration,
+            ..
+        } => {
+            let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
+            let rect = box_.clone().unwrap_or(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: parent_comp.width as f32,
+                h: parent_comp.height as f32,
+            });
+            let local_width = canvas_dim(rect.w);
+            let local_height = canvas_dim(rect.h);
+            let mut text_canvas = rasterize_text(
+                &TextLayoutRequest {
+                    text: text.clone(),
+                    font_id: font.clone(),
+                    font_size: *fontSize,
+                    box_rect: Some([0.0, 0.0, local_width as f32, local_height as f32]),
+                },
+                local_width,
+                local_height,
+                *fill,
+            )?;
+            let reveal = evaluate_scalar_keyframes(&transform.animation.reveal, time, 100.0);
+            if text_animators.is_empty() {
+                apply_horizontal_reveal(&mut text_canvas, reveal);
+            } else {
+                text_canvas = apply_text_animators(text_canvas, text, text_animators, time, *start);
+            }
+            let matrix = parent_matrix.mul(transform_to_matrix(&evaluated).matrix());
+            Ok(transform_canvas_with_matrix(
+                &text_canvas,
+                parent_comp.width,
+                parent_comp.height,
+                matrix,
+                [rect.x, rect.y],
+            ))
+        }
+        Layer::Precomp {
+            start,
+            duration,
+            composition,
+            collapse_transformations,
+            transform,
+            ..
+        } if *collapse_transformations && can_collapse_composition(scene, composition, stack) => {
+            if stack.iter().any(|value| value == composition) {
+                anyhow::bail!("precomp cycle detected: {} -> {}", stack.join(" -> "), composition);
+            }
+            let node = composition_node(scene, composition)
+                .ok_or_else(|| anyhow::anyhow!("precomp composition '{composition}' was not found"))?;
+            let source_time = (time - *start).max(0.0);
+            let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
+            let matrix = parent_matrix.mul(transform_to_matrix(&evaluated).matrix());
+            let mut canvas = Canvas::transparent(parent_comp.width, parent_comp.height);
+            stack.push(composition.clone());
+            for child in node.layers.iter().rev() {
+                if !child.is_active(source_time) {
+                    continue;
+                }
+                let child_canvas = render_layer_with_parent_matrix(
+                    scene,
+                    parent_comp,
+                    child,
+                    source_time,
+                    footage,
+                    stack,
+                    matrix,
+                )?;
+                composite_normal(&mut canvas, &child_canvas, opacity_of(child, source_time));
+            }
+            stack.pop();
+            Ok(canvas)
+        }
+        _ => render_layer_stub(scene, parent_comp, layer, time, footage, stack),
+    }
+}
+
+fn can_collapse_composition(scene: &Scene, composition: &str, stack: &[String]) -> bool {
+    if stack.iter().any(|value| value == composition) {
+        return false;
+    }
+    let Some(node) = composition_node(scene, composition) else {
+        return false;
+    };
+    let mut nested_stack = stack.to_vec();
+    nested_stack.push(composition.to_string());
+    node.layers.iter().all(|layer| {
+        if !effects_of(layer).is_empty() {
+            return false;
+        }
+        match layer {
+            Layer::Solid { .. } | Layer::Text { .. } => true,
+            Layer::Precomp {
+                composition,
+                collapse_transformations,
+                ..
+            } => {
+                *collapse_transformations
+                    && can_collapse_composition(scene, composition, &nested_stack)
+            }
+            Layer::Footage { .. } | Layer::Adjustment { .. } => false,
+        }
+    })
+}
+
+fn composition_node<'a>(
+    scene: &'a Scene,
+    composition: &str,
+) -> Option<&'a render_ir::CompositionNode> {
+    scene
+        .compositions
+        .iter()
+        .find(|node| node.composition.id == composition)
 }
 
 fn apply_effects_to_canvas(
@@ -253,7 +471,23 @@ fn transform_canvas(
     transform: &render_ir::Transform2D,
     local_origin: [f32; 2],
 ) -> Canvas {
-    let Some(inverse) = transform_to_matrix(transform).matrix().inverse() else {
+    transform_canvas_with_matrix(
+        src,
+        width,
+        height,
+        transform_to_matrix(transform).matrix(),
+        local_origin,
+    )
+}
+
+fn transform_canvas_with_matrix(
+    src: &Canvas,
+    width: u32,
+    height: u32,
+    matrix: Mat3,
+    local_origin: [f32; 2],
+) -> Canvas {
+    let Some(inverse) = matrix.inverse() else {
         return Canvas::transparent(width, height);
     };
 
@@ -372,7 +606,10 @@ fn evaluate_vec2_keyframes(
             if a.hold || b.time <= a.time {
                 return a.value;
             }
-            let t = ((time - a.time) / (b.time - a.time)).clamp(0.0, 1.0) as f32;
+            let t = eased_progress(
+                ((time - a.time) / (b.time - a.time)).clamp(0.0, 1.0) as f32,
+                a.ease,
+            );
             return [
                 a.value[0] + (b.value[0] - a.value[0]) * t,
                 a.value[1] + (b.value[1] - a.value[1]) * t,
@@ -396,11 +633,44 @@ fn evaluate_scalar_keyframes(keyframes: &[ScalarKeyframe], time: f64, fallback: 
             if a.hold || b.time <= a.time {
                 return a.value;
             }
-            let t = ((time - a.time) / (b.time - a.time)).clamp(0.0, 1.0) as f32;
+            let t = eased_progress(
+                ((time - a.time) / (b.time - a.time)).clamp(0.0, 1.0) as f32,
+                a.ease,
+            );
             return a.value + (b.value - a.value) * t;
         }
     }
     keyframes.last().map(|key| key.value).unwrap_or(fallback)
+}
+
+fn eased_progress(t: f32, ease: Option<render_ir::KeyframeEase>) -> f32 {
+    let Some(ease) = ease else {
+        return t;
+    };
+    cubic_bezier_y_for_x(t, ease).clamp(0.0, 1.0)
+}
+
+fn cubic_bezier_y_for_x(x: f32, ease: render_ir::KeyframeEase) -> f32 {
+    let mut u = x;
+    for _ in 0..6 {
+        let current_x = cubic_bezier(u, 0.0, ease.x1, ease.x2, 1.0);
+        let dx = cubic_bezier_derivative(u, 0.0, ease.x1, ease.x2, 1.0);
+        if dx.abs() < 1.0e-5 {
+            break;
+        }
+        u = (u - (current_x - x) / dx).clamp(0.0, 1.0);
+    }
+    cubic_bezier(u, 0.0, ease.y1, ease.y2, 1.0)
+}
+
+fn cubic_bezier(t: f32, p0: f32, p1: f32, p2: f32, p3: f32) -> f32 {
+    let mt = 1.0 - t;
+    mt * mt * mt * p0 + 3.0 * mt * mt * t * p1 + 3.0 * mt * t * t * p2 + t * t * t * p3
+}
+
+fn cubic_bezier_derivative(t: f32, p0: f32, p1: f32, p2: f32, p3: f32) -> f32 {
+    let mt = 1.0 - t;
+    3.0 * mt * mt * (p1 - p0) + 6.0 * mt * t * (p2 - p1) + 3.0 * t * t * (p3 - p2)
 }
 
 fn apply_horizontal_reveal(canvas: &mut Canvas, reveal_percent: f32) {
@@ -441,6 +711,7 @@ fn apply_text_animators(
         if animator.position.is_some()
             || animator.scale.is_some()
             || animator.rotation.is_some()
+            || animator.blur.is_some()
             || animator.expression_selector.is_some()
         {
             canvas = apply_unit_animator_transform(
@@ -453,14 +724,7 @@ fn apply_text_animators(
                 layer_start,
             );
         } else {
-            apply_range_opacity(
-                &mut canvas,
-                text,
-                animator.selector.based_on,
-                start.min(end),
-                start.max(end),
-                animator.opacity,
-            );
+            apply_range_opacity(&mut canvas, text, animator, start.min(end), start.max(end), time);
         }
     }
     canvas
@@ -469,39 +733,41 @@ fn apply_text_animators(
 fn apply_range_opacity(
     canvas: &mut Canvas,
     text: &str,
-    based_on: TextSelectorBasedOn,
+    animator: &TextAnimatorSpec,
     start_percent: f32,
     end_percent: f32,
-    opacity_percent: f32,
+    time: f64,
 ) {
-    let alpha_scale = (opacity_percent / 100.0).clamp(0.0, 1.0);
-    if alpha_scale >= 0.999 {
+    if animator.opacity >= 99.999 && animator.selector.wiggly.is_none() {
         return;
     }
 
-    match based_on {
+    match animator.selector.based_on {
         TextSelectorBasedOn::Lines => apply_line_range_opacity(
             canvas,
             text.lines().count().max(1),
+            animator,
             start_percent,
             end_percent,
-            alpha_scale,
+            time,
         ),
         TextSelectorBasedOn::Words => apply_inline_unit_range_opacity(
             canvas,
             text,
             UnitMode::Words,
+            animator,
             start_percent,
             end_percent,
-            alpha_scale,
+            time,
         ),
         TextSelectorBasedOn::Characters => apply_inline_unit_range_opacity(
             canvas,
             text,
             UnitMode::Characters,
+            animator,
             start_percent,
             end_percent,
-            alpha_scale,
+            time,
         ),
     }
 }
@@ -515,15 +781,24 @@ enum UnitMode {
 fn apply_line_range_opacity(
     canvas: &mut Canvas,
     line_count: usize,
+    animator: &TextAnimatorSpec,
     start_percent: f32,
     end_percent: f32,
-    alpha_scale: f32,
+    time: f64,
 ) {
     for line in 0..line_count {
-        let midpoint = ((line as f32 + 0.5) / line_count as f32) * 100.0;
-        if midpoint < start_percent || midpoint > end_percent {
+        let weight = selector_weight(
+            line,
+            line_count,
+            &animator.selector,
+            start_percent,
+            end_percent,
+            time,
+        );
+        if weight <= 0.0 {
             continue;
         }
+        let alpha_scale = animator_alpha_scale(animator.opacity, weight);
         let y0 = ((line as f32 / line_count as f32) * canvas.height as f32).floor() as u32;
         let y1 = (((line + 1) as f32 / line_count as f32) * canvas.height as f32).ceil() as u32;
         scale_alpha_rect(canvas, 0, y0, canvas.width, y1.min(canvas.height), alpha_scale);
@@ -534,9 +809,10 @@ fn apply_inline_unit_range_opacity(
     canvas: &mut Canvas,
     text: &str,
     mode: UnitMode,
+    animator: &TextAnimatorSpec,
     start_percent: f32,
     end_percent: f32,
-    alpha_scale: f32,
+    time: f64,
 ) {
     let lines: Vec<&str> = text.lines().collect();
     let lines = if lines.is_empty() { vec![text] } else { lines };
@@ -560,12 +836,20 @@ fn apply_inline_unit_range_opacity(
         let span = (x1.saturating_sub(x0)).max(1);
 
         for local_unit in 0..line_units {
-            let midpoint = ((global_unit as f32 + 0.5) / total_units as f32) * 100.0;
-            if midpoint >= start_percent && midpoint <= end_percent {
+            let weight = selector_weight(
+                global_unit,
+                total_units,
+                &animator.selector,
+                start_percent,
+                end_percent,
+                time,
+            );
+            if weight > 0.0 {
                 let ux0 =
                     x0 + ((local_unit as f32 / line_units as f32) * span as f32).floor() as u32;
                 let ux1 = x0
                     + (((local_unit + 1) as f32 / line_units as f32) * span as f32).ceil() as u32;
+                let alpha_scale = animator_alpha_scale(animator.opacity, weight);
                 scale_alpha_rect(
                     canvas,
                     ux0,
@@ -616,6 +900,85 @@ fn scale_alpha_rect(canvas: &mut Canvas, x0: u32, y0: u32, x1: u32, y1: u32, alp
     }
 }
 
+fn animator_alpha_scale(opacity_percent: f32, weight: f32) -> f32 {
+    (1.0 + ((opacity_percent / 100.0) - 1.0) * weight).clamp(0.0, 2.0)
+}
+
+fn selector_weight(
+    index: usize,
+    total: usize,
+    selector: &render_ir::TextRangeSelector,
+    start_percent: f32,
+    end_percent: f32,
+    time: f64,
+) -> f32 {
+    if total == 0 {
+        return 0.0;
+    }
+    let ordered_index = if selector.randomize_order {
+        deterministic_order_index(index, total, selector.wiggly.map(|wiggly| wiggly.seed).unwrap_or(0))
+    } else {
+        index
+    };
+    let pos = ((ordered_index as f32 + 0.5) / total as f32) * 100.0;
+    let start = start_percent.min(end_percent);
+    let end = start_percent.max(end_percent);
+    if pos < start || pos > end {
+        return 0.0;
+    }
+    let span = (end - start).max(0.0001);
+    let t = ((pos - start) / span).clamp(0.0, 1.0);
+    let mut weight = match selector.shape {
+        TextSelectorShape::Square => square_selector_weight(pos, start, end, selector.smoothness),
+        TextSelectorShape::RampUp => t,
+        TextSelectorShape::RampDown => 1.0 - t,
+        TextSelectorShape::Triangle => (1.0 - (2.0 * t - 1.0).abs()).clamp(0.0, 1.0),
+        TextSelectorShape::Round => (std::f32::consts::PI * t).sin().max(0.0),
+        TextSelectorShape::Smooth => t * t * (3.0 - 2.0 * t),
+    };
+    if let Some(wiggly) = selector.wiggly {
+        let phase = deterministic_unit_noise(index, wiggly.seed) * std::f32::consts::TAU
+            + time as f32 * wiggly.frequency * std::f32::consts::TAU;
+        weight *= 1.0 + (wiggly.amount / 100.0) * phase.sin();
+    }
+    weight.clamp(0.0, 1.0)
+}
+
+fn square_selector_weight(pos: f32, start: f32, end: f32, smoothness: f32) -> f32 {
+    if smoothness <= 0.0 {
+        return 1.0;
+    }
+    let edge = ((end - start) * (smoothness / 100.0) * 0.5).max(0.0001);
+    let fade_in = ((pos - start) / edge).clamp(0.0, 1.0);
+    let fade_out = ((end - pos) / edge).clamp(0.0, 1.0);
+    fade_in.min(fade_out)
+}
+
+fn deterministic_order_index(index: usize, total: usize, seed: u32) -> usize {
+    let score = deterministic_hash(index as u32 ^ seed);
+    let mut rank = 0_usize;
+    for other in 0..total {
+        let other_score = deterministic_hash(other as u32 ^ seed);
+        if other_score < score || (other_score == score && other < index) {
+            rank += 1;
+        }
+    }
+    rank
+}
+
+fn deterministic_unit_noise(index: usize, seed: u32) -> f32 {
+    let hash = deterministic_hash(index as u32 ^ seed);
+    hash as f32 / u32::MAX as f32
+}
+
+fn deterministic_hash(mut value: u32) -> u32 {
+    value ^= value >> 16;
+    value = value.wrapping_mul(0x7feb_352d);
+    value ^= value >> 15;
+    value = value.wrapping_mul(0x846c_a68b);
+    value ^ (value >> 16)
+}
+
 #[derive(Debug, Clone, Copy)]
 struct UnitRect {
     x0: u32,
@@ -642,12 +1005,14 @@ fn apply_unit_animator_transform(
 
     let mut output = Canvas::transparent(canvas.width, canvas.height);
     for unit in units {
-        let midpoint = ((unit.index as f32 + 0.5) / unit.total as f32) * 100.0;
-        let range_weight = if midpoint >= start_percent && midpoint <= end_percent {
-            1.0
-        } else {
-            0.0
-        };
+        let range_weight = selector_weight(
+            unit.index,
+            unit.total,
+            &animator.selector,
+            start_percent,
+            end_percent,
+            time,
+        );
         let expression_weight =
             text_expression_weight(animator.expression_selector.as_ref(), unit.index, unit.total, time, layer_start);
         let weight = range_weight * expression_weight;
@@ -701,7 +1066,12 @@ fn draw_transformed_unit(
     let rotation = animator.rotation.unwrap_or(0.0) * weight;
     let tx = position[0] * weight;
     let ty = position[1] * weight;
-    let alpha_scale = (1.0 + ((animator.opacity / 100.0) - 1.0) * weight).clamp(0.0, 2.0);
+    let alpha_scale = animator_alpha_scale(animator.opacity, weight);
+    let blur_radius = animator
+        .blur
+        .map(|blur| ((blur[0].abs().max(blur[1].abs()) * weight) / 8.0).round() as i32)
+        .unwrap_or(0)
+        .clamp(0, 4);
     let matrix = Mat3::translate(Vec2::new(cx + tx, cy + ty))
         .mul(Mat3::rotate_degrees(rotation))
         .mul(Mat3::scale(Vec2::new(sx, sy)))
@@ -722,7 +1092,30 @@ fn draw_transformed_unit(
             if dx < 0 || dy < 0 || dx >= output.width as i32 || dy >= output.height as i32 {
                 continue;
             }
-            output.set_pixel(dx as u32, dy as u32, pixel);
+            splat_blurred_pixel(output, dx, dy, pixel, blur_radius);
+        }
+    }
+}
+
+fn splat_blurred_pixel(output: &mut Canvas, x: i32, y: i32, pixel: [u8; 4], radius: i32) {
+    if radius <= 0 {
+        output.set_pixel(x as u32, y as u32, pixel);
+        return;
+    }
+    let divisor = ((radius * 2 + 1) * (radius * 2 + 1)).max(1) as f32;
+    for oy in -radius..=radius {
+        for ox in -radius..=radius {
+            let dx = x + ox;
+            let dy = y + oy;
+            if dx < 0 || dy < 0 || dx >= output.width as i32 || dy >= output.height as i32 {
+                continue;
+            }
+            let mut blurred = pixel;
+            blurred[3] = (blurred[3] as f32 / divisor).round().max(1.0) as u8;
+            let existing = output.pixel(dx as u32, dy as u32);
+            let combined_alpha = existing[3].saturating_add(blurred[3]);
+            blurred[3] = combined_alpha;
+            output.set_pixel(dx as u32, dy as u32, blurred);
         }
     }
 }
@@ -808,16 +1201,47 @@ mod tests {
                 value: 20.0,
                 hold: false,
                 approximate: false,
+                ease: None,
             },
             ScalarKeyframe {
                 time: 3.0,
                 value: 60.0,
                 hold: false,
                 approximate: false,
+                ease: None,
             },
         ];
 
         assert_eq!(evaluate_scalar_keyframes(&keyframes, 2.0, 100.0), 40.0);
+    }
+
+    #[test]
+    fn scalar_keyframes_apply_cubic_ease() {
+        let keyframes = vec![
+            ScalarKeyframe {
+                time: 0.0,
+                value: 0.0,
+                hold: false,
+                approximate: false,
+                ease: Some(render_ir::KeyframeEase {
+                    x1: 0.42,
+                    y1: 0.0,
+                    x2: 1.0,
+                    y2: 1.0,
+                }),
+            },
+            ScalarKeyframe {
+                time: 1.0,
+                value: 100.0,
+                hold: false,
+                approximate: false,
+                ease: None,
+            },
+        ];
+
+        let eased = evaluate_scalar_keyframes(&keyframes, 0.5, 0.0);
+
+        assert!(eased < 50.0, "expected ease-in midpoint below linear, got {eased}");
     }
 
     #[test]
@@ -828,12 +1252,14 @@ mod tests {
                 value: [10.0, 20.0],
                 hold: true,
                 approximate: false,
+                ease: None,
             },
             Vec2Keyframe {
                 time: 3.0,
                 value: [50.0, 80.0],
                 hold: false,
                 approximate: false,
+                ease: None,
             },
         ];
 
@@ -933,5 +1359,77 @@ mod tests {
 
         assert_eq!(animated.pixel(1, 0), [255, 255, 255, 255]);
         assert_eq!(animated.pixel(0, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn selector_weight_supports_ramp_and_random_order() {
+        let selector = TextRangeSelector {
+            shape: TextSelectorShape::RampUp,
+            randomize_order: true,
+            ..TextRangeSelector::default()
+        };
+
+        let first = selector_weight(0, 6, &selector, 0.0, 100.0, 0.0);
+        let second = selector_weight(0, 6, &selector, 0.0, 100.0, 0.0);
+        let other = selector_weight(1, 6, &selector, 0.0, 100.0, 0.0);
+
+        assert_eq!(first, second);
+        assert_ne!(first, other);
+    }
+
+    #[test]
+    fn collapsed_precomp_flattens_solid_with_parent_transform() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 8,
+                height: 4,
+                fps: 1.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+            },
+            compositions: vec![CompositionNode {
+                composition: Composition {
+                    id: "child".to_string(),
+                    width: 4,
+                    height: 4,
+                    fps: 1.0,
+                    duration: 1.0,
+                    background: [0, 0, 0, 0],
+                },
+                layers: vec![Layer::Solid {
+                    id: "red".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    color: [255, 0, 0, 255],
+                    rect: Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 1.0,
+                        h: 1.0,
+                    },
+                    transform: render_ir::Transform2D::default(),
+                    effects: Vec::new(),
+                }],
+            }],
+            assets: Vec::new(),
+            layers: vec![Layer::Precomp {
+                id: "child_pre".to_string(),
+                start: 0.0,
+                duration: 1.0,
+                composition: "child".to_string(),
+                collapse_transformations: true,
+                transform: render_ir::Transform2D {
+                    position: [2.0, 0.0],
+                    ..render_ir::Transform2D::default()
+                },
+                effects: Vec::new(),
+            }],
+        };
+
+        let frame = render_frame(&scene, 0).unwrap();
+
+        assert_eq!(frame.pixel(2, 0), [255, 0, 0, 255]);
     }
 }

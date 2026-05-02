@@ -1,6 +1,6 @@
 use crate::{
     box_blur::{blur_canvas, blur_radius},
-    param_bool, param_f32, param_rgba, Effect, EffectContext,
+    param_bool_any, param_f32_any, param_rgba_any, Effect, EffectContext,
 };
 use raster_cpu::{composite_normal, Canvas};
 use serde_json::Value;
@@ -19,12 +19,13 @@ impl Effect for DropShadow {
         _ctx: &EffectContext,
         params: &Value,
     ) -> anyhow::Result<Canvas> {
-        let color = param_rgba(params, "0001", [0, 0, 0, 255]);
-        let opacity = normalize_opacity(param_f32(params, "0002", 255.0));
-        let direction = param_f32(params, "0003", 135.0).to_radians();
-        let distance = param_f32(params, "0004", 5.0);
-        let softness = param_f32(params, "0005", 0.0);
-        let shadow_only = param_bool(params, "0006", false);
+        let params = DropShadowParams::from_json(params);
+        let color = params.color;
+        let opacity = normalize_opacity(params.opacity);
+        let direction = params.direction_degrees.to_radians();
+        let distance = params.distance;
+        let softness = params.softness;
+        let shadow_only = params.shadow_only;
         let dx = (direction.cos() * distance).round() as i32;
         let dy = (direction.sin() * distance).round() as i32;
 
@@ -69,6 +70,29 @@ impl Effect for DropShadow {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct DropShadowParams {
+    pub color: [u8; 4],
+    pub opacity: f32,
+    pub direction_degrees: f32,
+    pub distance: f32,
+    pub softness: f32,
+    pub shadow_only: bool,
+}
+
+impl DropShadowParams {
+    pub(crate) fn from_json(params: &Value) -> Self {
+        Self {
+            color: param_rgba_any(params, &["color", "Color", "0001"], [0, 0, 0, 255]),
+            opacity: param_f32_any(params, &["opacity", "Opacity", "0002"], 255.0),
+            direction_degrees: param_f32_any(params, &["direction", "Direction", "0003"], 135.0),
+            distance: param_f32_any(params, &["distance", "Distance", "0004"], 5.0),
+            softness: param_f32_any(params, &["softness", "Softness", "0005"], 0.0),
+            shadow_only: param_bool_any(params, &["shadowOnly", "Shadow Only", "0006"], false),
+        }
+    }
+}
+
 fn normalize_opacity(value: f32) -> f32 {
     if value > 100.0 {
         (value / 255.0).clamp(0.0, 1.0)
@@ -106,5 +130,24 @@ mod tests {
             .unwrap();
 
         assert_eq!(output.pixel(1, 0)[3], 255);
+    }
+
+    #[test]
+    fn params_accept_ae_numbered_wrapped_values() {
+        let params = DropShadowParams::from_json(&json!({
+            "0001": { "value": [1.0, 0.5, 0.0, 1.0] },
+            "0002": { "value": 50 },
+            "0003": { "value": 90 },
+            "0004": { "value": 12 },
+            "0005": { "value": 4 },
+            "0006": { "value": 1 }
+        }));
+
+        assert_eq!(params.color, [255, 128, 0, 255]);
+        assert_eq!(params.opacity, 50.0);
+        assert_eq!(params.direction_degrees, 90.0);
+        assert_eq!(params.distance, 12.0);
+        assert_eq!(params.softness, 4.0);
+        assert!(params.shadow_only);
     }
 }

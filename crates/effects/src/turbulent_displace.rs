@@ -1,4 +1,4 @@
-use crate::{param_f32, param_f32_at, Effect, EffectContext};
+use crate::{param_f32_any, param_f32_at_any, Effect, EffectContext};
 use raster_cpu::Canvas;
 use serde_json::Value;
 
@@ -16,23 +16,41 @@ impl Effect for TurbulentDisplace {
         ctx: &EffectContext,
         params: &Value,
     ) -> anyhow::Result<Canvas> {
-        let amount = param_f32(params, "amount", param_f32(params, "0002", 0.0)).clamp(0.0, 200.0);
+        let params = TurbulentDisplaceParams::from_json(params, ctx.time);
+        let amount = params.amount.clamp(0.0, 200.0);
         if amount <= f32::EPSILON || input.width == 0 || input.height == 0 {
             return Ok(input.clone());
         }
 
-        let size = param_f32(params, "size", param_f32(params, "0003", 100.0)).max(1.0);
-        let complexity = param_f32(params, "complexity", param_f32(params, "0005", 2.0))
-            .round()
-            .clamp(1.0, 6.0) as u32;
-        let evolution = param_f32_at(
-            params,
-            "0006",
-            ctx.time,
-            param_f32(params, "evolution", ctx.time as f32 * 45.0),
-        );
+        let size = params.size.max(1.0);
+        let complexity = params.complexity.round().clamp(1.0, 6.0) as u32;
+        let evolution = params.evolution;
 
         Ok(displace_canvas(input, amount, size, complexity, evolution))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct TurbulentDisplaceParams {
+    pub amount: f32,
+    pub size: f32,
+    pub complexity: f32,
+    pub evolution: f32,
+}
+
+impl TurbulentDisplaceParams {
+    pub(crate) fn from_json(params: &Value, time: f64) -> Self {
+        Self {
+            amount: param_f32_any(params, &["amount", "Amount", "0002"], 0.0),
+            size: param_f32_any(params, &["size", "Size", "0003"], 100.0),
+            complexity: param_f32_any(params, &["complexity", "Complexity", "0005"], 2.0),
+            evolution: param_f32_at_any(
+                params,
+                &["evolution", "Evolution", "0006"],
+                time,
+                time as f32 * 45.0,
+            ),
+        }
     }
 }
 
@@ -125,5 +143,40 @@ mod tests {
 
         assert_eq!(first.data, second.data);
         assert_ne!(first.data, input.data);
+    }
+
+    #[test]
+    fn params_accept_ae_numbered_values() {
+        let params = TurbulentDisplaceParams::from_json(
+            &json!({
+                "0002": { "value": 18 },
+                "0003": { "value": 32 },
+                "0005": { "value": 4 },
+                "0006": { "value": 90 }
+            }),
+            1.0,
+        );
+
+        assert_eq!(params.amount, 18.0);
+        assert_eq!(params.size, 32.0);
+        assert_eq!(params.complexity, 4.0);
+        assert_eq!(params.evolution, 90.0);
+    }
+
+    #[test]
+    fn params_accept_time_varying_numbered_evolution() {
+        let params = TurbulentDisplaceParams::from_json(
+            &json!({
+                "0006": {
+                    "keyframes": [
+                        { "t": 0.0, "v": 0.0 },
+                        { "t": 2.0, "v": 180.0 }
+                    ]
+                }
+            }),
+            1.0,
+        );
+
+        assert_eq!(params.evolution, 90.0);
     }
 }

@@ -1,4 +1,4 @@
-use crate::{param_f32, param_f32_at, Effect, EffectContext};
+use crate::{param_f32_at_any, param_value, Effect, EffectContext};
 use raster_cpu::Canvas;
 use serde_json::Value;
 
@@ -16,21 +16,35 @@ impl Effect for Minimax {
         _ctx: &EffectContext,
         params: &Value,
     ) -> anyhow::Result<Canvas> {
-        let radius = param_f32_at(params, "0002", _ctx.time, param_f32(params, "radius", 0.0))
-            .round()
-            .clamp(0.0, 32.0) as u32;
+        let params = MinimaxParams::from_json(params, _ctx.time);
+        let radius = params.radius.round().clamp(0.0, 32.0) as u32;
         if radius == 0 || input.width == 0 || input.height == 0 {
             return Ok(input.clone());
         }
 
-        let operation = Operation::from_params(params);
-        let channels = Channels::from_params(params);
-        Ok(minimax_canvas(input, radius, operation, channels))
+        Ok(minimax_canvas(input, radius, params.operation, params.channels))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub(crate) struct MinimaxParams {
+    pub operation: Operation,
+    pub radius: f32,
+    pub channels: Channels,
+}
+
+impl MinimaxParams {
+    pub(crate) fn from_json(params: &Value, time: f64) -> Self {
+        Self {
+            operation: Operation::from_params(params),
+            radius: param_f32_at_any(params, &["radius", "Radius", "0002"], time, 0.0),
+            channels: Channels::from_params(params),
+        }
     }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Operation {
+pub(crate) enum Operation {
     Maximum,
     Minimum,
 }
@@ -63,7 +77,7 @@ impl Operation {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum Channels {
+pub(crate) enum Channels {
     Alpha,
     Rgba,
 }
@@ -145,11 +159,6 @@ fn extremum_pixel(
     output
 }
 
-fn param_value<'a>(params: &'a Value, name: &str) -> Option<&'a Value> {
-    let value = params.get(name)?;
-    Some(value.get("value").unwrap_or(value))
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -194,5 +203,38 @@ mod tests {
 
         assert_eq!(output.pixel(0, 0), [10, 20, 30, 0]);
         assert_eq!(output.pixel(2, 0), [10, 20, 30, 0]);
+    }
+
+    #[test]
+    fn params_accept_ae_numbered_wrapped_values() {
+        let params = MinimaxParams::from_json(
+            &json!({
+                "0001": { "value": 2 },
+                "0002": { "value": 9 },
+                "0003": { "value": 2 }
+            }),
+            0.0,
+        );
+
+        assert_eq!(params.operation, Operation::Minimum);
+        assert_eq!(params.radius, 9.0);
+        assert_eq!(params.channels, Channels::Rgba);
+    }
+
+    #[test]
+    fn params_accept_time_varying_numbered_radius() {
+        let params = MinimaxParams::from_json(
+            &json!({
+                "0002": {
+                    "keyframes": [
+                        { "t": 0.0, "v": 2.0 },
+                        { "t": 1.0, "v": 6.0 }
+                    ]
+                }
+            }),
+            0.5,
+        );
+
+        assert_eq!(params.radius, 4.0);
     }
 }

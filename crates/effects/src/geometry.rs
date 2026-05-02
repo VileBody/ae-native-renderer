@@ -18,20 +18,20 @@ impl Effect for Geometry2 {
     ) -> anyhow::Result<Canvas> {
         Ok(transform_canvas(
             input,
-            Transform::from_params(input, params, _ctx.time),
+            Geometry2Params::from_json(input, params, _ctx.time),
         ))
     }
 }
 
 #[derive(Debug, Clone, Copy)]
-struct Transform {
+pub(crate) struct Geometry2Params {
     anchor: (f32, f32),
     position: (f32, f32),
     scale: (f32, f32),
     rotation: f32,
 }
 
-impl Transform {
+impl Geometry2Params {
     fn identity(input: &Canvas) -> Self {
         let center = (input.width as f32 * 0.5, input.height as f32 * 0.5);
         Self {
@@ -42,7 +42,7 @@ impl Transform {
         }
     }
 
-    fn from_params(input: &Canvas, params: &Value, time: f64) -> Self {
+    pub(crate) fn from_json(input: &Canvas, params: &Value, time: f64) -> Self {
         let mut transform = Self::identity(input);
         transform.anchor = point_param(params, &["anchor", "anchorPoint", "Anchor Point", "0001"])
             .unwrap_or(transform.anchor);
@@ -62,7 +62,7 @@ impl Transform {
     }
 }
 
-fn transform_canvas(input: &Canvas, transform: Transform) -> Canvas {
+fn transform_canvas(input: &Canvas, transform: Geometry2Params) -> Canvas {
     if input.width == 0 || input.height == 0 || transform.is_identity() {
         return input.clone();
     }
@@ -196,5 +196,45 @@ mod tests {
 
         assert_eq!(output.pixel(2, 0), [10, 20, 30, 255]);
         assert_eq!(output.pixel(1, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn params_accept_ae_numbered_transform_values() {
+        let input = Canvas::transparent(10, 8);
+        let params = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "0001": { "value": [1, 2] },
+                "0002": { "value": { "x": 3, "y": 4 } },
+                "0004": { "value": 125 },
+                "0008": { "value": 80 },
+                "rotation": { "value": 15 }
+            }),
+            0.0,
+        );
+
+        assert_eq!(params.anchor, (1.0, 2.0));
+        assert_eq!(params.position, (3.0, 4.0));
+        assert_eq!(params.scale, (125.0, 80.0));
+        assert_eq!(params.rotation, 15.0);
+    }
+
+    #[test]
+    fn params_accept_time_varying_numbered_scale() {
+        let input = Canvas::transparent(4, 4);
+        let params = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "0003": {
+                    "keyframes": [
+                        { "t": 0.0, "v": 100.0 },
+                        { "t": 1.0, "v": 200.0 }
+                    ]
+                }
+            }),
+            0.5,
+        );
+
+        assert_eq!(params.scale, (150.0, 150.0));
     }
 }

@@ -107,9 +107,21 @@ The first IR is deliberately small. It represents a composition, assets, and a l
 
 `composition + layers` is the root comp. Optional `compositions` entries define
 nested comps addressable by `precomp.composition`. Graph validation rejects
-missing targets and cycles. v0 renders nested comps into an offscreen canvas, then
-applies the precomp layer transform; collapse transformations are planned and
-reported, with vector-only feasibility tracked separately from fatal graph errors.
+missing targets and cycles. v0 renders normal nested comps into an offscreen
+canvas, then applies the precomp layer transform. When
+`collapse_transformations` is requested and the target tree is text/solid-only,
+the renderer flattens child layers into the parent comp and composes the parent
+matrix through the precomp boundary.
+
+### Collapse transformations support status
+
+`precomp.collapse_transformations` has a controlled native render path for
+`CollapseSupportedVectors`: solid/text layers and nested precomps that also
+request collapse are rendered with the precomp parent matrix composed into the
+child layer matrix. Footage, adjustment layers, effects, missing targets, cycles,
+and nested non-collapsed precomps keep the boundary in `RasterizeFirst`.
+`RasterizeFirst` is still allowed in permissive mode and is reported as
+approximate in the manifest.
 
 For `footage` layers, `source_start` is optional and defaults to `0`. It is the
 source-media time sampled at the layer's composition `start`.
@@ -128,16 +140,20 @@ M = T(position) · R(rotation) · S(scale) · T(-anchor)
 
 All deviations must be validated against golden frames.
 
-`transform.animation` is optional. v0 supports hold and linear keyframes for
-`position`, `scale`, `opacity`, and a simple text `reveal` percent. Imported AE
-Bezier/ease keyframes are evaluated linearly and marked as approximate.
+`transform.animation` is optional. v0 supports hold, linear, and cubic
+Bezier-eased keyframes for `position`, `scale`, `opacity`, and a simple text
+`reveal` percent. Imported AE Bezier/ease keyframes are still marked approximate
+because AE temporal-ease tangent data is mapped into a compact cubic curve.
 
-`text_animators` is optional on text layers. v0 supports one or more approximate
-Range Selectors with percent Start/End, Based On `characters`/`words`/`lines`,
-animator opacity, and per-character/group position, scale, and rotation by
-transforming alpha-derived units. The supported expression-selector fingerprint is
-the generated per-character bounce pattern used by `impulse_2nd`.
+`text_animators` is optional on text layers. v0/v2 supports one or more
+approximate Range Selectors with percent Start/End, Based On
+`characters`/`words`/`lines`, selector shape/smoothness/randomized order/wiggly
+metadata, animator opacity, blur, and per-character/group position, scale, and
+rotation by transforming alpha-derived units. The supported expression-selector
+fingerprint is the generated per-character bounce pattern used by `impulse_2nd`.
 
 `transform.animation.expression.position` currently supports the generated
-`edge_wobble` fingerprint used by `scenes_3rd`; it is not a general JavaScript
-expression runtime.
+`edge_wobble` fingerprint used by `scenes_3rd`; the expression engine also
+supports a deterministic subset for `value`, numeric/Vec2 literals, AE-like
+context variables, `time * N`, `value + [x,y]`, and the generated text bounce
+selector fingerprint. It is not a general JavaScript expression runtime.

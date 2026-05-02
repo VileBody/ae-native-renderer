@@ -4,11 +4,12 @@ use crate::layer_eval::{
 use render_ir::{EffectSpec, Layer, Scene, Transform2D};
 use serde_json::json;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
+use std::time::Instant;
 
 pub fn render_png_sequence(scene: &Scene, out_dir: impl AsRef<Path>) -> anyhow::Result<()> {
     let mut footage = CheckerboardFootageProvider;
@@ -28,35 +29,61 @@ pub fn render_png_sequence_with_footage(
     let frame_count = (scene.composition.duration * scene.composition.fps).ceil() as u32;
     let feature_summary = scene_feature_summary(scene);
     let scene_hash = scene_hash(scene)?;
+    let asset_hashes = asset_hashes(scene)?;
+    let render_started = Instant::now();
+    let mut frame_timings = Vec::with_capacity(frame_count as usize);
     let mut log = File::create(out_dir.join("render-log.jsonl"))?;
     write_json_line(
         &mut log,
         &json!({
             "event": "render.start",
+            "renderer": renderer_info(),
             "scene_hash": scene_hash.clone(),
             "frames": frame_count,
             "fps": scene.composition.fps,
+            "feature_counts": feature_counts_json(&feature_summary.counts),
+            "asset_hashes": asset_hashes.clone(),
             "approximate": feature_summary.approximate.clone(),
             "unsupported": feature_summary.unsupported.clone()
         }),
     )?;
 
     for frame in 0..frame_count {
+        let frame_started = Instant::now();
+        let frame_render_started = Instant::now();
         let canvas = render_frame_with_footage(scene, frame, footage)?;
+        let render_ms = elapsed_ms(frame_render_started);
         let path = frames_dir.join(format!("frame_{frame:06}.png"));
+        let save_started = Instant::now();
         canvas.save_png(path)?;
+        let save_ms = elapsed_ms(save_started);
+        let frame_total_ms = elapsed_ms(frame_started);
+        let frame_timing = json!({
+            "frame": frame,
+            "time": frame as f64 / scene.composition.fps,
+            "render_ms": render_ms,
+            "save_ms": save_ms,
+            "total_ms": frame_total_ms,
+            "path": format!("frames/frame_{frame:06}.png")
+        });
+        frame_timings.push(frame_timing.clone());
         write_json_line(
             &mut log,
             &json!({
                 "event": "frame.rendered",
                 "frame": frame,
                 "time": frame as f64 / scene.composition.fps,
+                "render_ms": render_ms,
+                "save_ms": save_ms,
+                "duration_ms": frame_total_ms,
                 "path": format!("frames/frame_{frame:06}.png")
             }),
         )?;
     }
 
+    let total_render_ms = elapsed_ms(render_started);
     let manifest = json!({
+        "renderer": renderer_info(),
         "composition": scene.composition.id,
         "width": scene.composition.width,
         "height": scene.composition.height,
@@ -66,7 +93,13 @@ pub fn render_png_sequence_with_footage(
         "scene_hash": scene_hash,
         "layers": scene.layers.len(),
         "assets": scene.assets.len(),
+        "asset_hashes": asset_hashes,
         "output": "frames/frame_%06d.png",
+        "timing": {
+            "total_ms": total_render_ms,
+            "frames": frame_timings
+        },
+        "feature_counts": feature_counts_json(&feature_summary.counts),
         "approximate": feature_summary.approximate,
         "unsupported": feature_summary.unsupported
     });
@@ -79,6 +112,7 @@ pub fn render_png_sequence_with_footage(
         &json!({
             "event": "render.done",
             "frames": frame_count,
+            "duration_ms": total_render_ms,
             "manifest": "manifest.json"
         }),
     )?;
@@ -121,18 +155,57 @@ pub fn mux_png_sequence_to_mp4(
 pub struct FeatureSummary {
     pub approximate: Vec<String>,
     pub unsupported: Vec<String>,
+    pub counts: FeatureCounts,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct FeatureCounts {
+    pub layers: LayerCounts,
+    pub effects: EffectCounts,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct LayerCounts {
+    pub total: usize,
+    pub top_level: usize,
+    pub nested_compositions: usize,
+    pub by_type: BTreeMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Default)]
+pub struct EffectCounts {
+    pub total: usize,
+    pub supported: usize,
+    pub approximate: usize,
+    pub unsupported: usize,
+    pub by_match_name: BTreeMap<String, usize>,
 }
 
 pub fn scene_feature_summary(scene: &Scene) -> FeatureSummary {
     let mut approximate = BTreeSet::new();
     let mut unsupported = BTreeSet::new();
-    collect_layer_features(&scene.layers, &mut approximate, &mut unsupported);
+    let mut counts = FeatureCounts::default();
+    counts.layers.top_level = scene.layers.len();
+    counts.layers.nested_compositions = scene.compositions.len();
+    collect_layer_features(
+        &scene.layers,
+        &mut approximate,
+        &mut unsupported,
+        &mut counts,
+    );
     for composition in &scene.compositions {
-        collect_layer_features(&composition.layers, &mut approximate, &mut unsupported);
+        collect_layer_features(
+            &composition.layers,
+            &mut approximate,
+            &mut unsupported,
+            &mut counts,
+        );
     }
+    collect_collapse_features(scene, &mut approximate);
     FeatureSummary {
         approximate: approximate.into_iter().collect(),
         unsupported: unsupported.into_iter().collect(),
+        counts,
     }
 }
 
@@ -140,8 +213,15 @@ fn collect_layer_features(
     layers: &[Layer],
     approximate: &mut BTreeSet<String>,
     unsupported: &mut BTreeSet<String>,
+    counts: &mut FeatureCounts,
 ) {
     for layer in layers {
+        counts.layers.total += 1;
+        *counts
+            .layers
+            .by_type
+            .entry(layer_kind(layer).to_string())
+            .or_insert(0) += 1;
         for feature in approximate_keyframes(transform_of(layer)) {
             approximate.insert(format!("layer.{}.{}", layer.id(), feature));
         }
@@ -170,41 +250,111 @@ fn collect_layer_features(
                 }
             }
         }
-        if let Layer::Precomp {
-            collapse_transformations: true,
-            ..
-        } = layer
-        {
-            approximate.insert(format!(
-                "layer.{}.precomp.collapse_transformations",
-                layer.id()
-            ));
-        }
         for effect in effects_of(layer) {
-            match effect.match_name.as_str() {
-                "ADBE Drop Shadow"
-                | "ADBE Glo2"
-                | "ADBE Box Blur2"
-                | "ADBE Geometry2"
-                | "ADBE Posterize Time"
-                | "ADBE Minimax"
-                | "ADBE Turbulent Displace" => {
-                    approximate.insert(format!(
-                        "layer.{}.effect.{}",
-                        layer.id(),
-                        effect.match_name
-                    ));
-                }
-                _ => {
-                    unsupported.insert(format!(
-                        "layer.{}.effect.{}",
-                        layer.id(),
-                        effect.match_name
-                    ));
-                }
+            counts.effects.total += 1;
+            *counts
+                .effects
+                .by_match_name
+                .entry(effect.match_name.clone())
+                .or_insert(0) += 1;
+            if is_supported_effect(&effect.match_name) {
+                counts.effects.supported += 1;
+                counts.effects.approximate += 1;
+                approximate.insert(format!(
+                    "layer.{}.effect.{}",
+                    layer.id(),
+                    effect.match_name
+                ));
+            } else {
+                counts.effects.unsupported += 1;
+                unsupported.insert(format!(
+                    "layer.{}.effect.{}",
+                    layer.id(),
+                    effect.match_name
+                ));
             }
         }
     }
+}
+
+fn collect_collapse_features(scene: &Scene, approximate: &mut BTreeSet<String>) {
+    let Ok(plan) = crate::graph::precomp_render_plan(scene) else {
+        return;
+    };
+    for entry in plan.entries {
+        if !entry.collapse_requested {
+            continue;
+        }
+        if entry.collapse_mode == crate::precomp::CollapseMode::RasterizeFirst {
+            approximate.insert(format!(
+                "layer.{}.precomp.collapse_transformations.rasterize_first",
+                entry.layer_id
+            ));
+        }
+    }
+}
+
+fn is_supported_effect(match_name: &str) -> bool {
+    effects::EffectRegistry::known_match_names()
+        .iter()
+        .any(|known| *known == match_name)
+}
+
+fn layer_kind(layer: &Layer) -> &'static str {
+    match layer {
+        Layer::Solid { .. } => "solid",
+        Layer::Footage { .. } => "footage",
+        Layer::Text { .. } => "text",
+        Layer::Precomp { .. } => "precomp",
+        Layer::Adjustment { .. } => "adjustment",
+    }
+}
+
+fn renderer_info() -> serde_json::Value {
+    json!({
+        "crate": "render-core",
+        "version": env!("CARGO_PKG_VERSION")
+    })
+}
+
+fn feature_counts_json(counts: &FeatureCounts) -> serde_json::Value {
+    json!({
+        "layers": {
+            "total": counts.layers.total,
+            "top_level": counts.layers.top_level,
+            "nested_compositions": counts.layers.nested_compositions,
+            "by_type": &counts.layers.by_type
+        },
+        "effects": {
+            "total": counts.effects.total,
+            "supported": counts.effects.supported,
+            "approximate": counts.effects.approximate,
+            "unsupported": counts.effects.unsupported,
+            "by_match_name": &counts.effects.by_match_name
+        }
+    })
+}
+
+fn elapsed_ms(started: Instant) -> f64 {
+    started.elapsed().as_secs_f64() * 1000.0
+}
+
+fn asset_hashes(scene: &Scene) -> anyhow::Result<Vec<serde_json::Value>> {
+    let mut hashes = Vec::with_capacity(scene.assets.len());
+    for asset in &scene.assets {
+        let bytes = serde_json::to_vec(asset)?;
+        let digest = Sha256::digest(bytes);
+        let kind = serde_json::to_value(&asset.kind)?;
+        hashes.push(json!({
+            "id": &asset.id,
+            "type": kind,
+            "path": &asset.path,
+            "hash": to_hex(&digest),
+            "algorithm": "sha256",
+            "source": "asset_spec"
+        }));
+    }
+    Ok(hashes)
 }
 
 fn transform_of(layer: &Layer) -> Option<&Transform2D> {
@@ -233,16 +383,16 @@ fn approximate_keyframes(transform: Option<&Transform2D>) -> Vec<&'static str> {
     };
     let mut features = Vec::new();
     if transform.animation.position.iter().any(|key| key.approximate) {
-        features.push("keyframes.position.bezier_as_linear");
+        features.push("keyframes.position.bezier_ease_approx");
     }
     if transform.animation.scale.iter().any(|key| key.approximate) {
-        features.push("keyframes.scale.bezier_as_linear");
+        features.push("keyframes.scale.bezier_ease_approx");
     }
     if transform.animation.opacity.iter().any(|key| key.approximate) {
-        features.push("keyframes.opacity.bezier_as_linear");
+        features.push("keyframes.opacity.bezier_ease_approx");
     }
     if transform.animation.reveal.iter().any(|key| key.approximate) {
-        features.push("keyframes.reveal.bezier_as_linear");
+        features.push("keyframes.reveal.bezier_ease_approx");
     }
     if transform.animation.expression.position.is_some() {
         features.push("expression.position.edge_wobble");
@@ -269,4 +419,112 @@ fn to_hex(bytes: &[u8]) -> String {
 fn write_json_line(log: &mut File, value: &serde_json::Value) -> anyhow::Result<()> {
     writeln!(log, "{}", serde_json::to_string(value)?)?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use render_ir::{Asset, AssetKind, Composition, CompositionNode, Rect};
+
+    #[test]
+    fn feature_summary_counts_layers_and_effect_match_names() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "main".to_string(),
+                width: 4,
+                height: 4,
+                fps: 30.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+            },
+            compositions: vec![CompositionNode {
+                composition: Composition {
+                    id: "nested".to_string(),
+                    width: 4,
+                    height: 4,
+                    fps: 30.0,
+                    duration: 1.0,
+                    background: [0, 0, 0, 0],
+                },
+                layers: vec![Layer::Adjustment {
+                    id: "adjust".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    effects: vec![EffectSpec {
+                        match_name: "ADBE Missing".to_string(),
+                        params: json!({}),
+                    }],
+                }],
+            }],
+            assets: Vec::new(),
+            layers: vec![Layer::Solid {
+                id: "solid".to_string(),
+                start: 0.0,
+                duration: 1.0,
+                color: [255, 0, 0, 255],
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 4.0,
+                    h: 4.0,
+                },
+                transform: Transform2D::default(),
+                effects: vec![EffectSpec {
+                    match_name: "ADBE Box Blur2".to_string(),
+                    params: json!({ "0001": 1 }),
+                }],
+            }],
+        };
+
+        let summary = scene_feature_summary(&scene);
+
+        assert_eq!(summary.counts.layers.total, 2);
+        assert_eq!(summary.counts.layers.top_level, 1);
+        assert_eq!(summary.counts.layers.nested_compositions, 1);
+        assert_eq!(summary.counts.layers.by_type.get("solid"), Some(&1));
+        assert_eq!(summary.counts.layers.by_type.get("adjustment"), Some(&1));
+        assert_eq!(summary.counts.effects.total, 2);
+        assert_eq!(summary.counts.effects.supported, 1);
+        assert_eq!(summary.counts.effects.unsupported, 1);
+        assert_eq!(
+            summary.counts.effects.by_match_name.get("ADBE Box Blur2"),
+            Some(&1)
+        );
+        assert_eq!(
+            summary.counts.effects.by_match_name.get("ADBE Missing"),
+            Some(&1)
+        );
+    }
+
+    #[test]
+    fn asset_hashes_are_deterministic_asset_spec_hashes() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "main".to_string(),
+                width: 1,
+                height: 1,
+                fps: 30.0,
+                duration: 0.0,
+                background: [0, 0, 0, 0],
+            },
+            compositions: Vec::new(),
+            assets: vec![Asset {
+                id: "image-1".to_string(),
+                kind: AssetKind::Image,
+                path: "assets/image.png".to_string(),
+            }],
+            layers: Vec::new(),
+        };
+
+        let first = asset_hashes(&scene).unwrap();
+        let second = asset_hashes(&scene).unwrap();
+
+        assert_eq!(first, second);
+        assert_eq!(first[0]["id"].as_str(), Some("image-1"));
+        assert_eq!(first[0]["type"].as_str(), Some("image"));
+        assert_eq!(first[0]["source"].as_str(), Some("asset_spec"));
+        assert_eq!(first[0]["algorithm"].as_str(), Some("sha256"));
+    }
 }

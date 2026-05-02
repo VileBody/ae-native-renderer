@@ -55,6 +55,10 @@ ADBE Turbulent Displace -> effects::turbulent_displace
 
 Unknown effects must fail in strict mode.
 
+## Render sequence reports
+
+`render-core::render_sequence` writes a PNG sequence plus `manifest.json` and `render-log.jsonl`. The manifest includes renderer crate/version metadata, deterministic scene and asset-spec hashes, per-frame timing (`render_ms`, `save_ms`, `total_ms`), total render time, and basic layer/effect feature counts. These fields are observational only and must not affect pixel rendering.
+
 ## Text
 
 The text engine must expose glyph instances, not just painted text. Text Animators need per-glyph/per-word/per-line weights.

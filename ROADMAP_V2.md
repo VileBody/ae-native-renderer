@@ -394,7 +394,7 @@ Support the simple animated properties already present in the payload.
 - [x] Unsupported Bezier/ease reports approximate mode.
 
 ### Non-goals
-- AE Bezier fidelity.
+- Pixel-perfect AE Bezier fidelity.
 - Roving keyframes.
 - Expressions.
 
@@ -439,7 +439,7 @@ Implement the effects that quickly improve visual match for easier templates.
 
 ### Checklist
 - [x] Parse effect params from payload.
-- [ ] Implement effect parameter structs.
+- [x] Implement effect parameter structs.
 - [x] Add unit tests.
 - [x] Add micro-scene examples.
 - [x] Mark effects as approximate in capability reports.
@@ -476,8 +476,8 @@ Support the text reveal patterns used in the generated payloads.
 - [x] Unsupported animator properties are reported.
 
 ### Non-goals
-- Wiggly selector.
-- Randomize order.
+- AE-perfect Wiggly selector.
+- AE-perfect Randomize Order.
 - Full AE text animator system.
 
 ---
@@ -585,6 +585,47 @@ Turn the renderer into a reliable native/fallback routing component.
 - Queue integration.
 - S3 upload/download.
 - Autoscaling.
+
+---
+
+## V2.1 — AE-like Behavior and Production Hardening
+
+Status: first native hardening pass implemented with controlled approximations.
+
+### True Collapse Transformations
+- [x] Add collapse graph/planning API with flattened child-layer refs.
+- [x] Detect supported text/solid-only collapse trees, including nested collapsed precomps.
+- [x] Reject footage, adjustment layers, effects, missing targets, cycles, and non-collapsed nested precomps for collapse.
+- [x] Render supported collapsed precomps by flattening child layers and composing parent matrices.
+- [x] Keep unsupported collapse boundaries on rasterize-first fallback with manifest reporting.
+
+### Text Animator v2
+- [x] Add selector primitives for characters/words/lines with stable source indices.
+- [x] Support selector shape, smoothness, deterministic randomize order, and deterministic wiggly modulation.
+- [x] Render opacity, position, scale, rotation, blur, and generated bounce expression selector as approximate per-unit transforms.
+- [x] Keep arbitrary expression selectors unsupported/explicit.
+
+### Expression Engine v2
+- [x] Add deterministic named-pattern evaluator behind `ExpressionEvaluator`.
+- [x] Support `value`, numeric and Vec2 literals, AE-like context variables, `time * N`, `value + [x,y]`, and generated bounce selector fingerprint.
+- [x] Keep arbitrary ExtendScript unsupported/explicit.
+
+### Bezier/Ease Keyframes
+- [x] Add cubic Bezier animation primitives for scalar and Vec2 values.
+- [x] Carry compact cubic ease in IR keyframes.
+- [x] Map imported AE Bezier/ease keyframes into approximate cubic curves instead of evaluating as linear.
+
+### Effect System Hardening
+- [x] Add typed parameter structs/helpers for supported first-party effects.
+- [x] Accept AE numbered params and named/direct JSON params where practical.
+- [x] Expand effect unit tests for parameter parsing and time-varying params.
+
+### Performance / Production Maturity
+- [x] Add render manifest/log timing: total render, per-frame render/save/total ms.
+- [x] Add renderer metadata, feature counts, and deterministic asset-spec hashes.
+- [ ] Add per-layer/per-effect timing.
+- [ ] Add frame/precomp cache and allocation reuse.
+- [ ] Add optional parallel frame rendering.
 
 ---
 

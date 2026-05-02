@@ -1,4 +1,5 @@
 pub mod composition;
+pub mod collapse;
 pub mod frame;
 pub mod graph;
 pub mod layer_eval;

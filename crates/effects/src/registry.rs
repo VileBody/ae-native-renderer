@@ -31,3 +31,22 @@ impl EffectRegistry {
         ]
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn registry_accepts_supported_ae_match_names() {
+        for match_name in EffectRegistry::known_match_names() {
+            let effect = EffectRegistry::create(match_name)
+                .unwrap_or_else(|| panic!("missing effect for {match_name}"));
+            assert_eq!(effect.match_name(), *match_name);
+        }
+    }
+
+    #[test]
+    fn registry_rejects_unknown_match_name() {
+        assert!(EffectRegistry::create("ADBE Definitely Not Real").is_none());
+    }
+}
