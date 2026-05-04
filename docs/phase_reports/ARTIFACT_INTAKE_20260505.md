@@ -1,6 +1,6 @@
 # Reverse Artifact Intake
 
-Generated: `2026-05-05T00:21:46`
+Generated: `2026-05-05T00:56:30`
 
 This document is the current intake map for AE parity work: what evidence we need, what is already local, and what still blocks formula tuning.
 
@@ -12,7 +12,7 @@ This document is the current intake map for AE parity work: what evidence we nee
 | `M10_M11_M13_glow_shadow_blur` | `ready` | binaries 5/5, predecode 5/5, AE artifacts 3/3 | none |
 | `M12_minimax` | `ready` | binaries 1/1, predecode 1/1, AE artifacts 4/4 | none |
 | `M14_turbulent_displace` | `ready` | binaries 2/2, predecode 1/1, AE artifacts 3/3 | none |
-| `M05_M07_text_glyph_cooltype` | `partial` | binaries 3/3, predecode 1/1, AE artifacts 2/2 | CoolType binary is present; exact CoolType function targets are not selected yet. |
+| `M05_M07_text_glyph_cooltype` | `ready` | binaries 3/3, predecode 3/3, AE artifacts 2/2 | none |
 | `M08_M09_expression_host` | `ready` | binaries 3/3, predecode 2/2, AE artifacts 2/2 | none |
 | `M15_M17_geometry_collapse_motion` | `ready` | binaries 2/2, predecode 2/2, AE artifacts 2/2 | none |
 | `M16_temporal_motion_scheduler` | `ready` | binaries 2/2, predecode 3/3, AE artifacts 1/1 | none |
@@ -130,12 +130,12 @@ Binaries:
 
 Predecode:
 - `basic_text_aex`: `target/reverse/predecoded/20260504_222748_full_predecode_round2/basic_text_aex`, decompile=10, disasm=10
+- `cooltype_glyph_metrics`: `target/reverse/predecoded/20260505_005411_cooltype_glyph_metrics_intake/cooltype_glyph_metrics`, decompile=31, disasm=31
+- `cooltype_glyph_metrics_core`: `target/reverse/predecoded/20260505_005459_cooltype_glyph_metrics_core_expanded/cooltype_glyph_metrics_core`, decompile=20, disasm=20
 
 AE artifacts:
 - `fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf`: present (bytes=195404)
 - `fixtures/ae_conformance_pack/ae_goldens/metadata/effect_property_dump.json`: present (bytes=29552)
-
-Note: CoolType binary is present; exact CoolType function targets are not selected yet.
 
 ### M08_M09_expression_host
 

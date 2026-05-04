@@ -115,12 +115,11 @@ REQUIREMENTS: list[dict[str, Any]] = [
             "target/reverse/ae_2026/text_expression/CoolType.dll",
             "target/reverse/ae_2026/text_expression/AfterFXLib.dll",
         ],
-        "predecode_tasks": ["basic_text_aex"],
+        "predecode_tasks": ["basic_text_aex", "cooltype_glyph_metrics", "cooltype_glyph_metrics_core"],
         "ae_artifacts": [
             "fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf",
             "fixtures/ae_conformance_pack/ae_goldens/metadata/effect_property_dump.json",
         ],
-        "status_note": "CoolType binary is present; exact CoolType function targets are not selected yet.",
     },
     {
         "id": "M08_M09_expression_host",

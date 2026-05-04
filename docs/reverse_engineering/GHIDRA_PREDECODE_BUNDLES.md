@@ -1,6 +1,6 @@
 # Ghidra Predecode Bundles
 
-Status date: 2026-05-04
+Status date: 2026-05-05
 
 This is the intermediate layer before sending analysis tasks to agents. Instead
 of asking every agent to import/open Ghidra projects, run one prepared pass that
@@ -77,6 +77,8 @@ The task manifest currently covers:
 | `minimax_aex` | `effects_minimax` | 8/16/32 bpc callbacks, GPU path, comparators. |
 | `turbulent_displace_aex` | `effects_turbulent` | Param setup, lookup tables, 1D/all kernel dispatch. |
 | `basic_text_aex` | `text` | Text/glyph/CoolType candidates. |
+| `cooltype_glyph_metrics` | `text` | Concrete CoolType proc bodies for glyph id, widths, bboxes, baselines, feature processing, and CTText glyph access. |
+| `cooltype_glyph_metrics_core` | `text` | Core callees behind CoolType glyph metrics, including fixed-point scale and hmtx/vmtx lookup. |
 | `scripting_expression_host` | `expression` | Scripting.aex host bridge, ExtendScript delay-loads, BEE/time pointer table. |
 | `extendscript_expression_engine` | `expression` | Disabled until exact generic ExtendScript function targets are selected. |
 | `bee_temporal_scheduler` | `temporal` | BEE shutter/time/layer checkout targets; run with `--include-disabled` when the local `agent_bee_temporal` project exists. |
