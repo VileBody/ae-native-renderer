@@ -1,0 +1,119 @@
+{
+  "schema_version": "conformance.v0",
+  "cases": [
+    {
+      "name": "bezier_ease_probe",
+      "feature": "bezier_ease",
+      "scene": "fixtures/conformance/scenes/bezier_ease_probe_scene.json",
+      "ae_reference": {
+        "status": "pending_ae_export",
+        "placeholder": "Export the same frame indexes from AE with temporal Bezier/ease keyframes preserved. Reference PNGs are intentionally not checked in yet."
+      },
+      "thresholds": {
+        "max_abs_diff": 8,
+        "mean_abs_diff": 0.75,
+        "changed_pixel_ratio": 0.02
+      },
+      "frames": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "ae_reference_png": "fixtures/conformance/ae-reference/bezier_ease/frame_000000.png"
+        },
+        {
+          "index": 6,
+          "time": 0.5,
+          "ae_reference_png": "fixtures/conformance/ae-reference/bezier_ease/frame_000006.png",
+          "notes": "Midpoint frame should expose cubic ease-in/ease-out divergence from linear interpolation."
+        },
+        {
+          "index": 11,
+          "time": 0.9166666667,
+          "ae_reference_png": "fixtures/conformance/ae-reference/bezier_ease/frame_000011.png"
+        }
+      ],
+      "tags": ["transform", "cubic_bezier", "temporal_ease"],
+      "notes": "Solid-only transform scene covering position, scale, and opacity cubic ease mappings."
+    },
+    {
+      "name": "effects_stack_probe",
+      "feature": "effects",
+      "scene": "fixtures/conformance/scenes/effects_stack_probe_scene.json",
+      "ae_reference": {
+        "status": "pending_ae_export",
+        "placeholder": "Export PNG frames from an AE comp using the listed matchName effects and numbered parameter values."
+      },
+      "thresholds": {
+        "max_abs_diff": 24,
+        "mean_abs_diff": 3.0,
+        "changed_pixel_ratio": 0.12
+      },
+      "frames": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "ae_reference_png": "fixtures/conformance/ae-reference/effects_stack/frame_000000.png"
+        }
+      ],
+      "tags": ["effects", "match_names", "adjustment_layer"],
+      "notes": "Covers first-party approximate effects without requiring proprietary reference media."
+    },
+    {
+      "name": "collapse_transform_probe",
+      "feature": "collapse",
+      "scene": "fixtures/conformance/scenes/collapse_transform_probe_scene.json",
+      "ae_reference": {
+        "status": "pending_ae_export",
+        "placeholder": "Export AE PNGs for the collapsed and rasterized precomp pair after creating an equivalent nested comp."
+      },
+      "thresholds": {
+        "max_abs_diff": 10,
+        "mean_abs_diff": 1.0,
+        "changed_pixel_ratio": 0.04
+      },
+      "frames": [
+        {
+          "index": 0,
+          "time": 0.0,
+          "ae_reference_png": "fixtures/conformance/ae-reference/collapse_transform/frame_000000.png"
+        }
+      ],
+      "tags": ["precomp", "collapse_transformations", "matrix"],
+      "notes": "Nested solid-only comp designed to exercise parent/child matrix composition across a collapse boundary."
+    },
+    {
+      "name": "motion_blur_velocity_probe",
+      "feature": "motion_blur",
+      "scene": "fixtures/conformance/scenes/motion_blur_velocity_probe_scene.json",
+      "ae_reference": {
+        "status": "pending_ae_export",
+        "placeholder": "Export AE frames with comp motion blur enabled, layer motion blur enabled for the red square, 180 degree shutter, -90 phase, and 8 samples."
+      },
+      "thresholds": {
+        "max_abs_diff": 16,
+        "mean_abs_diff": 2.0,
+        "changed_pixel_ratio": 0.08
+      },
+      "frames": [
+        {
+          "index": 1,
+          "time": 0.0833333333,
+          "ae_reference_png": "fixtures/conformance/ae-reference/motion_blur_velocity/frame_000001.png"
+        },
+        {
+          "index": 3,
+          "time": 0.25,
+          "ae_reference_png": "fixtures/conformance/ae-reference/motion_blur_velocity/frame_000003.png",
+          "notes": "Center velocity sample should show the clearest shutter trail."
+        },
+        {
+          "index": 5,
+          "time": 0.4166666667,
+          "ae_reference_png": "fixtures/conformance/ae-reference/motion_blur_velocity/frame_000005.png"
+        }
+      ],
+      "tags": ["motion_blur", "temporal_supersampling", "shutter"],
+      "notes": "Scene includes a blurred red square and a cyan no-blur baseline moving at the same speed."
+    }
+  ]
+}

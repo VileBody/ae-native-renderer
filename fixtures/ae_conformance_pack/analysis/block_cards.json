@@ -1,0 +1,383 @@
+{
+  "schema_version": 1,
+  "status_source": "docs/MATH_PARITY_STATUS.md@2026-05-03",
+  "ladder_levels": ["primitive", "property_interpolation", "operator_static", "animated_operator", "stack", "template_slice", "full_template"],
+  "cards": [
+    {
+      "id": "transforms_interpolation_ease",
+      "title": "Transforms, Interpolation, Ease",
+      "module_ids": ["M03", "M04"],
+      "dimensions": ["coordinate", "animated_params", "alpha", "temporal"],
+      "fixtures_assets_needed": ["coordinate_field_rgba8", "grid_rgba8", "checkerboard_rgba8", "alpha_ramp_rgba8", "single_solid_layer"],
+      "ae_cases_to_generate": ["identity", "half_pixel_translate", "anchor_offset_rotate", "negative_scale", "opacity_0_50_100", "hold_linear_cubic_ease", "keyframe_boundary_samples"],
+      "frames_to_compare": ["0", "keyframe_exact", "keyframe_minus_1", "keyframe_plus_1", "mid_ease_span", "last"],
+      "likely_telemetry_fields": ["input_time", "sampled_time", "keyframe_span", "interpolation_mode", "property_value", "matrix", "inverse_matrix", "sample_uv", "bbox", "layer_opacity"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "instrumented/testable",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "source_layer_precomp_time",
+      "title": "Source, Layer, Precomp Time",
+      "module_ids": ["M01", "M02", "M17"],
+      "dimensions": ["source", "temporal", "graph", "alpha", "color"],
+      "fixtures_assets_needed": ["numbered_frame_rgba8_sequence", "transparent_rgba8", "nested_text_comp", "nested_solid_comp", "activity_window_scene"],
+      "ae_cases_to_generate": ["source_start_offset", "in_out_activity_edges", "z_order_overlap", "nested_comp_time_offset", "collapsed_text_precomp", "noncollapsed_text_precomp", "source_frame_selection"],
+      "frames_to_compare": ["first_active", "in_point_minus_1", "in_point", "out_point_minus_1", "out_point", "source_start_boundary", "nested_mid", "last"],
+      "likely_telemetry_fields": ["comp_time", "layer_time", "source_time", "source_frame_index", "layer_active", "z_order", "precomp_time", "collapse_enabled", "asset_hash", "composite_input_hash"],
+      "current_status_ladder": {
+        "primitive": "implemented approximate",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "instrumented/testable",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "posterize_time",
+      "title": "Posterize Time",
+      "module_ids": ["M15"],
+      "dimensions": ["temporal", "animated_params", "graph"],
+      "fixtures_assets_needed": ["numbered_frame_rgba8_sequence", "animated_transform_layer", "animated_effect_param_layer", "adjustment_stack_scene"],
+      "ae_cases_to_generate": ["fps_1_2_6_12_24_30", "comp_fps_identity", "layer_source_quantization", "animated_param_quantization", "adjustment_lower_stack_resampling", "posterize_boundary_rounding"],
+      "frames_to_compare": ["bucket_start", "bucket_mid", "bucket_end_minus_1", "bucket_boundary", "boundary_plus_1", "last"],
+      "likely_telemetry_fields": ["input_time", "quantized_time", "posterize_fps", "source_frame_index", "effect_time", "property_sample_time", "adjustment_resample_time", "bucket_index"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "motion_blur",
+      "title": "Motion Blur",
+      "module_ids": ["M18"],
+      "dimensions": ["temporal", "graph", "animated_params", "coordinate", "glyph"],
+      "fixtures_assets_needed": ["moving_coordinate_field", "moving_solid", "moving_text_glyphs", "precomp_motion_scene"],
+      "ae_cases_to_generate": ["shutter_angle_0_90_180_360", "shutter_phase_negative_zero_positive", "samples_1_2_8_16", "static_layer_skip", "moving_text", "posterize_interaction"],
+      "frames_to_compare": ["motion_start", "peak_velocity", "keyframe_boundary", "motion_end", "static_control"],
+      "likely_telemetry_fields": ["sample_times", "sample_weights", "per_sample_matrix", "per_sample_bbox", "per_sample_source_hash", "accumulated_buffer_hash", "shutter_angle", "shutter_phase"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "instrumented/testable",
+        "operator_static": "instrumented/testable",
+        "animated_operator": "instrumented/testable",
+        "stack": "instrumented/testable",
+        "template_slice": "not observed in current templates",
+        "full_template": "not observed in current templates"
+      }
+    },
+    {
+      "id": "drop_shadow",
+      "title": "Drop Shadow",
+      "module_ids": ["M10"],
+      "match_names": ["ADBE Drop Shadow"],
+      "dimensions": ["spatial", "coordinate", "alpha", "color", "animated_params"],
+      "fixtures_assets_needed": ["impulse_rgba8", "alpha_ramp_rgba8", "near_edge_square_rgba8", "text_alpha_layer", "template_text_slice"],
+      "ae_cases_to_generate": ["opacity_0_50_100", "direction_0_45_90_180", "distance_0_1_10_50", "softness_0_1_10_30", "shadow_only", "colored_shadow", "animated_softness"],
+      "frames_to_compare": ["static", "param_keyframe_exact", "param_mid", "edge_case", "template_slice_peak"],
+      "likely_telemetry_fields": ["source_alpha_hash", "shadow_mask_hash", "blurred_shadow_hash", "offset_shadow_hash", "final_composite_hash", "premult_state", "params"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "instrumented/testable",
+        "animated_operator": "instrumented/testable",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "glow",
+      "title": "Glow",
+      "module_ids": ["M11"],
+      "match_names": ["ADBE Glo2"],
+      "dimensions": ["pointwise", "spatial", "alpha", "color", "animated_params"],
+      "fixtures_assets_needed": ["horizontal_ramp_rgba8", "alpha_ramp_rgba8", "impulse_rgba8", "colored_text_layer", "template_text_slice"],
+      "ae_cases_to_generate": ["threshold_0_0_5_1", "radius_0_1_10_40", "intensity_0_0_5_1_2", "below_threshold_constant", "colored_source", "animated_threshold_radius"],
+      "frames_to_compare": ["static", "threshold_boundary", "param_keyframe_exact", "param_mid", "template_slice_peak"],
+      "likely_telemetry_fields": ["luma_hash", "threshold_mask_hash", "blurred_glow_hash", "glow_contribution_hash", "final_composite_hash", "params"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "instrumented/testable",
+        "animated_operator": "instrumented/testable",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "box_blur",
+      "title": "Box Blur",
+      "module_ids": [],
+      "match_names": ["ADBE Box Blur2"],
+      "docs_note": "Listed in docs/EFFECTS.md and operator passports; no dedicated Mxx registry row yet.",
+      "dimensions": ["spatial", "alpha", "color", "animated_params"],
+      "fixtures_assets_needed": ["impulse_rgba8", "checkerboard_rgba8", "alpha_ramp_rgba8", "near_edge_square_rgba8", "constant_image"],
+      "ae_cases_to_generate": ["radius_0_identity", "radius_1", "fractional_radius", "large_radius", "iterations_1_2_3", "edge_sampling", "animated_radius"],
+      "frames_to_compare": ["static", "radius_boundary_0", "radius_boundary_1", "param_keyframe_exact", "param_mid"],
+      "likely_telemetry_fields": ["horizontal_pass_hash", "vertical_pass_hash", "kernel", "edge_samples", "radius_px", "iterations", "premult_state"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "instrumented/testable",
+        "animated_operator": "instrumented/testable",
+        "stack": "implemented approximate",
+        "template_slice": "not observed in current templates",
+        "full_template": "not observed in current templates"
+      }
+    },
+    {
+      "id": "geometry2",
+      "title": "Geometry2",
+      "module_ids": ["M12"],
+      "match_names": ["ADBE Geometry2"],
+      "dimensions": ["coordinate", "animated_params", "alpha", "spatial"],
+      "fixtures_assets_needed": ["coordinate_field_rgba8", "checkerboard_rgba8", "alpha_ramp_rgba8", "adjustment_layer_canvas"],
+      "ae_cases_to_generate": ["identity", "anchor_position_offsets", "uniform_scale", "width_height_scale", "rotation", "half_pixel_sampling", "edge_sampling", "animated_scale_rotation"],
+      "frames_to_compare": ["static", "keyframe_exact", "keyframe_minus_1", "keyframe_plus_1", "mid_animation", "scenes_3rd_slice"],
+      "likely_telemetry_fields": ["matrix", "inverse_matrix", "sample_uv", "bbox", "edge_mode", "input_canvas_hash", "output_hash", "params"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "minimax",
+      "title": "Minimax",
+      "module_ids": ["M13"],
+      "match_names": ["ADBE Minimax"],
+      "dimensions": ["spatial", "alpha", "color", "animated_params"],
+      "fixtures_assets_needed": ["impulse_rgba8", "alpha_ramp_rgba8", "checkerboard_rgba8", "near_edge_square_rgba8", "colored_channel_ramps"],
+      "ae_cases_to_generate": ["operation_enum_all_supported", "radius_0_identity", "radius_1", "large_radius", "alpha_channel", "rgba_channels", "edge_behavior", "animated_radius"],
+      "frames_to_compare": ["static", "radius_0", "radius_1", "param_keyframe_exact", "param_mid", "scenes_3rd_slice"],
+      "likely_telemetry_fields": ["neighborhood_samples", "channel_minmax", "output_mask_hash", "radius_px", "operation", "channels", "edge_samples"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "turbulent_displace",
+      "title": "Turbulent Displace",
+      "module_ids": ["M14"],
+      "match_names": ["ADBE Turbulent Displace"],
+      "dimensions": ["coordinate", "spatial", "temporal", "procedural", "animated_params", "alpha", "color"],
+      "fixtures_assets_needed": ["coordinate_field_rgba8", "grid_rgba8", "checkerboard_rgba8", "text_layer", "footage_slice"],
+      "ae_cases_to_generate": ["amount_0_identity", "amount_1_10_50", "size_1_10_50_200", "complexity_1_2_3_6", "evolution_0_45_180_360", "animated_evolution", "edge_sampling"],
+      "frames_to_compare": ["static", "evolution_0", "evolution_180", "evolution_360", "keyframe_exact", "mid_animation", "scenes_3rd_slice"],
+      "likely_telemetry_fields": ["noise_hash", "dx_hash", "dy_hash", "uv_hash", "sampled_source_hash", "final_hash", "complexity", "evolution", "amount", "size"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "text_reveal",
+      "title": "Text Reveal",
+      "module_ids": ["M05", "M06"],
+      "match_names": ["ADBE Text Animator", "ADBE Text Selector"],
+      "dimensions": ["glyph", "temporal", "animated_params", "coordinate", "alpha"],
+      "fixtures_assets_needed": ["latin_text", "cyrillic_text", "mixed_punctuation_text", "multiline_text", "fontdue_font_inventory"],
+      "ae_cases_to_generate": ["based_on_characters", "based_on_words", "based_on_lines", "start_end_0_50_100", "offset_negative_zero_positive", "smoothness_0_100", "selector_boundaries", "line_wrap_boundaries"],
+      "frames_to_compare": ["first_visible", "selector_boundary_minus_1", "selector_boundary", "selector_boundary_plus_1", "mid_reveal", "fully_revealed"],
+      "likely_telemetry_fields": ["glyph_layout", "glyph_bbox", "glyph_advance", "char_indices", "word_segments", "line_segments", "selector_weights", "glyph_opacity", "glyph_matrices"],
+      "current_status_ladder": {
+        "primitive": "implemented approximate",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "glyph_animator_point_light",
+      "title": "Glyph Animator Point-Light",
+      "module_ids": ["M05", "M07", "M19"],
+      "dimensions": ["glyph", "coordinate", "alpha", "color", "animated_params", "temporal"],
+      "fixtures_assets_needed": ["glyph_rect_probe_text", "point_light_like_gradient_source", "latin_text", "cyrillic_text", "alpha_ramp_rgba8"],
+      "ae_cases_to_generate": ["per_glyph_position", "per_glyph_scale", "per_glyph_rotation", "glyph_blur", "glyph_opacity", "point_light_distance_gradient", "animator_order"],
+      "frames_to_compare": ["static", "animator_start", "peak_displacement", "blur_peak", "settled"],
+      "likely_telemetry_fields": ["glyph_layout", "selector_weights", "glyph_matrices", "glyph_opacity", "glyph_blur_radius", "light_distance", "raster_hash", "composite_hash"],
+      "current_status_ladder": {
+        "primitive": "implemented approximate",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "montserrat_reveal",
+      "title": "Montserrat Reveal",
+      "module_ids": ["M05", "M06", "M10", "M11", "M19"],
+      "dimensions": ["glyph", "temporal", "animated_params", "alpha", "color", "spatial"],
+      "fixtures_assets_needed": ["montserrat_font_or_renderer_fallback", "template_4th_cyrillic_strings", "impulse_2nd_latin_strings", "text_alpha_layer", "drop_shadow_glow_stack"],
+      "ae_cases_to_generate": ["word_reveal_cyrillic", "character_reveal_latin", "multiline_reveal", "shadow_only_isolated", "glow_isolated", "shadow_glow_stacked", "font_fallback_audit"],
+      "frames_to_compare": ["first_visible", "mid_reveal", "fully_revealed", "effect_peak", "template_4th_slice", "impulse_2nd_slice"],
+      "likely_telemetry_fields": ["font_family", "font_path", "glyph_layout", "word_segments", "selector_weights", "shadow_mask_hash", "glow_mask_hash", "final_composite_hash"],
+      "current_status_ladder": {
+        "primitive": "implemented approximate",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "expression_selector_bounce",
+      "title": "Expression Selector Bounce",
+      "module_ids": ["M08"],
+      "dimensions": ["glyph", "temporal", "animated_params", "coordinate", "alpha"],
+      "fixtures_assets_needed": ["impulse_2nd_text_slice", "glyph_rect_probe_text", "per_character_bounce_expression_payload"],
+      "ae_cases_to_generate": ["generated_per_character_bounce", "delay_variants", "frequency_variants", "decay_variants", "amount_positive_negative", "selector_order_with_transform_animator"],
+      "frames_to_compare": ["expression_start", "first_peak", "second_peak", "decay_mid", "settle", "impulse_2nd_slice"],
+      "likely_telemetry_fields": ["glyph_index", "expression_time", "selector_amount", "delay", "frequency", "decay", "glyph_matrix", "glyph_opacity", "sampled_property_value"],
+      "current_status_ladder": {
+        "primitive": "implemented approximate",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "edge_wobble_expression",
+      "title": "Edge Wobble Expression",
+      "module_ids": ["M09"],
+      "dimensions": ["temporal", "coordinate", "animated_params", "procedural"],
+      "fixtures_assets_needed": ["scenes_3rd_footage_slice", "coordinate_field_rgba8", "numbered_frame_rgba8_sequence", "generated_edge_wobble_expression_payload"],
+      "ae_cases_to_generate": ["generated_edge_wobble_position", "waveform_samples", "envelope_start_mid_end", "footage_motion", "source_time_interaction", "expression_disabled_control"],
+      "frames_to_compare": ["0", "motion_start", "motion_peak", "motion_trough", "mid_scene", "last"],
+      "likely_telemetry_fields": ["comp_time", "expression_time", "property_name", "expression_mode", "raw_expression_value", "sampled_position", "matrix", "source_frame_index"],
+      "current_status_ladder": {
+        "primitive": "implemented approximate",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "adjustment_stacks",
+      "title": "Adjustment Stacks",
+      "module_ids": ["M16", "M12", "M13", "M14", "M15", "M19"],
+      "dimensions": ["graph", "temporal", "coordinate", "spatial", "alpha", "color", "animated_params"],
+      "fixtures_assets_needed": ["lower_canvas_two_layers", "adjustment_layer_canvas", "coordinate_field_rgba8", "numbered_frame_rgba8_sequence", "non_commuting_effect_stack"],
+      "ae_cases_to_generate": ["geometry_then_minimax", "minimax_then_geometry", "posterize_then_warp", "warp_then_posterize", "multiple_adjustment_layers", "partial_activity_adjustment", "scenes_3rd_stack_slice"],
+      "frames_to_compare": ["stack_static", "adjustment_in_point", "posterize_boundary", "effect_keyframe", "effect_keyframe_plus_1", "scenes_3rd_slice"],
+      "likely_telemetry_fields": ["graph_order", "adjustment_active", "input_canvas_hash", "effect_input_hashes", "effect_output_hashes", "quantized_time", "lower_stack_resample_hash", "final_canvas_hash"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "instrumented/testable",
+        "animated_operator": "implemented approximate",
+        "stack": "instrumented/testable",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "collapse_transformations",
+      "title": "Collapse Transformations",
+      "module_ids": ["M17"],
+      "dimensions": ["graph", "coordinate", "glyph", "alpha", "color", "animated_params"],
+      "fixtures_assets_needed": ["nested_text_comp", "nested_solid_comp", "coordinate_field_precomp", "collapsed_vs_noncollapsed_pair", "scale_sensitive_text"],
+      "ae_cases_to_generate": ["collapsed_text_precomp", "noncollapsed_text_precomp", "parent_child_matrix_composition", "nested_scale_text_quality", "solid_only_collapse", "cycle_rejection_control"],
+      "frames_to_compare": ["static", "parent_keyframe", "child_keyframe", "combined_transform_mid", "template_4th_payload_slice", "impulse_2nd_payload_slice"],
+      "likely_telemetry_fields": ["graph_node_id", "precomp_time", "collapse_enabled", "parent_matrix", "child_matrix", "composed_matrix", "deferred_raster_scale", "raster_hash", "cycle_detected"],
+      "current_status_ladder": {
+        "primitive": "instrumented/testable",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "instrumented/testable",
+        "animated_operator": "instrumented/testable",
+        "stack": "instrumented/testable",
+        "template_slice": "instrumented/testable",
+        "full_template": "implemented approximate"
+      }
+    },
+    {
+      "id": "color_composite_sampling",
+      "title": "Color, Composite, Sampling",
+      "module_ids": ["M01", "M03", "M19"],
+      "dimensions": ["pointwise", "coordinate", "alpha", "color", "spatial"],
+      "fixtures_assets_needed": ["solid_rgba8", "transparent_rgba8", "alpha_ramp_rgba8", "checkerboard_rgba8", "coordinate_field_rgba8", "overlap_layers_scene"],
+      "ae_cases_to_generate": ["straight_vs_premult_alpha", "normal_alpha_composite", "layer_opacity", "bilinear_sampling", "edge_sampling", "rgba8_quantization", "gamma_color_space_probe", "transparent_source_control"],
+      "frames_to_compare": ["static", "opacity_0", "opacity_50", "opacity_100", "half_pixel_sample", "edge_sample", "template_slice_control"],
+      "likely_telemetry_fields": ["premult_state", "source_rgba_hash", "sample_uv", "sampled_rgba", "layer_opacity", "composite_input_hash", "composite_output_hash", "color_space", "gamma_assumption"],
+      "current_status_ladder": {
+        "primitive": "implemented approximate",
+        "property_interpolation": "implemented approximate",
+        "operator_static": "implemented approximate",
+        "animated_operator": "implemented approximate",
+        "stack": "implemented approximate",
+        "template_slice": "implemented approximate",
+        "full_template": "implemented approximate"
+      }
+    }
+  ],
+  "template_slices": [
+    {
+      "id": "template_4th",
+      "scene_json": "target/native_template_runs/template_4th/scene.json",
+      "composition": {"id": "Comp 1", "width": 1080, "height": 1960, "fps": 23.9759979248047, "duration": 13.87},
+      "observed": {"footage_layers": 12, "text_layers": 10, "adjustment_layers": 0, "effects": {"ADBE Drop Shadow": 20, "ADBE Glo2": 10}},
+      "module_ids": ["M01", "M02", "M03", "M04", "M05", "M06", "M10", "M11", "M17", "M19"],
+      "blocking_focus": ["text_reveal", "montserrat_reveal", "drop_shadow", "glow", "color_composite_sampling"]
+    },
+    {
+      "id": "impulse_2nd",
+      "scene_json": "target/native_template_runs/impulse_2nd/scene.json",
+      "composition": {"id": "Comp 1", "width": 1080, "height": 1960, "fps": 23.9759979248047, "duration": 13.87},
+      "observed": {"footage_layers": 18, "text_layers": 27, "adjustment_layers": 0, "effects": {"ADBE Drop Shadow": 81}},
+      "module_ids": ["M01", "M02", "M03", "M04", "M05", "M07", "M08", "M10", "M17", "M19"],
+      "blocking_focus": ["glyph_animator_point_light", "expression_selector_bounce", "drop_shadow", "transforms_interpolation_ease", "color_composite_sampling"]
+    },
+    {
+      "id": "scenes_3rd",
+      "scene_json": "target/native_template_runs/scenes_3rd/scene.json",
+      "composition": {"id": "Comp 1", "width": 1080, "height": 1960, "fps": 23.9759979248047, "duration": 13.87},
+      "observed": {"footage_layers": 8, "text_layers": 15, "adjustment_layers": 15, "effects": {"ADBE Geometry2": 15, "ADBE Minimax": 15, "ADBE Posterize Time": 15, "ADBE Turbulent Displace": 15}},
+      "module_ids": ["M01", "M02", "M03", "M04", "M05", "M06", "M09", "M12", "M13", "M14", "M15", "M16", "M19"],
+      "blocking_focus": ["adjustment_stacks", "posterize_time", "geometry2", "minimax", "turbulent_displace", "edge_wobble_expression"]
+    }
+  ]
+}

@@ -8,6 +8,7 @@ use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
+mod conformance_pack;
 mod media_plan;
 
 #[derive(Parser, Debug)]
@@ -101,6 +102,20 @@ enum Command {
         threshold_mean: Option<f64>,
         #[arg(long)]
         threshold_max: Option<u8>,
+    },
+    ConformancePack {
+        #[arg(long, default_value = "fixtures/ae_conformance_pack")]
+        pack: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long = "case")]
+        cases: Vec<String>,
+        #[arg(long)]
+        threshold_mean: Option<f64>,
+        #[arg(long)]
+        threshold_max: Option<u8>,
+        #[arg(long)]
+        fail_on_diff: bool,
     },
     Job {
         #[arg(long)]
@@ -235,6 +250,30 @@ fn run() -> Result<(), CliExit> {
                 Err(CliExit::render(anyhow::anyhow!(
                     "conformance thresholds failed"
                 )))
+            }
+        }
+        Command::ConformancePack {
+            pack,
+            out,
+            cases,
+            threshold_mean,
+            threshold_max,
+            fail_on_diff,
+        } => {
+            let ok = conformance_pack::run_pack(conformance_pack::RunOptions {
+                pack,
+                out,
+                cases,
+                threshold_mean,
+                threshold_max,
+            })
+            .map_err(CliExit::render)?;
+            if fail_on_diff && !ok {
+                Err(CliExit::render(anyhow::anyhow!(
+                    "conformance pack thresholds failed"
+                )))
+            } else {
+                Ok(())
             }
         }
         Command::Job {
@@ -485,7 +524,14 @@ fn render(
         }
     }
 
-    render_png_output(&scene_path, &scene, &out, assets_root, job_archive, mp4.as_deref())?;
+    render_png_output(
+        &scene_path,
+        &scene,
+        &out,
+        assets_root,
+        job_archive,
+        mp4.as_deref(),
+    )?;
     println!(
         "render.done scene={} out={}",
         scene_path.display(),
@@ -622,7 +668,14 @@ fn mux(frames: PathBuf, out: PathBuf, fps: Option<f64>) -> anyhow::Result<()> {
         .parent()
         .map(Path::to_path_buf)
         .unwrap_or_else(|| PathBuf::from("."));
-    write_mux_report(&report_dir, Some(&frames_dir), fps, &out, "mux", &mux_report)?;
+    write_mux_report(
+        &report_dir,
+        Some(&frames_dir),
+        fps,
+        &out,
+        "mux",
+        &mux_report,
+    )?;
     println!(
         "mux.done frames={} fps={} out={}",
         frames_dir.display(),
@@ -671,6 +724,7 @@ fn compare_outputs(
     let mut changed_pixels = 0_u64;
     let mut total_pixels = 0_u64;
     let mut weighted_sum = 0.0_f64;
+    let mut weighted_sum_sq = 0.0_f64;
     let mut worst_mean = (0_u32, 0.0_f64);
     let mut worst_max = (0_u32, 0_u8);
 
@@ -713,7 +767,9 @@ fn compare_outputs(
         max_abs_diff = max_abs_diff.max(metrics.max_abs_diff);
         changed_pixels += metrics.changed_pixels;
         total_pixels += metrics.total_pixels;
-        weighted_sum += metrics.mean_abs_diff * (metrics.total_pixels * 4) as f64;
+        let components = (metrics.total_pixels * 4) as f64;
+        weighted_sum += metrics.mean_abs_diff * components;
+        weighted_sum_sq += metrics.rmse_abs_diff * metrics.rmse_abs_diff * components;
         if metrics.mean_abs_diff > worst_mean.1 {
             worst_mean = (frame, metrics.mean_abs_diff);
         }
@@ -734,6 +790,7 @@ fn compare_outputs(
             "height": native_image.height,
             "max_abs_diff": metrics.max_abs_diff,
             "mean_abs_diff": metrics.mean_abs_diff,
+            "rmse_abs_diff": metrics.rmse_abs_diff,
             "changed_pixels": metrics.changed_pixels,
             "total_pixels": metrics.total_pixels
         }));
@@ -741,6 +798,7 @@ fn compare_outputs(
 
     let total_components = (total_pixels * 4).max(1) as f64;
     let mean_abs_diff = weighted_sum / total_components;
+    let rmse_abs_diff = (weighted_sum_sq / total_components).sqrt();
     let threshold_ok = threshold_mean.map_or(true, |limit| mean_abs_diff <= limit)
         && threshold_max.map_or(true, |limit| max_abs_diff <= limit);
     let native_manifest = read_manifest_value(&native)
@@ -769,6 +827,7 @@ fn compare_outputs(
         "summary": {
             "max_abs_diff": max_abs_diff,
             "mean_abs_diff": mean_abs_diff,
+            "rmse_abs_diff": rmse_abs_diff,
             "changed_pixels": changed_pixels,
             "total_pixels": total_pixels,
             "changed_pixel_ratio": changed_pixels as f64 / total_pixels.max(1) as f64,
@@ -779,7 +838,10 @@ fn compare_outputs(
         "frames_detail": frame_reports
     });
     fs::create_dir_all(&out)?;
-    fs::write(out.join("report.json"), serde_json::to_string_pretty(&report)?)?;
+    fs::write(
+        out.join("report.json"),
+        serde_json::to_string_pretty(&report)?,
+    )?;
     println!(
         "compare.done ok={} native={} reference={} report={}",
         threshold_ok,
@@ -905,7 +967,10 @@ fn run_job(options: JobOptions) -> Result<(), CliExit> {
         )));
     }
 
-    let native_out = options.out.clone().unwrap_or_else(|| job_out.join("native"));
+    let native_out = options
+        .out
+        .clone()
+        .unwrap_or_else(|| job_out.join("native"));
     let mp4 = if options.no_mp4 {
         None
     } else {
@@ -1084,11 +1149,7 @@ fn prepare_job_input(
     })
 }
 
-fn build_job_capability_report(
-    input: &PreparedJobInput,
-    strict: bool,
-    route: RouteMode,
-) -> Value {
+fn build_job_capability_report(input: &PreparedJobInput, strict: bool, route: RouteMode) -> Value {
     let mut approximate = input.scene_features.approximate.clone();
     let mut ignored = Vec::new();
     let mut unsupported = input.scene_features.unsupported.clone();
@@ -1475,8 +1536,7 @@ impl CliFootageProvider {
                 totals.decoder_spawn_ms += stats.decoder_spawn_ms;
                 totals.frame_read_ms += stats.frame_read_ms;
                 totals.max_request_ms = totals.max_request_ms.max(stats.max_request_ms);
-                totals.max_frame_read_ms =
-                    totals.max_frame_read_ms.max(stats.max_frame_read_ms);
+                totals.max_frame_read_ms = totals.max_frame_read_ms.max(stats.max_frame_read_ms);
                 Some(json!({
                     "asset_id": source_id.clone(),
                     "backend": source.backend_name(),
@@ -1550,13 +1610,9 @@ impl CliFootageProvider {
             return Ok(true);
         }
 
-        let asset = self
-            .assets
-            .get(source)
-            .cloned()
-            .ok_or_else(|| {
-                anyhow::anyhow!("footage source '{source}' was not found in scene assets")
-            })?;
+        let asset = self.assets.get(source).cloned().ok_or_else(|| {
+            anyhow::anyhow!("footage source '{source}' was not found in scene assets")
+        })?;
         if !matches!(asset.kind, render_ir::AssetKind::Video) {
             anyhow::bail!("footage source '{source}' points to a non-video asset");
         }
@@ -1682,7 +1738,10 @@ fn write_media_plan(
 
 fn write_media_report(out: &Path, footage: &CliFootageProvider) -> anyhow::Result<()> {
     let path = out.join("media-report.json");
-    fs::write(&path, serde_json::to_string_pretty(&footage.media_report())?)?;
+    fs::write(
+        &path,
+        serde_json::to_string_pretty(&footage.media_report())?,
+    )?;
     println!("render.media_report={}", path.display());
     Ok(())
 }
@@ -1740,7 +1799,11 @@ fn encode_png_sequence_gstreamer(
 ) -> anyhow::Result<MuxEncodeReport> {
     let started = Instant::now();
     let frame_count = count_native_frames(frames_dir)?;
-    anyhow::ensure!(frame_count > 0, "no PNG frames found in {}", frames_dir.display());
+    anyhow::ensure!(
+        frame_count > 0,
+        "no PNG frames found in {}",
+        frames_dir.display()
+    );
     let first = testkit::load_rgba_png(frames_dir.join("frame_000000.png"))?;
     let mut sink = media_gst::GstMp4VideoSink::open(out, first.width, first.height, fps)?;
 

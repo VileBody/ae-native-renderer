@@ -1,5 +1,5 @@
 use crate::collapse::PrecompCollapsePlan;
-use crate::precomp::{PrecompGraph, PrecompRenderPlan};
+use crate::precomp::{PrecompDeferredRasterPlan, PrecompGraph, PrecompRenderPlan};
 use render_ir::Scene;
 
 pub fn validate_graph_stub(scene: &Scene) -> anyhow::Result<()> {
@@ -20,6 +20,15 @@ pub fn precomp_collapse_plan<'a>(
     layer_id: &str,
 ) -> anyhow::Result<PrecompCollapsePlan<'a>> {
     PrecompGraph::from_scene(scene)?.collapse_plan_for_precomp_layer(parent_composition, layer_id)
+}
+
+pub fn precomp_deferred_raster_plan<'a>(
+    scene: &'a Scene,
+    parent_composition: &str,
+    layer_id: &str,
+) -> anyhow::Result<PrecompDeferredRasterPlan<'a>> {
+    PrecompGraph::from_scene(scene)?
+        .deferred_raster_plan_for_precomp_layer(parent_composition, layer_id)
 }
 
 #[cfg(test)]
@@ -68,6 +77,7 @@ mod tests {
                 fps: 24.0,
                 duration: 1.0,
                 background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
             },
             compositions: Vec::new(),
             assets: Vec::new(),

@@ -1,3 +1,5 @@
+use serde::{Deserialize, Serialize};
+
 #[derive(Debug, Clone)]
 pub struct TextAnimatorSpec {
     pub name: String,
@@ -24,7 +26,8 @@ pub struct ExpressionSelector {
     pub expression: String,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum BasedOn {
     Characters,
     Words,
@@ -57,7 +60,8 @@ pub fn range_selector_weight_stub(
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum SelectorShape {
     Square,
     RampUp,
@@ -73,7 +77,7 @@ impl Default for SelectorShape {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RangeSelectorV2 {
     pub start_percent: f32,
     pub end_percent: f32,
@@ -112,7 +116,7 @@ impl From<RangeSelector> for RangeSelectorV2 {
     }
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub struct WigglySelector {
     pub amplitude_percent: f32,
     pub frequency_hz: f32,
@@ -131,7 +135,7 @@ impl Default for WigglySelector {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct TextUnit {
     pub based_on: BasedOn,
     pub index: usize,
@@ -143,26 +147,36 @@ pub struct TextUnit {
     pub byte_end: usize,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextUnitWeight {
     pub unit: TextUnit,
     pub selector_index: usize,
+    pub selector_position_percent: f32,
     pub total: usize,
+    pub base_weight: f32,
     pub weight: f32,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextUnitBlur {
     pub unit_index: usize,
     pub blur: [f32; 2],
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextBlurPlan {
     pub per_unit_blur: Vec<TextUnitBlur>,
     pub max_blur: [f32; 2],
     pub layer_fallback_blur: [f32; 2],
     pub requires_per_unit_filter: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RangeSelectorTelemetry {
+    pub selector: RangeSelectorV2,
+    pub time_seconds: f32,
+    pub unit_count: usize,
+    pub weights: Vec<TextUnitWeight>,
 }
 
 pub fn text_units(text: &str, based_on: BasedOn) -> Vec<TextUnit> {
@@ -180,6 +194,20 @@ pub fn evaluate_range_selector_v2(
 ) -> Vec<TextUnitWeight> {
     let units = text_units(text, selector.based_on);
     range_selector_weights(&units, selector, time_seconds)
+}
+
+pub fn evaluate_range_selector_v2_telemetry(
+    text: &str,
+    selector: &RangeSelectorV2,
+    time_seconds: f32,
+) -> RangeSelectorTelemetry {
+    let weights = evaluate_range_selector_v2(text, selector, time_seconds);
+    RangeSelectorTelemetry {
+        selector: selector.clone(),
+        time_seconds,
+        unit_count: weights.len(),
+        weights,
+    }
 }
 
 pub fn range_selector_weights(
@@ -203,14 +231,18 @@ pub fn range_selector_weights(
         .cloned()
         .zip(selector_indices)
         .map(|(unit, selector_index)| {
-            let mut weight = range_selector_weight_v2(selector_index, total, selector);
+            let selector_position_percent = unit_center_percent(selector_index, total);
+            let base_weight = range_selector_weight_v2(selector_index, total, selector);
+            let mut weight = base_weight;
             if let Some(wiggly) = selector.wiggly {
                 weight = apply_wiggly_weight(weight, &unit, wiggly, time_seconds);
             }
             TextUnitWeight {
                 unit,
                 selector_index,
+                selector_position_percent,
                 total,
+                base_weight,
                 weight,
             }
         })
@@ -371,12 +403,7 @@ fn word_units(text: &str) -> Vec<TextUnit> {
         if ch.is_whitespace() {
             if let Some((start_byte, start_char)) = word_start.take() {
                 push_word_unit(
-                    &mut units,
-                    line_index,
-                    start_char,
-                    char_index,
-                    start_byte,
-                    byte_start,
+                    &mut units, line_index, start_char, char_index, start_byte, byte_start,
                 );
             }
             if ch == '\r' {
@@ -561,9 +588,8 @@ fn hash_unit_float(hash: u64) -> f32 {
 }
 
 fn stable_hash(seed: u64, index: u64, salt: u64) -> u64 {
-    let mut value = seed
-        ^ index.wrapping_mul(0x9e37_79b9_7f4a_7c15)
-        ^ salt.wrapping_mul(0xbf58_476d_1ce4_e5b9);
+    let mut value =
+        seed ^ index.wrapping_mul(0x9e37_79b9_7f4a_7c15) ^ salt.wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = value.wrapping_add(0x9e37_79b9_7f4a_7c15);
     value = (value ^ (value >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
     value = (value ^ (value >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
@@ -704,13 +730,23 @@ mod tests {
             (0..8).collect::<Vec<_>>()
         );
         assert_eq!(
-            first.iter().map(|unit| unit.selector_index).collect::<Vec<_>>(),
-            second.iter().map(|unit| unit.selector_index).collect::<Vec<_>>()
+            first
+                .iter()
+                .map(|unit| unit.selector_index)
+                .collect::<Vec<_>>(),
+            second
+                .iter()
+                .map(|unit| unit.selector_index)
+                .collect::<Vec<_>>()
         );
         assert_eq!(
             first.iter().map(|unit| unit.weight).collect::<Vec<_>>(),
             second.iter().map(|unit| unit.weight).collect::<Vec<_>>()
         );
+        assert!(first
+            .iter()
+            .all(|unit| unit.selector_position_percent > 0.0
+                && unit.selector_position_percent < 100.0));
     }
 
     #[test]
@@ -740,6 +776,9 @@ mod tests {
             first.iter().map(|unit| unit.weight).collect::<Vec<_>>(),
             later.iter().map(|unit| unit.weight).collect::<Vec<_>>()
         );
+        assert!(first
+            .iter()
+            .any(|unit| (unit.base_weight - unit.weight).abs() > 0.0001));
     }
 
     #[test]
@@ -759,5 +798,37 @@ mod tests {
         assert_approx(plan.max_blur[0], 7.0);
         assert!(plan.requires_per_unit_filter);
         assert!(plan.layer_fallback_blur[0] > 0.0);
+    }
+
+    #[test]
+    fn range_selector_telemetry_preserves_selector_parameters_and_weights() {
+        let selector = RangeSelectorV2 {
+            start_percent: 10.0,
+            end_percent: 90.0,
+            shape: SelectorShape::RampUp,
+            smoothness: 0.0,
+            randomize_order: true,
+            random_seed: 11,
+            ..RangeSelectorV2::default()
+        };
+
+        let telemetry = evaluate_range_selector_v2_telemetry("abcd", &selector, 0.25);
+
+        assert_eq!(telemetry.unit_count, 4);
+        assert_eq!(telemetry.selector.start_percent, 10.0);
+        assert!(telemetry.selector.randomize_order);
+        assert_eq!(telemetry.weights.len(), 4);
+        assert_eq!(
+            telemetry
+                .weights
+                .iter()
+                .map(|weight| weight.unit.index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert!(telemetry
+            .weights
+            .iter()
+            .all(|weight| weight.selector_index < weight.total));
     }
 }

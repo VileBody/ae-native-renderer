@@ -1,4 +1,7 @@
-use crate::{param_f32_at_any, param_value, Effect, EffectContext};
+use crate::{
+    box_blur::canvas_debug_hash, param_bool_any, param_f32_at_any, param_value, Effect,
+    EffectContext,
+};
 use raster_cpu::Canvas;
 use serde_json::Value;
 
@@ -22,7 +25,7 @@ impl Effect for Minimax {
             return Ok(input.clone());
         }
 
-        Ok(minimax_canvas(input, radius, params.operation, params.channels))
+        Ok(minimax_canvas(input, radius, params))
     }
 }
 
@@ -31,6 +34,8 @@ pub(crate) struct MinimaxParams {
     pub operation: Operation,
     pub radius: f32,
     pub channels: Channels,
+    pub direction: Direction,
+    pub dont_shrink_edges: bool,
 }
 
 impl MinimaxParams {
@@ -39,7 +44,65 @@ impl MinimaxParams {
             operation: Operation::from_params(params),
             radius: param_f32_at_any(params, &["radius", "Radius", "0002"], time, 0.0),
             channels: Channels::from_params(params),
+            direction: Direction::from_params(params),
+            dont_shrink_edges: param_bool_any(
+                params,
+                &[
+                    "dont_shrink_edges",
+                    "Don't Shrink Edges",
+                    "dontShrinkEdges",
+                    "0005",
+                ],
+                false,
+            ),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MinimaxDebugParams {
+    pub operation: &'static str,
+    pub channels: &'static str,
+    pub direction: &'static str,
+    pub radius: f32,
+    pub kernel_radius: u32,
+    pub dont_shrink_edges: bool,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct MinimaxIntermediateHashes {
+    pub input_rgba: u64,
+    pub output_rgba: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MinimaxDebugTrace {
+    pub params: MinimaxDebugParams,
+    pub hashes: MinimaxIntermediateHashes,
+}
+
+pub fn minimax_debug_trace(input: &Canvas, params: &Value, time: f64) -> MinimaxDebugTrace {
+    let params = MinimaxParams::from_json(params, time);
+    let radius = params.radius.round().clamp(0.0, 32.0) as u32;
+    let output = if radius == 0 || input.width == 0 || input.height == 0 {
+        input.clone()
+    } else {
+        minimax_canvas(input, radius, params)
+    };
+
+    MinimaxDebugTrace {
+        params: MinimaxDebugParams {
+            operation: operation_label(params.operation),
+            channels: channels_label(params.channels),
+            direction: direction_label(params.direction),
+            radius: params.radius,
+            kernel_radius: radius,
+            dont_shrink_edges: params.dont_shrink_edges,
+        },
+        hashes: MinimaxIntermediateHashes {
+            input_rgba: canvas_debug_hash(input),
+            output_rgba: canvas_debug_hash(&output),
+        },
     }
 }
 
@@ -47,6 +110,8 @@ impl MinimaxParams {
 pub(crate) enum Operation {
     Maximum,
     Minimum,
+    MinimumThenMaximum,
+    MaximumThenMinimum,
 }
 
 impl Operation {
@@ -57,6 +122,16 @@ impl Operation {
             };
             if let Some(text) = value.as_str() {
                 let text = text.to_ascii_lowercase();
+                if (text.contains("minimum") || text.contains("min"))
+                    && (text.contains("then maximum") || text.contains("then max"))
+                {
+                    return Self::MinimumThenMaximum;
+                }
+                if (text.contains("maximum") || text.contains("max"))
+                    && (text.contains("then minimum") || text.contains("then min"))
+                {
+                    return Self::MaximumThenMinimum;
+                }
                 if text.contains("min") || text.contains("erode") {
                     return Self::Minimum;
                 }
@@ -64,11 +139,13 @@ impl Operation {
                     return Self::Maximum;
                 }
             }
-            if let Some(number) = value.as_i64() {
-                return if number == 2 {
-                    Self::Minimum
-                } else {
-                    Self::Maximum
+            if let Some(number) = number_as_i64(value) {
+                return match number {
+                    1 => Self::Minimum,
+                    2 => Self::Maximum,
+                    3 => Self::MinimumThenMaximum,
+                    4 => Self::MaximumThenMinimum,
+                    _ => Self::Maximum,
                 };
             }
         }
@@ -76,10 +153,23 @@ impl Operation {
     }
 }
 
+fn operation_label(operation: Operation) -> &'static str {
+    match operation {
+        Operation::Maximum => "maximum",
+        Operation::Minimum => "minimum",
+        Operation::MinimumThenMaximum => "minimum_then_maximum",
+        Operation::MaximumThenMinimum => "maximum_then_minimum",
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum Channels {
+    Color,
+    AlphaAndColor,
+    Red,
+    Green,
+    Blue,
     Alpha,
-    Rgba,
 }
 
 impl Channels {
@@ -90,32 +180,194 @@ impl Channels {
             };
             if let Some(text) = value.as_str() {
                 let text = text.to_ascii_lowercase();
-                if text.contains("rgba") || text.contains("color") {
-                    return Self::Rgba;
+                if text.contains("alpha") && (text.contains("color") || text.contains("rgb")) {
+                    return Self::AlphaAndColor;
+                }
+                if text == "r" || text.contains("red") {
+                    return Self::Red;
+                }
+                if text == "g" || text.contains("green") {
+                    return Self::Green;
+                }
+                if text == "b" || text.contains("blue") {
+                    return Self::Blue;
+                }
+                if text.contains("rgb") || text.contains("color") {
+                    return Self::Color;
                 }
                 if text.contains("alpha") {
                     return Self::Alpha;
                 }
             }
-            if let Some(number) = value.as_i64() {
-                return if number == 2 { Self::Rgba } else { Self::Alpha };
+            if let Some(number) = number_as_i64(value) {
+                return match number {
+                    1 => Self::Color,
+                    2 => Self::AlphaAndColor,
+                    3 => Self::Red,
+                    4 => Self::Green,
+                    5 => Self::Blue,
+                    6 => Self::Alpha,
+                    _ => Self::Color,
+                };
             }
             if value.as_bool() == Some(true) {
-                return Self::Rgba;
+                return Self::Color;
             }
         }
-        Self::Alpha
+        Self::Color
     }
 }
 
-fn minimax_canvas(input: &Canvas, radius: u32, operation: Operation, channels: Channels) -> Canvas {
+fn channels_label(channels: Channels) -> &'static str {
+    match channels {
+        Channels::Color => "color",
+        Channels::AlphaAndColor => "alpha_and_color",
+        Channels::Red => "red",
+        Channels::Green => "green",
+        Channels::Blue => "blue",
+        Channels::Alpha => "alpha",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum Direction {
+    HorizontalAndVertical,
+    Horizontal,
+    Vertical,
+}
+
+impl Direction {
+    fn from_params(params: &Value) -> Self {
+        for name in ["direction", "Direction", "0004"] {
+            let Some(value) = param_value(params, name) else {
+                continue;
+            };
+            if let Some(text) = value.as_str() {
+                let text = text.to_ascii_lowercase();
+                if text.contains("vertical") && !text.contains("horizontal") {
+                    return Self::Vertical;
+                }
+                if text.contains("horizontal") && !text.contains("vertical") {
+                    return Self::Horizontal;
+                }
+                if text.contains("horiz") || text.contains("vert") || text.contains("both") {
+                    return Self::HorizontalAndVertical;
+                }
+            }
+            if let Some(number) = number_as_i64(value) {
+                return match number {
+                    2 => Self::Horizontal,
+                    3 => Self::Vertical,
+                    _ => Self::HorizontalAndVertical,
+                };
+            }
+        }
+        Self::HorizontalAndVertical
+    }
+}
+
+fn direction_label(direction: Direction) -> &'static str {
+    match direction {
+        Direction::HorizontalAndVertical => "horizontal_and_vertical",
+        Direction::Horizontal => "horizontal",
+        Direction::Vertical => "vertical",
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Axis {
+    Horizontal,
+    Vertical,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Extremum {
+    Maximum,
+    Minimum,
+}
+
+fn minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas {
+    match params.operation {
+        Operation::Minimum => apply_extremum_operation(
+            input,
+            radius,
+            Extremum::Minimum,
+            params.channels,
+            params.direction,
+        ),
+        Operation::Maximum => apply_extremum_operation(
+            input,
+            radius,
+            Extremum::Maximum,
+            params.channels,
+            params.direction,
+        ),
+        Operation::MinimumThenMaximum => {
+            let eroded = apply_extremum_operation(
+                input,
+                radius,
+                Extremum::Minimum,
+                params.channels,
+                params.direction,
+            );
+            apply_extremum_operation(
+                &eroded,
+                radius,
+                Extremum::Maximum,
+                params.channels,
+                params.direction,
+            )
+        }
+        Operation::MaximumThenMinimum => {
+            let expanded = apply_extremum_operation(
+                input,
+                radius,
+                Extremum::Maximum,
+                params.channels,
+                params.direction,
+            );
+            apply_extremum_operation(
+                &expanded,
+                radius,
+                Extremum::Minimum,
+                params.channels,
+                params.direction,
+            )
+        }
+    }
+}
+
+fn apply_extremum_operation(
+    input: &Canvas,
+    radius: u32,
+    extremum: Extremum,
+    channels: Channels,
+    direction: Direction,
+) -> Canvas {
+    match direction {
+        Direction::HorizontalAndVertical => {
+            let horizontal = minimax_pass(input, radius, extremum, channels, Axis::Horizontal);
+            minimax_pass(&horizontal, radius, extremum, channels, Axis::Vertical)
+        }
+        Direction::Horizontal => minimax_pass(input, radius, extremum, channels, Axis::Horizontal),
+        Direction::Vertical => minimax_pass(input, radius, extremum, channels, Axis::Vertical),
+    }
+}
+
+fn minimax_pass(
+    input: &Canvas,
+    radius: u32,
+    extremum: Extremum,
+    channels: Channels,
+    axis: Axis,
+) -> Canvas {
     let mut output = Canvas::transparent(input.width, input.height);
     for y in 0..input.height {
         for x in 0..input.width {
             output.set_pixel(
                 x,
                 y,
-                extremum_pixel(input, x, y, radius, operation, channels),
+                extremum_pixel(input, x, y, radius, extremum, channels, axis),
             );
         }
     }
@@ -127,58 +379,92 @@ fn extremum_pixel(
     x: u32,
     y: u32,
     radius: u32,
-    operation: Operation,
+    extremum: Extremum,
     channels: Channels,
+    axis: Axis,
 ) -> [u8; 4] {
     let mut output = input.pixel(x, y);
-    let mut values = match operation {
-        Operation::Maximum => [0_u8; 4],
-        Operation::Minimum => [255_u8; 4],
+    let mut values = match extremum {
+        Extremum::Maximum => [0_u8; 4],
+        Extremum::Minimum => [255_u8; 4],
     };
-    let min_x = x.saturating_sub(radius);
-    let min_y = y.saturating_sub(radius);
-    let max_x = (x + radius).min(input.width - 1);
-    let max_y = (y + radius).min(input.height - 1);
+    let (min_x, max_x, min_y, max_y) = match axis {
+        Axis::Horizontal => (
+            x.saturating_sub(radius),
+            (x + radius).min(input.width - 1),
+            y,
+            y,
+        ),
+        Axis::Vertical => (
+            x,
+            x,
+            y.saturating_sub(radius),
+            (y + radius).min(input.height - 1),
+        ),
+    };
 
     for sy in min_y..=max_y {
         for sx in min_x..=max_x {
             let pixel = input.pixel(sx, sy);
             for channel in 0..4 {
-                values[channel] = match operation {
-                    Operation::Maximum => values[channel].max(pixel[channel]),
-                    Operation::Minimum => values[channel].min(pixel[channel]),
+                values[channel] = match extremum {
+                    Extremum::Maximum => values[channel].max(pixel[channel]),
+                    Extremum::Minimum => values[channel].min(pixel[channel]),
                 };
             }
         }
     }
 
-    match channels {
-        Channels::Alpha => output[3] = values[3],
-        Channels::Rgba => output = values,
+    for channel in 0..4 {
+        if channel_is_selected(channels, channel) {
+            output[channel] = values[channel];
+        }
     }
     output
+}
+
+fn channel_is_selected(channels: Channels, channel: usize) -> bool {
+    match channels {
+        Channels::Color => channel < 3,
+        Channels::AlphaAndColor => channel < 4,
+        Channels::Red => channel == 0,
+        Channels::Green => channel == 1,
+        Channels::Blue => channel == 2,
+        Channels::Alpha => channel == 3,
+    }
+}
+
+fn number_as_i64(value: &Value) -> Option<i64> {
+    value
+        .as_i64()
+        .or_else(|| value.as_f64().map(|number| number.round() as i64))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+    use serde_json::{json, Value};
+
+    fn ctx() -> EffectContext {
+        EffectContext {
+            time: 0.0,
+            fps: 30.0,
+        }
+    }
+
+    fn render(input: &Canvas, params: Value) -> Canvas {
+        Minimax::default().render(input, &ctx(), &params).unwrap()
+    }
 
     #[test]
     fn maximum_expands_alpha() {
         let mut input = Canvas::transparent(3, 1);
         input.set_pixel(1, 0, [20, 40, 60, 255]);
 
-        let output = Minimax::default()
-            .render(
-                &input,
-                &EffectContext {
-                    time: 0.0,
-                    fps: 30.0,
-                },
-                &json!({ "radius": 1, "operation": "maximum", "channels": "alpha" }),
-            )
-            .unwrap();
+        let output = render(
+            &input,
+            json!({ "radius": 1, "operation": "maximum", "channels": "alpha" }),
+        );
 
         assert_eq!(output.pixel(0, 0)[3], 255);
         assert_eq!(output.pixel(2, 0)[3], 255);
@@ -186,39 +472,155 @@ mod tests {
     }
 
     #[test]
-    fn minimum_erodes_rgba() {
-        let mut input = Canvas::new(3, 1, [200, 180, 160, 255]);
+    fn minimum_erodes_alpha() {
+        let mut input = Canvas::new(3, 1, [10, 20, 30, 255]);
         input.set_pixel(1, 0, [10, 20, 30, 0]);
 
-        let output = Minimax::default()
-            .render(
-                &input,
-                &EffectContext {
-                    time: 0.0,
-                    fps: 30.0,
-                },
-                &json!({ "radius": 1, "operation": "minimum", "channels": "rgba" }),
-            )
-            .unwrap();
+        let output = render(
+            &input,
+            json!({ "radius": 1, "operation": "minimum", "channels": "alpha" }),
+        );
 
         assert_eq!(output.pixel(0, 0), [10, 20, 30, 0]);
+        assert_eq!(output.pixel(1, 0), [10, 20, 30, 0]);
         assert_eq!(output.pixel(2, 0), [10, 20, 30, 0]);
     }
 
     #[test]
-    fn params_accept_ae_numbered_wrapped_values() {
+    fn minimum_erodes_rgb_without_eroding_alpha() {
+        let mut input = Canvas::new(3, 1, [200, 180, 160, 255]);
+        input.set_pixel(1, 0, [10, 20, 30, 0]);
+
+        let output = render(
+            &input,
+            json!({ "radius": 1, "operation": "minimum", "channels": "rgb" }),
+        );
+
+        assert_eq!(output.pixel(0, 0), [10, 20, 30, 255]);
+        assert_eq!(output.pixel(2, 0), [10, 20, 30, 255]);
+    }
+
+    #[test]
+    fn params_accept_ae_numbered_wrapped_values_for_full_surface() {
         let params = MinimaxParams::from_json(
             &json!({
-                "0001": { "value": 2 },
+                "0001": { "value": 3 },
                 "0002": { "value": 9 },
-                "0003": { "value": 2 }
+                "0003": { "value": 2 },
+                "0004": { "value": 3 },
+                "0005": { "value": 1 }
+            }),
+            0.0,
+        );
+
+        assert_eq!(params.operation, Operation::MinimumThenMaximum);
+        assert_eq!(params.radius, 9.0);
+        assert_eq!(params.channels, Channels::AlphaAndColor);
+        assert_eq!(params.direction, Direction::Vertical);
+        assert!(params.dont_shrink_edges);
+    }
+
+    #[test]
+    fn ae_probe_enum_mapping_uses_minimum_for_one_and_color_for_channel_one() {
+        let params = MinimaxParams::from_json(
+            &json!({
+                "0001": { "value": 1 },
+                "0002": { "value": 12 },
+                "0003": { "value": 1 }
             }),
             0.0,
         );
 
         assert_eq!(params.operation, Operation::Minimum);
-        assert_eq!(params.radius, 9.0);
-        assert_eq!(params.channels, Channels::Rgba);
+        assert_eq!(params.channels, Channels::Color);
+        assert_eq!(params.direction, Direction::HorizontalAndVertical);
+        assert!(!params.dont_shrink_edges);
+    }
+
+    #[test]
+    fn channel_modes_select_expected_lanes() {
+        let mut input = Canvas::transparent(3, 1);
+        input.set_pixel(0, 0, [100, 50, 60, 70]);
+        input.set_pixel(1, 0, [10, 200, 20, 30]);
+        input.set_pixel(2, 0, [5, 6, 250, 255]);
+
+        let base = json!({ "0001": 2, "0002": 1, "0004": 2 });
+
+        let mut color = base.clone();
+        color["0003"] = json!(1);
+        assert_eq!(render(&input, color).pixel(1, 0), [100, 200, 250, 30]);
+
+        let mut alpha_and_color = base.clone();
+        alpha_and_color["0003"] = json!(2);
+        assert_eq!(
+            render(&input, alpha_and_color).pixel(1, 0),
+            [100, 200, 250, 255]
+        );
+
+        let mut red = base.clone();
+        red["0003"] = json!(3);
+        assert_eq!(render(&input, red).pixel(1, 0), [100, 200, 20, 30]);
+
+        let mut alpha = base;
+        alpha["0003"] = json!(6);
+        assert_eq!(render(&input, alpha).pixel(1, 0), [10, 200, 20, 255]);
+    }
+
+    #[test]
+    fn direction_modes_expand_alpha_on_expected_axes() {
+        let mut input = Canvas::transparent(3, 3);
+        input.set_pixel(1, 1, [0, 0, 0, 255]);
+
+        let horizontal = render(
+            &input,
+            json!({ "0001": 2, "0002": 1, "0003": 6, "0004": 2 }),
+        );
+        assert_eq!(horizontal.pixel(0, 1)[3], 255);
+        assert_eq!(horizontal.pixel(2, 1)[3], 255);
+        assert_eq!(horizontal.pixel(1, 0)[3], 0);
+        assert_eq!(horizontal.pixel(1, 2)[3], 0);
+
+        let vertical = render(
+            &input,
+            json!({ "0001": 2, "0002": 1, "0003": 6, "0004": 3 }),
+        );
+        assert_eq!(vertical.pixel(1, 0)[3], 255);
+        assert_eq!(vertical.pixel(1, 2)[3], 255);
+        assert_eq!(vertical.pixel(0, 1)[3], 0);
+        assert_eq!(vertical.pixel(2, 1)[3], 0);
+
+        let both = render(
+            &input,
+            json!({ "0001": 2, "0002": 1, "0003": 6, "0004": 1 }),
+        );
+        for y in 0..3 {
+            for x in 0..3 {
+                assert_eq!(both.pixel(x, y)[3], 255);
+            }
+        }
+    }
+
+    #[test]
+    fn compound_operations_apply_minimax_stage_order() {
+        let mut spike = Canvas::transparent(3, 1);
+        spike.set_pixel(1, 0, [0, 0, 0, 255]);
+        let opened = render(
+            &spike,
+            json!({ "0001": 3, "0002": 1, "0003": 6, "0004": 2 }),
+        );
+        assert_eq!(opened.pixel(0, 0)[3], 0);
+        assert_eq!(opened.pixel(1, 0)[3], 0);
+        assert_eq!(opened.pixel(2, 0)[3], 0);
+
+        let mut hole = Canvas::new(3, 1, [0, 0, 0, 255]);
+        hole.set_pixel(1, 0, [0, 0, 0, 0]);
+        let closed = render(
+            &hole,
+            json!({ "0001": 4, "0002": 1, "0003": 6, "0004": 2 }),
+        );
+        assert_eq!(closed.pixel(0, 0)[3], 255);
+        assert_eq!(closed.pixel(1, 0)[3], 255);
+        assert_eq!(closed.pixel(2, 0)[3], 255);
     }
 
     #[test]
@@ -236,5 +638,59 @@ mod tests {
         );
 
         assert_eq!(params.radius, 4.0);
+    }
+
+    #[test]
+    fn fractional_radius_rounds_in_current_native_model() {
+        let input = Canvas::transparent(3, 1);
+
+        let below_half = minimax_debug_trace(&input, &json!({ "0002": 0.49 }), 0.0);
+        let at_half = minimax_debug_trace(&input, &json!({ "0002": 0.5 }), 0.0);
+        let above_one_and_half = minimax_debug_trace(&input, &json!({ "0002": 1.6 }), 0.0);
+
+        assert_eq!(below_half.params.kernel_radius, 0);
+        assert_eq!(at_half.params.kernel_radius, 1);
+        assert_eq!(above_one_and_half.params.kernel_radius, 2);
+    }
+
+    #[test]
+    fn debug_trace_reports_resolved_params_and_render_hashes() {
+        let mut input = Canvas::transparent(3, 1);
+        input.set_pixel(1, 0, [20, 40, 60, 255]);
+
+        let trace = minimax_debug_trace(
+            &input,
+            &json!({
+                "0001": { "value": 2 },
+                "0002": { "value": 1.6 },
+                "0003": { "value": 6 },
+                "0004": { "value": 2 },
+                "0005": { "value": 1 }
+            }),
+            0.0,
+        );
+        let expected_output = minimax_canvas(
+            &input,
+            2,
+            MinimaxParams {
+                operation: Operation::Maximum,
+                radius: 1.6,
+                channels: Channels::Alpha,
+                direction: Direction::Horizontal,
+                dont_shrink_edges: true,
+            },
+        );
+
+        assert_eq!(trace.params.operation, "maximum");
+        assert_eq!(trace.params.channels, "alpha");
+        assert_eq!(trace.params.direction, "horizontal");
+        assert_eq!(trace.params.radius, 1.6);
+        assert_eq!(trace.params.kernel_radius, 2);
+        assert!(trace.params.dont_shrink_edges);
+        assert_eq!(trace.hashes.input_rgba, canvas_debug_hash(&input));
+        assert_eq!(
+            trace.hashes.output_rgba,
+            canvas_debug_hash(&expected_output)
+        );
     }
 }

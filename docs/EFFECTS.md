@@ -7,7 +7,7 @@ ADBE Drop Shadow       approximate
 ADBE Glo2              approximate
 ADBE Box Blur2         approximate
 ADBE Turbulent Displace approximate
-ADBE Posterize Time     recognized no-op at canvas stage
+ADBE Posterize Time     temporal quantization in render-core
 ADBE Geometry2          approximate
 ADBE Minimax            approximate
 ```
@@ -18,15 +18,42 @@ Effect params accept both generated payload values (`{ "0001": { "value": ... } 
 
 | matchName | Typed params | Numbered params |
 | --- | --- | --- |
-| `ADBE Box Blur2` | `radius`, `iterations` | `0001` radius, `0002` iterations; `0002` is also accepted as legacy radius fallback |
+| `ADBE Box Blur2` | `radius`, `iterations` | `0001` radius, `0002` iterations; iterations run repeated separable blur passes; `0002` is also accepted as a legacy radius fallback when no radius param is present |
 | `ADBE Drop Shadow` | `color`, `opacity`, `direction_degrees`, `distance`, `softness`, `shadow_only` | `0001` color, `0002` opacity, `0003` direction, `0004` distance, `0005` softness, `0006` shadow only |
-| `ADBE Glo2` | `threshold`, `radius`, `intensity` | `0002` threshold, `0003` radius, `0004` intensity |
-| `ADBE Geometry2` | `anchor`, `position`, `scale`, `rotation` | `0001` anchor, `0002` position, `0003` uniform scale, `0004` scale width, `0008` scale height |
-| `ADBE Minimax` | `operation`, `radius`, `channels` | `0001` operation, `0002` radius, `0003` channels |
-| `ADBE Turbulent Displace` | `amount`, `size`, `complexity`, `evolution` | `0002` amount, `0003` size, `0005` complexity, `0006` evolution |
-| `ADBE Posterize Time` | `frame_rate` | `0001` frame rate; recognized no-op at the stateless canvas stage |
+| `ADBE Glo2` | `based_on`, `threshold`, `radius`, `intensity` | `0001` glow based on (`1` color channels, `2` alpha channel; absent keeps combined legacy source), `0002` threshold, `0003` radius, `0004` intensity |
+| `ADBE Geometry2` | `anchor`, `position`, `scale`, `rotation`, `skew`, `skew_axis`, `pixelAspect` | AE property-index ids confirmed by `effect_property_dump.json`: `0001` anchor, `0002` position, `0003` uniform-scale checkbox, `0004` scale height, `0005` scale width, `0006` skew, `0007` skew axis, `0008` rotation, `0009` effect opacity slot, `0010` use comp shutter, `0011` shutter angle, `0012` sampling; native currently implements transform controls and ignores the Geometry2 opacity/shutter controls |
+| `ADBE Minimax` | `operation`, `radius`, `channels`, `direction`, `dont_shrink_edges` | `0001` operation (`1` minimum, `2` maximum, `3` minimum then maximum, `4` maximum then minimum), `0002` radius, `0003` channels (`1` color, `2` alpha and color, `3` red, `4` green, `5` blue, `6` alpha), `0004` direction (`1` horizontal and vertical, `2` horizontal, `3` vertical), `0005` don't shrink edges |
+| `ADBE Turbulent Displace` | `displacement`, `amount`, `size`, `offset`, `complexity`, `evolution`, `random_seed`, `pinning`, `resize_layer` | `0001` displacement type, `0002` amount, `0003` size, `0004` offset, `0005` complexity, `0006` evolution, `0010` random seed, `0012` pinning, `0013` resize layer |
+| `ADBE Posterize Time` | `frame_rate` | `0001` frame rate; layer/source/effect time is quantized in `render-core`; the stateless canvas-stage effect remains pass-through |
 
 Scalar numbered params support direct numbers, wrapped `value`, and the existing simple scalar keyframe shape where the renderer already evaluates it. Color params accept normalized `0..1` channels or byte `0..255` channels.
+
+`ADBE Box Blur2` currently uses a clipped sample window at layer bounds for edge pixels, reported in the effect debug trace as `clip_to_layer_bounds`. AE repeat-edge behavior still needs an isolated probe before changing this policy.
+
+`ADBE Geometry2` uses the recovered `GPUFoundation.dll` transform matrix order,
+with bilinear sampling and transparent out-of-bounds pixels. The conformance
+runner writes matrix, inverse, sample UV/RGBA, RGB/alpha split metrics, and
+RGB-over-background metrics so formula tuning can ignore known background-alpha
+noise. `fixtures/ae_conformance_pack/jsx/build_conformance_project.jsx` writes
+`ae_goldens/metadata/effect_property_dump.json`; the 2026-05-04 remote AE run
+confirmed the Geometry2 control indices above.
+
+`ADBE Minimax` implements the enum surface recovered from the AEX strings and
+CPU callbacks. The native pass model is one-dimensional horizontal/vertical
+extrema composed according to Direction. Exact AE fractional-radius quantization
+and `Don't Shrink Edges` sentinel/edge behavior remain probe blockers; the flag
+is parsed and reported by `minimax_debug_trace`, but not used for formula
+tuning yet.
+
+`ADBE Turbulent Displace` is still rendered by the deterministic native
+approximation, but its field telemetry now includes an AE-wrapper contract block
+from the Ghidra pass: inferred internal displacement mode, kernel path
+(`FracAll` vs `Frac1D`), fixed16 amount/size/offset/evolution, complexity
+integer/fraction split, and H/V lookup lengths. This is instrumentation for
+formula replacement/tuning, not a parity claim. The exact vector/sampler math is
+blocked by hidden `TurbulentDisplaceFracAllKernel` and
+`TurbulentDisplaceFrac1DKernel`; replacement work must use kernel extraction or
+coordinate-field probes, not final PNG pixels.
 
 ## Production/perf manifest
 
@@ -54,7 +81,7 @@ Scalar numbered params support direct numbers, wrapped `value`, and the existing
 1. `ADBE Box Blur2` — separable blur.
 2. `ADBE Drop Shadow` — alpha copy, color, blur, offset, under composite.
 3. `ADBE Glo2` — threshold, blur, composite.
-4. `ADBE Minimax` — alpha/RGBA dilate/erode approximation.
-5. `ADBE Posterize Time` — recognized; true frame quantization belongs above canvas effects.
+4. `ADBE Minimax` — AE enum/channel/direction surface with unresolved edge/fractional-radius probes.
+5. `ADBE Posterize Time` — temporal frame quantization above canvas effects.
 6. `ADBE Geometry2` — transform-like adjustment effect.
-7. `ADBE Turbulent Displace` — deterministic sine/noise displacement approximation.
+7. `ADBE Turbulent Displace` — deterministic sine/noise displacement approximation with AE control slots and AE-wrapper telemetry for the recovered two-kernel contract.

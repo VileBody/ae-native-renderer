@@ -1,5 +1,5 @@
 use crate::{param_f32_at, Effect};
-use raster_cpu::Canvas;
+use raster_cpu::{BilinearSampler, Canvas, Sampler};
 use serde_json::Value;
 
 #[derive(Debug, Default)]
@@ -29,6 +29,41 @@ pub(crate) struct Geometry2Params {
     position: (f32, f32),
     scale: (f32, f32),
     rotation: f32,
+    skew: f32,
+    skew_axis: f32,
+    pixel_aspect: f32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Geometry2DebugData {
+    pub raw_params: Value,
+    pub resolved: Geometry2ResolvedParams,
+    pub forward_matrix: [[f32; 3]; 3],
+    pub inverse_matrix: [[f32; 3]; 3],
+    pub samples: Vec<Geometry2Sample>,
+    pub sampler_mode: &'static str,
+    pub edge_policy: &'static str,
+    pub out_of_bounds_count: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Geometry2ResolvedParams {
+    pub anchor: [f32; 2],
+    pub position: [f32; 2],
+    pub scale: [f32; 2],
+    pub rotation: f32,
+    pub skew: f32,
+    pub skew_axis: f32,
+    pub pixel_aspect: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct Geometry2Sample {
+    pub output_xy: [u32; 2],
+    pub source_uv: [f32; 2],
+    pub sample_xy: Option<[u32; 2]>,
+    pub sample_rgba: Option<[u8; 4]>,
+    pub out_of_bounds: bool,
 }
 
 impl Geometry2Params {
@@ -39,6 +74,9 @@ impl Geometry2Params {
             position: center,
             scale: (100.0, 100.0),
             rotation: 0.0,
+            skew: 0.0,
+            skew_axis: 0.0,
+            pixel_aspect: 1.0,
         }
     }
 
@@ -49,7 +87,31 @@ impl Geometry2Params {
         transform.position =
             point_param(params, &["position", "Position", "0002"]).unwrap_or(transform.position);
         transform.scale = scale_param(params, time).unwrap_or(transform.scale);
-        transform.rotation = scalar_param(params, &["rotation", "Rotation"], time, 0.0);
+        transform.rotation = scalar_param(
+            params,
+            &["rotation", "Rotation", "0008", "ADBE Geometry2-0007"],
+            time,
+            0.0,
+        );
+        transform.skew = scalar_param(
+            params,
+            &["skew", "Skew", "0006", "ADBE Geometry2-0005"],
+            time,
+            0.0,
+        );
+        transform.skew_axis = scalar_param(
+            params,
+            &[
+                "skewAxis",
+                "skew_axis",
+                "Skew Axis",
+                "0007",
+                "ADBE Geometry2-0006",
+            ],
+            time,
+            0.0,
+        );
+        transform.pixel_aspect = pixel_aspect_param(params, time);
         transform
     }
 
@@ -59,6 +121,112 @@ impl Geometry2Params {
             && nearly_eq(self.scale.0, 100.0)
             && nearly_eq(self.scale.1, 100.0)
             && nearly_eq(self.rotation, 0.0)
+            && nearly_eq(self.skew, 0.0)
+    }
+
+    fn resolved(self) -> Geometry2ResolvedParams {
+        Geometry2ResolvedParams {
+            anchor: [self.anchor.0, self.anchor.1],
+            position: [self.position.0, self.position.1],
+            scale: [self.scale.0, self.scale.1],
+            rotation: self.rotation,
+            skew: self.skew,
+            skew_axis: self.skew_axis,
+            pixel_aspect: self.pixel_aspect,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct Geometry2Mapping {
+    inverse_matrix: [[f32; 3]; 3],
+    forward_matrix: [[f32; 3]; 3],
+}
+
+impl Geometry2Mapping {
+    fn from_params(transform: Geometry2Params, layer_origin: (f32, f32)) -> Self {
+        let sx = effective_scale(transform.scale.0);
+        let sy = effective_scale(transform.scale.1);
+        let pixel_aspect = effective_pixel_aspect(transform.pixel_aspect);
+        let mut local_forward_matrix = identity_matrix();
+        local_forward_matrix = mat_mul(
+            translation_matrix(-transform.anchor.0, -transform.anchor.1),
+            local_forward_matrix,
+        );
+        local_forward_matrix = mat_mul(scale_matrix(pixel_aspect, 1.0), local_forward_matrix);
+        local_forward_matrix = mat_mul(scale_matrix(sx, sy), local_forward_matrix);
+        local_forward_matrix = mat_mul(rotation_matrix(transform.rotation), local_forward_matrix);
+        if !nearly_eq(transform.skew, 0.0) {
+            local_forward_matrix =
+                mat_mul(rotation_matrix(transform.skew_axis), local_forward_matrix);
+            local_forward_matrix = mat_mul(
+                skew_x_matrix(-transform.skew.to_radians().tan()),
+                local_forward_matrix,
+            );
+            local_forward_matrix =
+                mat_mul(rotation_matrix(-transform.skew_axis), local_forward_matrix);
+        }
+        local_forward_matrix = mat_mul(scale_matrix(1.0 / pixel_aspect, 1.0), local_forward_matrix);
+        local_forward_matrix = mat_mul(
+            translation_matrix(transform.position.0, transform.position.1),
+            local_forward_matrix,
+        );
+
+        let forward_matrix = offset_matrix(local_forward_matrix, layer_origin);
+        let inverse_matrix = invert_affine(forward_matrix).unwrap_or_else(identity_matrix);
+
+        Self {
+            inverse_matrix,
+            forward_matrix,
+        }
+    }
+
+    fn source_uv(self, output_x: f32, output_y: f32) -> (f32, f32) {
+        (
+            self.inverse_matrix[0][0] * output_x
+                + self.inverse_matrix[0][1] * output_y
+                + self.inverse_matrix[0][2],
+            self.inverse_matrix[1][0] * output_x
+                + self.inverse_matrix[1][1] * output_y
+                + self.inverse_matrix[1][2],
+        )
+    }
+}
+
+pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geometry2DebugData {
+    let transform = Geometry2Params::from_json(input, params, time);
+    let mapping = Geometry2Mapping::from_params(transform, layer_space_origin(input));
+    let samples = geometry_probe_points(input)
+        .into_iter()
+        .map(|[x, y]| {
+            let source_uv = mapping.source_uv(x as f32, y as f32);
+            let sample_xy = rounded_sample(input, source_uv);
+            let out_of_bounds = bilinear_out_of_bounds(input, source_uv);
+            let sample_rgba = if out_of_bounds {
+                None
+            } else {
+                Some(sample_bilinear(input, source_uv))
+            };
+            Geometry2Sample {
+                output_xy: [x, y],
+                source_uv: [source_uv.0, source_uv.1],
+                sample_xy,
+                sample_rgba,
+                out_of_bounds,
+            }
+        })
+        .collect();
+    let out_of_bounds_count = count_oob(input, mapping);
+
+    Geometry2DebugData {
+        raw_params: params.clone(),
+        resolved: transform.resolved(),
+        forward_matrix: mapping.forward_matrix,
+        inverse_matrix: mapping.inverse_matrix,
+        samples,
+        sampler_mode: GEOMETRY2_SAMPLER_MODE,
+        edge_policy: "transparent_out_of_bounds",
+        out_of_bounds_count,
     }
 }
 
@@ -68,33 +236,15 @@ fn transform_canvas(input: &Canvas, transform: Geometry2Params) -> Canvas {
     }
 
     let mut output = Canvas::transparent(input.width, input.height);
-    let radians = (-transform.rotation).to_radians();
-    let (sin, cos) = radians.sin_cos();
-    let sx = if transform.scale.0.abs() < f32::EPSILON {
-        1.0
-    } else {
-        transform.scale.0 / 100.0
-    };
-    let sy = if transform.scale.1.abs() < f32::EPSILON {
-        1.0
-    } else {
-        transform.scale.1 / 100.0
-    };
+    let mapping = Geometry2Mapping::from_params(transform, layer_space_origin(input));
 
     for y in 0..input.height {
         for x in 0..input.width {
-            let dx = x as f32 - transform.position.0;
-            let dy = y as f32 - transform.position.1;
-            let rx = dx * cos - dy * sin;
-            let ry = dx * sin + dy * cos;
-            let source_x = transform.anchor.0 + rx / sx;
-            let source_y = transform.anchor.1 + ry / sy;
-            let sx = source_x.round() as i32;
-            let sy = source_y.round() as i32;
-            if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
+            let source_uv = mapping.source_uv(x as f32, y as f32);
+            if bilinear_out_of_bounds(input, source_uv) {
                 continue;
             }
-            output.set_pixel(x, y, input.pixel(sx as u32, sy as u32));
+            output.set_pixel(x, y, sample_bilinear(input, source_uv));
         }
     }
 
@@ -105,19 +255,212 @@ fn scale_param(params: &Value, time: f64) -> Option<(f32, f32)> {
     if let Some(point) = point_param(params, &["scale", "Scale"]) {
         return Some(point);
     }
+    let width_scale = scalar_param_opt(
+        params,
+        &["scaleX", "Scale Width", "0005", "ADBE Geometry2-0004"],
+        time,
+    );
+    let height_scale = scalar_param_opt(
+        params,
+        &["scaleY", "Scale Height", "0004", "ADBE Geometry2-0003"],
+        time,
+    );
+    if width_scale.is_some() || height_scale.is_some() {
+        let uniform_scale_enabled = scalar_param_opt(
+            params,
+            &[
+                "uniformScale",
+                "Uniform Scale",
+                "0003",
+                "ADBE Geometry2-0011",
+            ],
+            time,
+        )
+        .map(|value| value != 0.0)
+        .unwrap_or(false);
+        return match (width_scale, height_scale, uniform_scale_enabled) {
+            (Some(x), Some(y), _) => Some((x, y)),
+            (Some(x), None, _) => Some((x, x)),
+            (None, Some(y), _) => Some((y, y)),
+            (None, None, _) => None,
+        };
+    }
     if has_param(params, "0003") {
         let scale = param_f32_at(params, "0003", time, 100.0);
         return Some((scale, scale));
     }
-    match (
-        scalar_param_opt(params, &["scaleX", "Scale Width", "0004"], time),
-        scalar_param_opt(params, &["scaleY", "Scale Height", "0008"], time),
-    ) {
-        (Some(x), Some(y)) => Some((x, y)),
-        (Some(x), None) => Some((x, x)),
-        (None, Some(y)) => Some((y, y)),
-        (None, None) => None,
+    None
+}
+
+fn pixel_aspect_param(params: &Value, time: f64) -> f32 {
+    let value = scalar_param(
+        params,
+        &[
+            "pixelAspect",
+            "pixel_aspect",
+            "pixelAspectRatio",
+            "pixel_aspect_ratio",
+        ],
+        time,
+        1.0,
+    );
+    effective_pixel_aspect(value)
+}
+
+fn effective_scale(scale: f32) -> f32 {
+    if scale.abs() < f32::EPSILON {
+        1.0
+    } else {
+        scale / 100.0
     }
+}
+
+fn effective_pixel_aspect(pixel_aspect: f32) -> f32 {
+    if pixel_aspect.is_finite() && pixel_aspect.abs() >= f32::EPSILON {
+        pixel_aspect
+    } else {
+        1.0
+    }
+}
+
+fn identity_matrix() -> [[f32; 3]; 3] {
+    [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+}
+
+fn translation_matrix(x: f32, y: f32) -> [[f32; 3]; 3] {
+    [[1.0, 0.0, x], [0.0, 1.0, y], [0.0, 0.0, 1.0]]
+}
+
+fn scale_matrix(x: f32, y: f32) -> [[f32; 3]; 3] {
+    [[x, 0.0, 0.0], [0.0, y, 0.0], [0.0, 0.0, 1.0]]
+}
+
+fn rotation_matrix(degrees: f32) -> [[f32; 3]; 3] {
+    let radians = degrees.rem_euclid(360.0).to_radians();
+    if radians.abs() < f32::EPSILON {
+        return identity_matrix();
+    }
+    let (sin, cos) = radians.sin_cos();
+    [[cos, -sin, 0.0], [sin, cos, 0.0], [0.0, 0.0, 1.0]]
+}
+
+fn skew_x_matrix(amount: f32) -> [[f32; 3]; 3] {
+    [[1.0, amount, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+}
+
+fn mat_mul(left: [[f32; 3]; 3], right: [[f32; 3]; 3]) -> [[f32; 3]; 3] {
+    let mut out = [[0.0; 3]; 3];
+    for row in 0..3 {
+        for col in 0..3 {
+            out[row][col] = left[row][0] * right[0][col]
+                + left[row][1] * right[1][col]
+                + left[row][2] * right[2][col];
+        }
+    }
+    out
+}
+
+fn invert_affine(matrix: [[f32; 3]; 3]) -> Option<[[f32; 3]; 3]> {
+    let a = matrix[0][0];
+    let b = matrix[0][1];
+    let tx = matrix[0][2];
+    let c = matrix[1][0];
+    let d = matrix[1][1];
+    let ty = matrix[1][2];
+    let det = a * d - b * c;
+    if det.abs() < f32::EPSILON {
+        return None;
+    }
+    let inv_det = 1.0 / det;
+    Some([
+        [d * inv_det, -b * inv_det, (b * ty - d * tx) * inv_det],
+        [-c * inv_det, a * inv_det, (c * tx - a * ty) * inv_det],
+        [0.0, 0.0, 1.0],
+    ])
+}
+
+fn offset_matrix(local_matrix: [[f32; 3]; 3], origin: (f32, f32)) -> [[f32; 3]; 3] {
+    let origin_x = origin.0;
+    let origin_y = origin.1;
+    let mut matrix = local_matrix;
+    matrix[0][2] = local_matrix[0][2] + origin_x
+        - local_matrix[0][0] * origin_x
+        - local_matrix[0][1] * origin_y;
+    matrix[1][2] = local_matrix[1][2] + origin_y
+        - local_matrix[1][0] * origin_x
+        - local_matrix[1][1] * origin_y;
+    matrix
+}
+
+fn layer_space_origin(input: &Canvas) -> (f32, f32) {
+    let mut min_x = input.width;
+    let mut min_y = input.height;
+    for y in 0..input.height {
+        for x in 0..input.width {
+            if input.pixel(x, y)[3] == 0 {
+                continue;
+            }
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+        }
+    }
+    if min_x == input.width || min_y == input.height {
+        (0.0, 0.0)
+    } else {
+        (min_x as f32, min_y as f32)
+    }
+}
+
+fn rounded_sample(input: &Canvas, source_uv: (f32, f32)) -> Option<[u32; 2]> {
+    let sx = source_uv.0.round() as i32;
+    let sy = source_uv.1.round() as i32;
+    if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
+        return None;
+    }
+    Some([sx as u32, sy as u32])
+}
+
+fn sample_bilinear(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
+    BilinearSampler.sample(input, source_uv.0, source_uv.1)
+}
+
+fn bilinear_out_of_bounds(input: &Canvas, source_uv: (f32, f32)) -> bool {
+    input.width == 0
+        || input.height == 0
+        || source_uv.0 < 0.0
+        || source_uv.1 < 0.0
+        || source_uv.0 > (input.width - 1) as f32
+        || source_uv.1 > (input.height - 1) as f32
+}
+
+fn count_oob(input: &Canvas, mapping: Geometry2Mapping) -> u32 {
+    let mut count = 0;
+    for y in 0..input.height {
+        for x in 0..input.width {
+            let source_uv = mapping.source_uv(x as f32, y as f32);
+            if bilinear_out_of_bounds(input, source_uv) {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
+fn geometry_probe_points(input: &Canvas) -> Vec<[u32; 2]> {
+    if input.width == 0 || input.height == 0 {
+        return Vec::new();
+    }
+    let xs = [0, input.width / 2, input.width - 1];
+    let ys = [0, input.height / 2, input.height - 1];
+    let mut points = Vec::with_capacity(9);
+    for y in ys {
+        for x in xs {
+            if !points.contains(&[x, y]) {
+                points.push([x, y]);
+            }
+        }
+    }
+    points
 }
 
 fn point_param(params: &Value, names: &[&str]) -> Option<(f32, f32)> {
@@ -169,6 +512,8 @@ fn nearly_eq(left: f32, right: f32) -> bool {
     (left - right).abs() < 0.001
 }
 
+const GEOMETRY2_SAMPLER_MODE: &str = "bilinear_transparent_out_of_bounds";
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -199,6 +544,30 @@ mod tests {
     }
 
     #[test]
+    fn geometry_applies_transform_in_layer_space_origin() {
+        let mut input = Canvas::transparent(4, 4);
+        input.set_pixel(1, 1, [10, 20, 30, 255]);
+        input.set_pixel(2, 1, [40, 50, 60, 255]);
+
+        let output = Geometry2::default()
+            .render(
+                &input,
+                &EffectContext {
+                    time: 0.0,
+                    fps: 30.0,
+                },
+                &json!({
+                    "anchor": [0, 0],
+                    "position": [0, 0],
+                    "rotation": 90
+                }),
+            )
+            .unwrap();
+
+        assert_eq!(output.pixel(1, 2), [40, 50, 60, 255]);
+    }
+
+    #[test]
     fn params_accept_ae_numbered_transform_values() {
         let input = Canvas::transparent(10, 8);
         let params = Geometry2Params::from_json(
@@ -206,6 +575,7 @@ mod tests {
             &json!({
                 "0001": { "value": [1, 2] },
                 "0002": { "value": { "x": 3, "y": 4 } },
+                "0003": { "value": 82 },
                 "0004": { "value": 125 },
                 "0008": { "value": 80 },
                 "rotation": { "value": 15 }
@@ -215,8 +585,87 @@ mod tests {
 
         assert_eq!(params.anchor, (1.0, 2.0));
         assert_eq!(params.position, (3.0, 4.0));
-        assert_eq!(params.scale, (125.0, 80.0));
+        assert_eq!(params.scale, (125.0, 125.0));
         assert_eq!(params.rotation, 15.0);
+    }
+
+    #[test]
+    fn numbered_uniform_scale_uses_0004_and_ignores_0008_height_interpretation() {
+        let input = Canvas::transparent(512, 512);
+        let params = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "0001": [128, 128],
+                "0002": [256, 256],
+                "0003": 82,
+                "0004": 120,
+                "0008": 72,
+                "rotation": 17
+            }),
+            0.0,
+        );
+
+        assert_eq!(params.scale, (120.0, 120.0));
+        assert_eq!(params.rotation, 17.0);
+    }
+
+    #[test]
+    fn numbered_0008_is_rotation_fallback() {
+        let input = Canvas::transparent(512, 512);
+        let params = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "0001": [128, 128],
+                "0002": [256, 256],
+                "0003": 1,
+                "0004": 120,
+                "0008": 72
+            }),
+            0.0,
+        );
+
+        assert_eq!(params.scale, (120.0, 120.0));
+        assert_eq!(params.rotation, 72.0);
+    }
+
+    #[test]
+    fn ae_property_dump_indices_map_skew_axis_rotation_and_ignore_opacity_slot() {
+        let input = Canvas::transparent(512, 512);
+        let params = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "0001": [128, 128],
+                "0002": [256, 256],
+                "0003": 1,
+                "0004": 120,
+                "0005": 90,
+                "0006": 14,
+                "0007": 35,
+                "0008": 72,
+                "0009": 18
+            }),
+            0.0,
+        );
+
+        assert_eq!(params.scale, (90.0, 120.0));
+        assert_eq!(params.skew, 14.0);
+        assert_eq!(params.skew_axis, 35.0);
+        assert_eq!(params.rotation, 72.0);
+    }
+
+    #[test]
+    fn named_axis_scale_remains_non_uniform() {
+        let input = Canvas::transparent(512, 512);
+        let params = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "scaleX": 120,
+                "scaleY": 82
+            }),
+            0.0,
+        );
+
+        assert_eq!(params.scale, (120.0, 82.0));
     }
 
     #[test]
@@ -236,5 +685,193 @@ mod tests {
         );
 
         assert_eq!(params.scale, (150.0, 150.0));
+    }
+
+    #[test]
+    fn debug_data_reports_resolved_params_mapping_samples_and_oob() {
+        let input = Canvas::transparent(3, 3);
+        let params = json!({
+            "anchor": [1, 1],
+            "position": [2, 1]
+        });
+
+        let debug = geometry2_debug_data(&input, &params, 0.0);
+
+        assert_eq!(debug.raw_params, params);
+        assert_eq!(
+            debug.resolved,
+            Geometry2ResolvedParams {
+                anchor: [1.0, 1.0],
+                position: [2.0, 1.0],
+                scale: [100.0, 100.0],
+                rotation: 0.0,
+                skew: 0.0,
+                skew_axis: 0.0,
+                pixel_aspect: 1.0,
+            }
+        );
+        assert_eq!(
+            debug.forward_matrix,
+            [[1.0, -0.0, 1.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        );
+        assert_eq!(
+            debug.inverse_matrix,
+            [[1.0, 0.0, -1.0], [-0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
+        );
+        assert_eq!(debug.sampler_mode, GEOMETRY2_SAMPLER_MODE);
+        assert_eq!(debug.edge_policy, "transparent_out_of_bounds");
+        assert_eq!(debug.samples.len(), 9);
+        assert_eq!(debug.out_of_bounds_count, 3);
+
+        let left_middle = debug
+            .samples
+            .iter()
+            .find(|sample| sample.output_xy == [0, 1])
+            .unwrap();
+        assert_eq!(left_middle.source_uv, [-1.0, 1.0]);
+        assert_eq!(left_middle.sample_xy, None);
+        assert_eq!(left_middle.sample_rgba, None);
+        assert!(left_middle.out_of_bounds);
+
+        let center = debug
+            .samples
+            .iter()
+            .find(|sample| sample.output_xy == [1, 1])
+            .unwrap();
+        assert_eq!(center.source_uv, [0.0, 1.0]);
+        assert_eq!(center.sample_xy, Some([0, 1]));
+        assert_eq!(center.sample_rgba, Some([0, 0, 0, 0]));
+        assert!(!center.out_of_bounds);
+    }
+
+    #[test]
+    fn geometry_uses_bilinear_sampling_for_subpixel_uv() {
+        let mut input = Canvas::transparent(2, 1);
+        input.set_pixel(0, 0, [0, 0, 0, 255]);
+        input.set_pixel(1, 0, [100, 20, 0, 255]);
+
+        assert_eq!(sample_bilinear(&input, (0.5, 0.0)), [50, 10, 0, 255]);
+    }
+
+    #[test]
+    fn geometry_matrix_matches_reverse_engineered_skew_order() {
+        let input = Canvas::transparent(16, 16);
+        let transform = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "anchor": [3.0, 4.0],
+                "position": [8.0, 7.0],
+                "scale": [120.0, 80.0],
+                "rotation": 15.0,
+                "skew": 20.0,
+                "skewAxis": 35.0,
+                "pixelAspect": 1.5
+            }),
+            0.0,
+        );
+
+        let mapping = Geometry2Mapping::from_params(transform, (0.0, 0.0));
+        let pa = 1.5_f32;
+        let mut expected = identity_matrix();
+        expected = mat_mul(translation_matrix(-3.0, -4.0), expected);
+        expected = mat_mul(scale_matrix(pa, 1.0), expected);
+        expected = mat_mul(scale_matrix(1.2, 0.8), expected);
+        expected = mat_mul(rotation_matrix(15.0), expected);
+        expected = mat_mul(rotation_matrix(35.0), expected);
+        expected = mat_mul(skew_x_matrix(-20.0_f32.to_radians().tan()), expected);
+        expected = mat_mul(rotation_matrix(-35.0), expected);
+        expected = mat_mul(scale_matrix(1.0 / pa, 1.0), expected);
+        expected = mat_mul(translation_matrix(8.0, 7.0), expected);
+
+        assert_matrix_near(mapping.forward_matrix, expected, 0.0001);
+        assert_matrix_near(
+            mat_mul(mapping.forward_matrix, mapping.inverse_matrix),
+            identity_matrix(),
+            0.0001,
+        );
+    }
+
+    #[test]
+    fn geometry_skew_moves_y_into_x_like_ae_hx_shear() {
+        let input = Canvas::transparent(20, 20);
+        let transform = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "anchor": [0.0, 0.0],
+                "position": [0.0, 0.0],
+                "skew": 45.0,
+                "skewAxis": 0.0
+            }),
+            0.0,
+        );
+
+        let mapping = Geometry2Mapping::from_params(transform, (0.0, 0.0));
+        let mapped = apply_matrix(mapping.forward_matrix, (4.0, 3.0));
+
+        assert_near(mapped.0, 1.0, 0.0001);
+        assert_near(mapped.1, 3.0, 0.0001);
+    }
+
+    #[test]
+    fn geometry_pixel_aspect_changes_rotation_basis() {
+        let input = Canvas::transparent(20, 20);
+        let square = Geometry2Mapping::from_params(
+            Geometry2Params::from_json(
+                &input,
+                &json!({
+                    "anchor": [0.0, 0.0],
+                    "position": [0.0, 0.0],
+                    "rotation": 90.0
+                }),
+                0.0,
+            ),
+            (0.0, 0.0),
+        );
+        let wide = Geometry2Mapping::from_params(
+            Geometry2Params::from_json(
+                &input,
+                &json!({
+                    "anchor": [0.0, 0.0],
+                    "position": [0.0, 0.0],
+                    "rotation": 90.0,
+                    "pixelAspect": 2.0
+                }),
+                0.0,
+            ),
+            (0.0, 0.0),
+        );
+
+        assert_matrix_near(
+            square.forward_matrix,
+            [[0.0, -1.0, 0.0], [1.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            0.0001,
+        );
+        assert_matrix_near(
+            wide.forward_matrix,
+            [[0.0, -0.5, 0.0], [2.0, 0.0, 0.0], [0.0, 0.0, 1.0]],
+            0.0001,
+        );
+    }
+
+    fn apply_matrix(matrix: [[f32; 3]; 3], point: (f32, f32)) -> (f32, f32) {
+        (
+            matrix[0][0] * point.0 + matrix[0][1] * point.1 + matrix[0][2],
+            matrix[1][0] * point.0 + matrix[1][1] * point.1 + matrix[1][2],
+        )
+    }
+
+    fn assert_matrix_near(left: [[f32; 3]; 3], right: [[f32; 3]; 3], epsilon: f32) {
+        for row in 0..3 {
+            for col in 0..3 {
+                assert_near(left[row][col], right[row][col], epsilon);
+            }
+        }
+    }
+
+    fn assert_near(left: f32, right: f32, epsilon: f32) {
+        assert!(
+            (left - right).abs() <= epsilon,
+            "expected {left} ~= {right} within {epsilon}"
+        );
     }
 }

@@ -228,16 +228,11 @@ mod tests {
             fps,
             duration,
             background: [0, 0, 0, 0],
+            motion_blur: render_ir::MotionBlurSettings::default(),
         }
     }
 
-    fn footage(
-        id: &str,
-        start: f64,
-        duration: f64,
-        source: &str,
-        source_start: f64,
-    ) -> Layer {
+    fn footage(id: &str, start: f64, duration: f64, source: &str, source_start: f64) -> Layer {
         Layer::Footage {
             id: id.to_string(),
             start,

@@ -1,0 +1,30 @@
+[
+  {
+    "id": "coordinate_field",
+    "path": "assets/primitives/coordinate_field.png",
+    "width": 512,
+    "height": 512,
+    "description": "R=x mod 256, G=y mod 256, B=32px tile parity, A=255."
+  },
+  {
+    "id": "sparse_impulse_grid",
+    "path": "assets/primitives/sparse_impulse_grid.png",
+    "width": 512,
+    "height": 512,
+    "description": "One-pixel impulses every 32px with red/green center axes."
+  },
+  {
+    "id": "hard_edge_alpha_ramp",
+    "path": "assets/primitives/hard_edge_alpha_ramp.png",
+    "width": 512,
+    "height": 512,
+    "description": "Vertical and horizontal hard edges with a horizontal alpha ramp."
+  },
+  {
+    "id": "unique_checkerboard",
+    "path": "assets/primitives/unique_checkerboard.png",
+    "width": 512,
+    "height": 512,
+    "description": "16x16 grid of unique colored 32px cells with 4px intra-cell parity."
+  }
+]

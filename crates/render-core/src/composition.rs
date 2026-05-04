@@ -7,7 +7,9 @@ pub struct RenderSettings {
 
 impl Default for RenderSettings {
     fn default() -> Self {
-        Self { strict_effects: true }
+        Self {
+            strict_effects: true,
+        }
     }
 }
 

@@ -135,7 +135,7 @@ crates/render-core     composition/layer graph and frame evaluation
 crates/raster-cpu      CPU canvas, compositing, samplers
 crates/transform-math  matrices, transform conventions, interpolation helpers
 crates/media-gst       media adapter crate: FFmpeg-backed today, GStreamer target
-crates/text-engine     text layout/glyph skeleton
+crates/text-engine     font lookup, glyph layout, and text rasterization
 crates/effects         effect registry and effect modules
 crates/ae-bridge       AE matchName mapping and future JSX/AEPX bridge
 crates/testkit         golden frame tests and image diff helpers
@@ -150,9 +150,14 @@ hold/linear transform keyframes, approximate Drop Shadow/Glow/Box Blur,
 text Range Selector opacity reveals, the generated `edge_wobble` position
 expression, nested IR precomps, approximate per-character text animator
 transforms, the generated expression-selector bounce, adjustment layers, and
-approximate Geometry2/Minimax/Turbulent Displace effects. Posterize Time is
-recognized as a canvas-stage no-op. The CLI also has an AE conformance compare
-command and a production-style job runner with native/fallback routing reports.
+approximate Geometry2/Minimax/Turbulent Displace effects. Posterize Time now
+quantizes layer/source/effect time above the stateless canvas-effect stage,
+including adjustment-layer lower-stack resampling. The visual-math layer now also
+has native motion-blur temporal supersampling, fontdue glyph metrics driving text
+animator units, a small scalar/Vec2 expression evaluator, scale-aware collapsed
+text rasterization, and conformance micro-scene scaffolding for ease, effects,
+collapse, and motion blur. The CLI also has an AE conformance compare command and
+a production-style job runner with native/fallback routing reports.
 Media decode now supports a Rust GStreamer appsink backend with a persistent
 FFmpeg rawvideo pipe as fallback/debug tooling. MP4 output supports a Rust
 GStreamer appsrc sink with FFmpeg CLI fallback; `render --mp4` can also opt into
@@ -170,5 +175,7 @@ Media I/O profiling and tuning knobs are documented in
 The active implementation plan is `ROADMAP_V2.md`: consume generated payload JSON
 directly, translate it into render IR, then build native footage, text, transforms,
 keyframes, effects, text animators, and expressions incrementally.
+Math parity status for the three target templates is tracked in
+[docs/MATH_PARITY_STATUS.md](docs/MATH_PARITY_STATUS.md).
 
 `ROADMAP.md` remains as the broader original AE-subset contract.

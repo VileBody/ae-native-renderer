@@ -1,0 +1,294 @@
+{
+  "version": 1,
+  "description": "Focused Ghidra predecode tasks for AE native renderer parity work. Raw output belongs under ignored target/reverse/predecoded.",
+  "tasks": [
+    {
+      "id": "core_alpha_gpufoundation",
+      "area": "core_alpha",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_core_alpha",
+      "project": "agent_core_alpha_GPUFoundation_dll",
+      "process": "GPUFoundation.dll",
+      "notes": "Composite, alpha gain, transfer descriptor, premult/unpremult substrate.",
+      "targets": [
+        { "label": "GF_Composite", "address": "0x18002af50" },
+        { "label": "GF_Transfer", "address": "0x18001e3e0" },
+        { "label": "GF_TransferDescriptor_ctor", "address": "0x18001ed80" },
+        { "label": "GF_TransferDescriptor_GetOpacity", "address": "0x18001f9e0" },
+        { "label": "GF_AlphaGain", "address": "0x180022570" },
+        { "label": "GF_PackedAlphaGain", "address": "0x180022cc0" },
+        { "label": "GF_Unpremultiply", "address": "0x180022fc0" },
+        { "label": "GF_BlendUnpackedAlpha", "address": "0x18002c620" }
+      ]
+    },
+    {
+      "id": "geometry_transform_gpufoundation",
+      "area": "geometry",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_core_alpha",
+      "project": "agent_core_alpha_GPUFoundation_dll",
+      "process": "GPUFoundation.dll",
+      "notes": "Transform matrices, sampler quality, motion blur matrix path.",
+      "targets": [
+        { "label": "GF_TransformOperation_ctor", "address": "0x1800725b0" },
+        { "label": "GF_TransformOperation_GetOpacityMultiplier", "address": "0x180073c40" },
+        { "label": "GF_TransformOperation_Quality", "address": "0x180074c40" },
+        { "label": "GF_TransformToMatrix", "address": "0x180074eb0" },
+        { "label": "GF_TransformedBounds", "address": "0x180075160" },
+        { "label": "GF_TransformedBoundsUnion", "address": "0x180075460" },
+        { "label": "GF_TransformsToMatrices", "address": "0x1800757c0" },
+        { "label": "GF_TransformWithMotionBlur", "address": "0x180076ed0" }
+      ]
+    },
+    {
+      "id": "geometry_transform_wrapper",
+      "area": "geometry",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_geometry_collapse",
+      "project": "agent_geometry_collapse",
+      "process": "Transform.aex",
+      "notes": "Geometry2 AE wrapper, param mapping, keyframe/motion wrapper candidates.",
+      "targets": [
+        { "label": "Geometry2_render_wrapper", "address": "0x180009a20" },
+        { "label": "Geometry2_mb_candidate_33a0", "address": "0x1800033a0" },
+        { "label": "Geometry2_mb_candidate_4440", "address": "0x180004440" },
+        { "label": "Geometry2_mb_candidate_4ab0", "address": "0x180004ab0" }
+      ]
+    },
+    {
+      "id": "posterize_time",
+      "area": "temporal",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_temporal_motion",
+      "project": "agent_temporal_motion",
+      "process": "Posterize_Time.aex",
+      "notes": "Posterize bucket math and frame-rate checkout.",
+      "targets": [
+        { "label": "Posterize_helper_bucket", "address": "0x180001350" },
+        { "label": "Posterize_effect_main", "address": "0x180001690" },
+        { "label": "Posterize_case17_branch", "address": "0x180001990" },
+        { "label": "Posterize_frame_rate_checkout", "address": "0x180006220" }
+      ]
+    },
+    {
+      "id": "time_displace_temporal",
+      "area": "temporal",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_temporal_motion",
+      "project": "agent_temporal_motion",
+      "process": "Time_Displace.aex",
+      "notes": "Secondary temporal source sampling references, useful for motion/time routing.",
+      "targets": [
+        { "label": "TimeDisplace_helper_1000", "address": "0x180001000" },
+        { "label": "TimeDisplace_helper_13c0", "address": "0x1800013c0" },
+        { "label": "TimeDisplace_core_1ba0", "address": "0x180001ba0" },
+        { "label": "TimeDisplace_core_2100", "address": "0x180002100" },
+        { "label": "TimeDisplace_core_2920", "address": "0x180002920" },
+        { "label": "TimeDisplace_effect_main", "address": "0x180002f70" }
+      ]
+    },
+    {
+      "id": "blur_gpufoundation_kernels",
+      "area": "effects_blur",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_core_alpha",
+      "project": "agent_core_alpha_GPUFoundation_dll",
+      "process": "GPUFoundation.dll",
+      "notes": "Shared GF blur kernels and alpha options used by Box Blur, Drop Shadow, Glow-like paths.",
+      "targets": [
+        { "label": "GF_Blur_1DImgOpInfo_ctor", "address": "0x180024ae0" },
+        { "label": "GF_BoxBlur_1DImgOpInfo_ctor", "address": "0x180024cc0" },
+        { "label": "GF_BoxBlurOptions_GetDestAlphaType", "address": "0x180025150" },
+        { "label": "GF_BoxBlurOptions_GetSrcAlphaType", "address": "0x180025280" },
+        { "label": "GF_BoxBlurOptions_SetBlurAlphaChannelOnly", "address": "0x180025350" },
+        { "label": "GF_FastBoxBlur", "address": "0x180031c30" },
+        { "label": "GF_GaussianBlur", "address": "0x180036430" },
+        { "label": "GF_SingleChannelBlur", "address": "0x18006fdf0" }
+      ]
+    },
+    {
+      "id": "box_blur_aex",
+      "area": "effects_blur",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_blur_glow_minimax/Box_Blur",
+      "project": "Box_Blur",
+      "process": "Box_Blur.aex",
+      "notes": "Box Blur plugin wrapper, EffectMain variants, GPU entry, delayed GF blur calls.",
+      "targets": [
+        { "label": "BoxBlur_setup_candidate", "address": "0x180001a20" },
+        { "label": "BoxBlur_core_candidate_34d0", "address": "0x1800034d0" },
+        { "label": "BoxBlur_EffectMainExtra", "address": "0x1800055f0" },
+        { "label": "BoxBlur_EffectMainExtra2", "address": "0x180005630" },
+        { "label": "BoxBlur_cpu_render_candidate", "address": "0x180005b70" },
+        { "label": "BoxBlur_xGPUFilterEntry", "address": "0x180006cc0" },
+        { "label": "BoxBlur_PluginDataEntryFunction", "address": "0x180008330" },
+        { "label": "BoxBlur_delay_FastBoxBlur", "address": "0x18000b5d1" }
+      ]
+    },
+    {
+      "id": "drop_shadow_aex",
+      "area": "effects_shadow",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_blur_glow_minimax/Drop_Shadow",
+      "project": "Drop_Shadow",
+      "process": "Drop_Shadow.aex",
+      "notes": "Drop Shadow plugin wrapper, offset/softness/composite candidates, delayed GF blur calls.",
+      "targets": [
+        { "label": "DropShadow_core_candidate_5bb0", "address": "0x180005bb0" },
+        { "label": "DropShadow_core_candidate_6ca0", "address": "0x180006ca0" },
+        { "label": "DropShadow_EffectMainExtra", "address": "0x180007b40" },
+        { "label": "DropShadow_candidate_8a70", "address": "0x180008a70" },
+        { "label": "DropShadow_PluginDataEntryFunction", "address": "0x180009130" },
+        { "label": "DropShadow_delay_StandardOptions", "address": "0x18000c393" },
+        { "label": "DropShadow_delay_SetBlurAlphaOnly", "address": "0x18000c3a5" },
+        { "label": "DropShadow_delay_FastBoxBlur", "address": "0x18000c3c9" }
+      ]
+    },
+    {
+      "id": "glow_aex",
+      "area": "effects_glow",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_blur_glow_minimax/Glow",
+      "project": "Glow",
+      "process": "Glow.aex",
+      "notes": "Glow plugin wrapper and ImageRenderer/GaussianBlur routing candidates.",
+      "targets": [
+        { "label": "Glow_setup_candidate_13e0", "address": "0x1800013e0" },
+        { "label": "Glow_mask_candidate_5970", "address": "0x180005970" },
+        { "label": "Glow_render_candidate_5f50", "address": "0x180005f50" },
+        { "label": "Glow_EffectMainExtra", "address": "0x180007f60" },
+        { "label": "Glow_candidate_9000", "address": "0x180009000" },
+        { "label": "Glow_PluginDataEntryFunction", "address": "0x180009500" },
+        { "label": "Glow_core_large_a2d0", "address": "0x18000a2d0" }
+      ]
+    },
+    {
+      "id": "imagerenderer_gaussian_composite",
+      "area": "effects_glow",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_blur_glow_minimax/ImageRenderer",
+      "project": "ImageRenderer",
+      "process": "ImageRenderer.dll",
+      "notes": "IR_GaussianBlur implementation and blend/composite dispatcher used by Glow.",
+      "targets": [
+        { "label": "IR_GaussianBlur_impl", "address": "0x18009fca0" },
+        { "label": "IR_GaussianBlur_wrapper", "address": "0x1800a0e40" },
+        { "label": "IR_composite_worker_select", "address": "0x1800769b0" },
+        { "label": "IR_task_executor", "address": "0x1800a1650" },
+        { "label": "IR_special_jump_table", "address": "0x18005cee0" },
+        { "label": "IR_pixel_format_map", "address": "0x180079800" }
+      ]
+    },
+    {
+      "id": "minimax_aex",
+      "area": "effects_minimax",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_blur_glow_minimax/Minimax",
+      "project": "Minimax",
+      "process": "Minimax.aex",
+      "notes": "Minimax 8/16/32 bpc callbacks, GPU path, comparator helpers.",
+      "targets": [
+        { "label": "Minimax_callback_16bpc", "address": "0x180004ef0" },
+        { "label": "Minimax_callback_8bpc", "address": "0x1800060b0" },
+        { "label": "Minimax_callback_32bpc", "address": "0x180007270" },
+        { "label": "Minimax_gpu_path", "address": "0x18000c4b0" },
+        { "label": "Minimax_cmp_less", "address": "0x18000d710" },
+        { "label": "Minimax_cmp_candidate_d720", "address": "0x18000d720" },
+        { "label": "Minimax_cmp_candidate_d730", "address": "0x18000d730" }
+      ]
+    },
+    {
+      "id": "turbulent_displace_aex",
+      "area": "effects_turbulent",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_turbulent_text_expr",
+      "project": "agent_turbulent_text_expr",
+      "process": "TurbulentDisplace.aex",
+      "notes": "Turbulent Displace wrapper, parameter setup, lookup tables, 1D/all kernel dispatch.",
+      "targets": [
+        { "label": "Turbulent_FilterMain", "address": "0x180001f30" },
+        { "label": "Turbulent_param_setup", "address": "0x180003e70" },
+        { "label": "Turbulent_pixel_format_stride", "address": "0x180006ca0" },
+        { "label": "Turbulent_dispatch_all", "address": "0x180006e40" },
+        { "label": "Turbulent_dispatch_1d", "address": "0x180007040" },
+        { "label": "Turbulent_render", "address": "0x18000ad10" },
+        { "label": "Turbulent_amount_checkout", "address": "0x18000d070" },
+        { "label": "Turbulent_lookup_noise", "address": "0x18000d230" },
+        { "label": "Turbulent_table_build", "address": "0x18000e340" }
+      ]
+    },
+    {
+      "id": "basic_text_aex",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_turbulent_text_expr",
+      "project": "agent_turbulent_text_expr",
+      "process": "Basic_Text.aex",
+      "notes": "Basic Text / CoolType entry candidates for glyph metrics and text animator path.",
+      "targets": [
+        { "label": "BasicText_candidate_192c0", "address": "0x1800192c0" },
+        { "label": "BasicText_candidate_19520", "address": "0x180019520" },
+        { "label": "BasicText_candidate_19bd0", "address": "0x180019bd0" },
+        { "label": "BasicText_candidate_19e10", "address": "0x180019e10" },
+        { "label": "BasicText_candidate_19f30", "address": "0x180019f30" },
+        { "label": "BasicText_candidate_1e420", "address": "0x18001e420" },
+        { "label": "BasicText_candidate_1e630", "address": "0x18001e630" },
+        { "label": "BasicText_candidate_22280", "address": "0x180022280" },
+        { "label": "BasicText_candidate_22650", "address": "0x180022650" },
+        { "label": "BasicText_candidate_23110", "address": "0x180023110" }
+      ]
+    },
+    {
+      "id": "scripting_expression_host",
+      "area": "expression",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_turbulent_text_expr",
+      "project": "agent_turbulent_text_expr",
+      "process": "Scripting.aex",
+      "notes": "Expression host bridge candidate in Scripting.aex. ExtendScript engine targets are separate.",
+      "targets": [
+        { "label": "Scripting_target_bf6084", "address": "0x180bf6084" },
+        { "label": "Scripting_DelayLoad_ExtendScript_Initializer_ctor", "address": "0x180bdbece" },
+        { "label": "Scripting_DelayLoad_ExtendScript_DisableScripting", "address": "0x180bdbef2" },
+        { "label": "Scripting_DelayLoad_ExtendScript_AcquireEngine", "address": "0x180bdbf04" },
+        { "label": "Scripting_DelayLoad_ExtendScript_IsInitialized", "address": "0x180bdbf16" },
+        { "label": "Scripting_DelayLoad_ExtendScript_InitializeData", "address": "0x180bdbf28" },
+        { "label": "Scripting_DelayLoad_ExtendScript_InitializeCallback", "address": "0x180bdbf3a" },
+        { "label": "Scripting_DelayLoad_ExtendScript_Terminate", "address": "0x180bdbf4c" },
+        { "label": "Scripting_PTR_GetTimePalSuite", "address": "0x180e16918" },
+        { "label": "Scripting_PTR_TDB_SecondsToTime", "address": "0x180e16958" },
+        { "label": "Scripting_PTR_BEE_FpLongToTime", "address": "0x180e16cb0" },
+        { "label": "Scripting_PTR_BEE_AllowDelayedExpression_dtor", "address": "0x180e16e20" },
+        { "label": "Scripting_PTR_BEE_SetExpressionsDebugger", "address": "0x180e16e30" },
+        { "label": "Scripting_PTR_BEE_CompToLayerTime", "address": "0x180e16f60" }
+      ]
+    },
+    {
+      "id": "extendscript_expression_engine",
+      "area": "expression",
+      "enabled": false,
+      "project_dir": "target/reverse/ghidra_projects/agent_turbulent_text_expr",
+      "project": "agent_turbulent_text_expr",
+      "process": "extendscript.dll",
+      "notes": "Disabled until exact generic ExtendScript function targets are selected; AE-specific BEE/time pointers are in Scripting.aex.",
+      "targets": []
+    },
+    {
+      "id": "bee_temporal_scheduler",
+      "area": "temporal",
+      "enabled": false,
+      "project_dir": "target/reverse/ghidra_projects/agent_bee_temporal",
+      "project": "agent_bee_temporal",
+      "process": "BEE.dll",
+      "notes": "Needs import before predecode. RVAs collected from temporal agent; addresses assume image base 0x180000000.",
+      "targets": [
+        { "label": "BEE_candidate_4ba230", "address": "0x1804ba230" },
+        { "label": "BEE_candidate_4ba2f0", "address": "0x1804ba2f0" },
+        { "label": "BEE_candidate_4b96d0", "address": "0x1804b96d0" },
+        { "label": "BEE_candidate_4bac20", "address": "0x1804bac20" },
+        { "label": "BEE_candidate_454d00", "address": "0x180454d00" },
+        { "label": "BEE_candidate_7d72c0", "address": "0x1807d72c0" }
+      ]
+    }
+  ]
+}

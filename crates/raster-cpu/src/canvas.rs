@@ -15,7 +15,11 @@ impl Canvas {
         for px in data.chunks_exact_mut(4) {
             px.copy_from_slice(&color);
         }
-        Self { width, height, data }
+        Self {
+            width,
+            height,
+            data,
+        }
     }
 
     pub fn transparent(width: u32, height: u32) -> Self {
@@ -60,8 +64,9 @@ impl Canvas {
     }
 
     pub fn save_png(&self, path: impl AsRef<Path>) -> anyhow::Result<()> {
-        let img: ImageBuffer<Rgba<u8>, _> = ImageBuffer::from_raw(self.width, self.height, self.data.clone())
-            .ok_or_else(|| anyhow::anyhow!("invalid canvas buffer"))?;
+        let img: ImageBuffer<Rgba<u8>, _> =
+            ImageBuffer::from_raw(self.width, self.height, self.data.clone())
+                .ok_or_else(|| anyhow::anyhow!("invalid canvas buffer"))?;
         img.save(path)?;
         Ok(())
     }

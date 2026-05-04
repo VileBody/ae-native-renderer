@@ -1,0 +1,1061 @@
+{
+  "schema": "ae-native-renderer.effect-property-dump.v1",
+  "generated_by": "fixtures/ae_conformance_pack/jsx/build_conformance_project.jsx",
+  "bits_per_channel": 8,
+  "composition": {
+    "width": 512,
+    "height": 512,
+    "fps": 30,
+    "duration": 2
+  },
+  "snapshots": [
+    {
+      "id": "transform_group",
+      "match_name": "ADBE Transform Group",
+      "requested_params": {},
+      "layer_transform_properties": [
+        {
+          "index": 1,
+          "name": "Anchor Point",
+          "match_name": "ADBE Anchor Point",
+          "property_value_type": "ThreeD_SPATIAL",
+          "value": [
+            128,
+            128,
+            0
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Position",
+          "match_name": "ADBE Position",
+          "property_value_type": "ThreeD_SPATIAL",
+          "value": [
+            256,
+            256,
+            0
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 3,
+          "name": "X Position",
+          "match_name": "ADBE Position_0",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 4,
+          "name": "Y Position",
+          "match_name": "ADBE Position_1",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 5,
+          "name": "Z Position",
+          "match_name": "ADBE Position_2",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 6,
+          "name": "Scale",
+          "match_name": "ADBE Scale",
+          "property_value_type": "ThreeD",
+          "value": [
+            100,
+            100,
+            100
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 7,
+          "name": "Orientation",
+          "match_name": "ADBE Orientation",
+          "property_value_type": "ThreeD_SPATIAL",
+          "value": [
+            0,
+            0,
+            0
+          ],
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 8,
+          "name": "X Rotation",
+          "match_name": "ADBE Rotate X",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 9,
+          "name": "Y Rotation",
+          "match_name": "ADBE Rotate Y",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 10,
+          "name": "Rotation",
+          "match_name": "ADBE Rotate Z",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 11,
+          "name": "Opacity",
+          "match_name": "ADBE Opacity",
+          "property_value_type": "OneD",
+          "value": 100,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 12,
+          "name": "Appears in Reflections",
+          "match_name": "ADBE Envir Appear in Reflect",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        }
+      ]
+    },
+    {
+      "id": "geometry2_default",
+      "match_name": "ADBE Geometry2",
+      "effect_name": "Transform",
+      "effect_match_name": "ADBE Geometry2",
+      "requested_params": {},
+      "properties": [
+        {
+          "index": 1,
+          "name": "Anchor Point",
+          "match_name": "ADBE Geometry2-0001",
+          "property_value_type": "TwoD_SPATIAL",
+          "value": [
+            128,
+            128
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Position",
+          "match_name": "ADBE Geometry2-0002",
+          "property_value_type": "TwoD_SPATIAL",
+          "value": [
+            128,
+            128
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 3,
+          "name": "Uniform Scale",
+          "match_name": "ADBE Geometry2-0011",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 4,
+          "name": "Scale Height",
+          "match_name": "ADBE Geometry2-0003",
+          "property_value_type": "OneD",
+          "value": 100,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 5,
+          "name": "Scale Width",
+          "match_name": "ADBE Geometry2-0004",
+          "property_value_type": "OneD",
+          "value": 100,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 6,
+          "name": "Skew",
+          "match_name": "ADBE Geometry2-0005",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 7,
+          "name": "Skew Axis",
+          "match_name": "ADBE Geometry2-0006",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 8,
+          "name": "Rotation",
+          "match_name": "ADBE Geometry2-0007",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 9,
+          "name": "Opacity",
+          "match_name": "ADBE Geometry2-0008",
+          "property_value_type": "OneD",
+          "value": 100,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 10,
+          "name": "Use Composition’s Shutter Angle",
+          "match_name": "ADBE Geometry2-0009",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 11,
+          "name": "Shutter Angle",
+          "match_name": "ADBE Geometry2-0010",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 12,
+          "name": "Sampling",
+          "match_name": "ADBE Geometry2-0012",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 13,
+          "name": "Compositing Options",
+          "match_name": "ADBE Effect Built In Params",
+          "property_value_type": "undefined",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 3
+        }
+      ]
+    },
+    {
+      "id": "geometry2_numbered_probe",
+      "match_name": "ADBE Geometry2",
+      "effect_name": "Transform",
+      "effect_match_name": "ADBE Geometry2",
+      "requested_params": {
+        "0001": [
+          128,
+          128
+        ],
+        "0002": [
+          256,
+          256
+        ],
+        "0003": 82,
+        "0004": 120,
+        "0005": 90,
+        "0006": 14,
+        "0007": 35,
+        "0008": 72,
+        "0009": 88,
+        "0010": 1,
+        "0011": 120,
+        "0012": 1
+      },
+      "properties": [
+        {
+          "index": 1,
+          "name": "Anchor Point",
+          "match_name": "ADBE Geometry2-0001",
+          "property_value_type": "TwoD_SPATIAL",
+          "value": [
+            128,
+            128
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Position",
+          "match_name": "ADBE Geometry2-0002",
+          "property_value_type": "TwoD_SPATIAL",
+          "value": [
+            256,
+            256
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 3,
+          "name": "Uniform Scale",
+          "match_name": "ADBE Geometry2-0011",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 4,
+          "name": "Scale Height",
+          "match_name": "ADBE Geometry2-0003",
+          "property_value_type": "OneD",
+          "value": 120,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 5,
+          "name": "Scale Width",
+          "match_name": "ADBE Geometry2-0004",
+          "property_value_type": "OneD",
+          "value": 90,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 6,
+          "name": "Skew",
+          "match_name": "ADBE Geometry2-0005",
+          "property_value_type": "OneD",
+          "value": 14,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 7,
+          "name": "Skew Axis",
+          "match_name": "ADBE Geometry2-0006",
+          "property_value_type": "OneD",
+          "value": 35,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 8,
+          "name": "Rotation",
+          "match_name": "ADBE Geometry2-0007",
+          "property_value_type": "OneD",
+          "value": 72,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 9,
+          "name": "Opacity",
+          "match_name": "ADBE Geometry2-0008",
+          "property_value_type": "OneD",
+          "value": 88,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 10,
+          "name": "Use Composition’s Shutter Angle",
+          "match_name": "ADBE Geometry2-0009",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 11,
+          "name": "Shutter Angle",
+          "match_name": "ADBE Geometry2-0010",
+          "property_value_type": "OneD",
+          "value": 120,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 12,
+          "name": "Sampling",
+          "match_name": "ADBE Geometry2-0012",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 13,
+          "name": "Compositing Options",
+          "match_name": "ADBE Effect Built In Params",
+          "property_value_type": "undefined",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 3
+        }
+      ]
+    },
+    {
+      "id": "box_blur2",
+      "match_name": "ADBE Box Blur2",
+      "effect_name": "Fast Box Blur",
+      "effect_match_name": "ADBE Box Blur2",
+      "requested_params": {
+        "0001": 18,
+        "0002": 3
+      },
+      "properties": [
+        {
+          "index": 1,
+          "name": "Blur Radius",
+          "match_name": "ADBE Box Blur2-0001",
+          "property_value_type": "OneD",
+          "value": 18,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Iterations",
+          "match_name": "ADBE Box Blur2-0002",
+          "property_value_type": "OneD",
+          "value": 3,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 3,
+          "name": "Blur Dimensions",
+          "match_name": "ADBE Box Blur2-0003",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 4,
+          "name": "Repeat Edge Pixels",
+          "match_name": "ADBE Box Blur2-0004",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 5,
+          "name": "Compositing Options",
+          "match_name": "ADBE Effect Built In Params",
+          "property_value_type": "undefined",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 3
+        }
+      ]
+    },
+    {
+      "id": "drop_shadow",
+      "match_name": "ADBE Drop Shadow",
+      "effect_name": "Drop Shadow",
+      "effect_match_name": "ADBE Drop Shadow",
+      "requested_params": {
+        "0002": 180,
+        "0003": 135,
+        "0004": 28,
+        "0005": 18,
+        "0006": 0
+      },
+      "properties": [
+        {
+          "index": 1,
+          "name": "Shadow Color",
+          "match_name": "ADBE Drop Shadow-0001",
+          "property_value_type": "COLOR",
+          "value": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Opacity",
+          "match_name": "ADBE Drop Shadow-0002",
+          "property_value_type": "OneD",
+          "value": 180,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 3,
+          "name": "Direction",
+          "match_name": "ADBE Drop Shadow-0003",
+          "property_value_type": "OneD",
+          "value": 135,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 4,
+          "name": "Distance",
+          "match_name": "ADBE Drop Shadow-0004",
+          "property_value_type": "OneD",
+          "value": 28,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 5,
+          "name": "Softness",
+          "match_name": "ADBE Drop Shadow-0005",
+          "property_value_type": "OneD",
+          "value": 18,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 6,
+          "name": "Shadow Only",
+          "match_name": "ADBE Drop Shadow-0006",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 7,
+          "name": "Compositing Options",
+          "match_name": "ADBE Effect Built In Params",
+          "property_value_type": "undefined",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 3
+        }
+      ]
+    },
+    {
+      "id": "glow2",
+      "match_name": "ADBE Glo2",
+      "effect_name": "Glow",
+      "effect_match_name": "ADBE Glo2",
+      "requested_params": {
+        "0002": 120,
+        "0003": 35,
+        "0004": 1.25
+      },
+      "properties": [
+        {
+          "index": 1,
+          "name": "Glow Based On",
+          "match_name": "ADBE Glo2-0001",
+          "property_value_type": "OneD",
+          "value": 2,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Glow Threshold",
+          "match_name": "ADBE Glo2-0002",
+          "property_value_type": "OneD",
+          "value": 120,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 3,
+          "name": "Glow Radius",
+          "match_name": "ADBE Glo2-0003",
+          "property_value_type": "OneD",
+          "value": 35,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 4,
+          "name": "Glow Intensity",
+          "match_name": "ADBE Glo2-0004",
+          "property_value_type": "OneD",
+          "value": 1.25,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 5,
+          "name": "Composite Original",
+          "match_name": "ADBE Glo2-0005",
+          "property_value_type": "OneD",
+          "value": 2,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 6,
+          "name": "Glow Operation",
+          "match_name": "ADBE Glo2-0006",
+          "property_value_type": "OneD",
+          "value": 3,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 7,
+          "name": "Glow Colors",
+          "match_name": "ADBE Glo2-0007",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 8,
+          "name": "Color Looping",
+          "match_name": "ADBE Glo2-0008",
+          "property_value_type": "OneD",
+          "value": 3,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 9,
+          "name": "Color Loops",
+          "match_name": "ADBE Glo2-0009",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 10,
+          "name": "Color Phase",
+          "match_name": "ADBE Glo2-0010",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 11,
+          "name": "A & B Midpoint",
+          "match_name": "ADBE Glo2-0011",
+          "property_value_type": "OneD",
+          "value": 0.5,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 12,
+          "name": "Color A",
+          "match_name": "ADBE Glo2-0012",
+          "property_value_type": "COLOR",
+          "value": [
+            1,
+            1,
+            1,
+            1
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 13,
+          "name": "Color B",
+          "match_name": "ADBE Glo2-0013",
+          "property_value_type": "COLOR",
+          "value": [
+            0,
+            0,
+            0,
+            1
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 14,
+          "name": "Glow Dimensions",
+          "match_name": "ADBE Glo2-0014",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 15,
+          "name": "Compositing Options",
+          "match_name": "ADBE Effect Built In Params",
+          "property_value_type": "undefined",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 3
+        }
+      ]
+    },
+    {
+      "id": "minimax",
+      "match_name": "ADBE Minimax",
+      "effect_name": "Minimax",
+      "effect_match_name": "ADBE Minimax",
+      "requested_params": {
+        "0001": 2,
+        "0002": 12,
+        "0003": 1
+      },
+      "properties": [
+        {
+          "index": 1,
+          "name": "Operation",
+          "match_name": "ADBE Minimax-0001",
+          "property_value_type": "OneD",
+          "value": 2,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Radius",
+          "match_name": "ADBE Minimax-0002",
+          "property_value_type": "OneD",
+          "value": 12,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 3,
+          "name": "Channel",
+          "match_name": "ADBE Minimax-0003",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 4,
+          "name": "Direction",
+          "match_name": "ADBE Minimax-0004",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 5,
+          "name": "Don't Shrink Edges",
+          "match_name": "ADBE Minimax-0005",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 6,
+          "name": "Compositing Options",
+          "match_name": "ADBE Effect Built In Params",
+          "property_value_type": "undefined",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 3
+        }
+      ]
+    },
+    {
+      "id": "posterize_time",
+      "match_name": "ADBE Posterize Time",
+      "effect_name": "Posterize Time",
+      "effect_match_name": "ADBE Posterize Time",
+      "requested_params": {
+        "0001": 6
+      },
+      "properties": [
+        {
+          "index": 1,
+          "name": "Frame Rate",
+          "match_name": "ADBE Posterize Time-0001",
+          "property_value_type": "OneD",
+          "value": 6,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Compositing Options",
+          "match_name": "ADBE Effect Built In Params",
+          "property_value_type": "undefined",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 3
+        }
+      ]
+    },
+    {
+      "id": "turbulent_displace",
+      "match_name": "ADBE Turbulent Displace",
+      "effect_name": "Turbulent Displace",
+      "effect_match_name": "ADBE Turbulent Displace",
+      "requested_params": {
+        "0002": 45,
+        "0003": 65,
+        "0005": 2,
+        "0006": 90
+      },
+      "properties": [
+        {
+          "index": 1,
+          "name": "Displacement",
+          "match_name": "ADBE Turbulent Displace-0001",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 2,
+          "name": "Amount",
+          "match_name": "ADBE Turbulent Displace-0002",
+          "property_value_type": "OneD",
+          "value": 45,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 3,
+          "name": "Size",
+          "match_name": "ADBE Turbulent Displace-0003",
+          "property_value_type": "OneD",
+          "value": 65,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 4,
+          "name": "Offset (Turbulence)",
+          "match_name": "ADBE Turbulent Displace-0004",
+          "property_value_type": "TwoD_SPATIAL",
+          "value": [
+            128,
+            128
+          ],
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 5,
+          "name": "Complexity",
+          "match_name": "ADBE Turbulent Displace-0005",
+          "property_value_type": "OneD",
+          "value": 2,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 6,
+          "name": "Evolution",
+          "match_name": "ADBE Turbulent Displace-0006",
+          "property_value_type": "OneD",
+          "value": 90,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 7,
+          "name": "Evolution Options",
+          "match_name": "ADBE Turbulent Displace-0007",
+          "property_value_type": "NO_VALUE",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 8,
+          "name": "Cycle Evolution",
+          "match_name": "ADBE Turbulent Displace-0008",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 9,
+          "name": "Cycle (in Revolutions)",
+          "match_name": "ADBE Turbulent Displace-0009",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 10,
+          "name": "Random Seed",
+          "match_name": "ADBE Turbulent Displace-0010",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 11,
+          "name": "Random Seed",
+          "match_name": "ADBE Turbulent Displace-0011",
+          "property_value_type": "NO_VALUE",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 12,
+          "name": "Pinning",
+          "match_name": "ADBE Turbulent Displace-0012",
+          "property_value_type": "OneD",
+          "value": 3,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 13,
+          "name": "Resize Layer",
+          "match_name": "ADBE Turbulent Displace-0013",
+          "property_value_type": "OneD",
+          "value": 0,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 14,
+          "name": "Antialiasing for Best Quality",
+          "match_name": "ADBE Turbulent Displace-0014",
+          "property_value_type": "OneD",
+          "value": 1,
+          "can_set_expression": true,
+          "is_time_varying": false,
+          "num_properties": 0
+        },
+        {
+          "index": 15,
+          "name": "Compositing Options",
+          "match_name": "ADBE Effect Built In Params",
+          "property_value_type": "undefined",
+          "value": null,
+          "can_set_expression": false,
+          "is_time_varying": false,
+          "num_properties": 3
+        }
+      ]
+    }
+  ]
+}

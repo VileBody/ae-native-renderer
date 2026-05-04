@@ -8,7 +8,7 @@ pub use crate::collapse::CollapseMode;
 use crate::collapse::{
     plan_precomp_collapse, plan_target_collapse, PrecompCollapsePlan, ISSUE_TARGET_MISSING,
 };
-use render_ir::{Layer, Scene};
+use render_ir::{Layer, Scene, Transform2D};
 use std::collections::{BTreeMap, BTreeSet};
 
 #[derive(Debug, Clone, Copy)]
@@ -47,6 +47,97 @@ pub struct CollapseIssue<'a> {
     pub reason: &'static str,
 }
 
+#[derive(Debug, Clone)]
+pub struct PrecompDeferredRasterPlan<'a> {
+    pub parent_composition: &'a str,
+    pub layer_id: &'a str,
+    pub target_composition: &'a str,
+    pub collapse_requested: bool,
+    pub mode: CollapseMode,
+    pub deferred_primitives: Vec<DeferredRasterPrimitive<'a>>,
+    pub raster_barriers: Vec<DeferredRasterBarrier<'a>>,
+}
+
+impl PrecompDeferredRasterPlan<'_> {
+    pub fn can_defer_all_primitives(&self) -> bool {
+        self.collapse_requested
+            && self.mode == CollapseMode::CollapseSupportedVectors
+            && !self.deferred_primitives.is_empty()
+            && self.raster_barriers.is_empty()
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct DeferredRasterPrimitive<'a> {
+    pub kind: DeferredPrimitiveKind,
+    pub source_composition: &'a str,
+    pub source_layer_id: &'a str,
+    pub source_layer: &'a Layer,
+    pub transform_steps: Vec<DeferredTransformStep<'a>>,
+    pub source_time_steps: Vec<DeferredSourceTimeStep<'a>>,
+    pub active_window: DeferredActiveWindow,
+    pub opacity: DeferredOpacityContract,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredPrimitiveKind {
+    SolidVector,
+    TextVector,
+}
+
+#[derive(Debug, Clone)]
+pub struct DeferredTransformStep<'a> {
+    pub composition_id: &'a str,
+    pub layer_id: &'a str,
+    pub kind: DeferredTransformStepKind,
+    pub transform: &'a Transform2D,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredTransformStepKind {
+    RootPrecompBoundary,
+    NestedPrecompBoundary,
+    SourceLayer,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct DeferredSourceTimeStep<'a> {
+    pub composition_id: &'a str,
+    pub layer_id: &'a str,
+    pub start: f64,
+    pub duration: f64,
+    pub rule: DeferredSourceTimeRule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredSourceTimeRule {
+    LayerRelativeClampedToZero,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeferredActiveWindow {
+    pub start: f64,
+    pub duration: f64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DeferredOpacityContract {
+    pub base_opacity_percent: f32,
+    pub rule: DeferredOpacityRule,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum DeferredOpacityRule {
+    EvaluateSourceTransformAtFinalSourceTime,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DeferredRasterBarrier<'a> {
+    pub composition_id: &'a str,
+    pub layer_id: &'a str,
+    pub reason: &'static str,
+}
+
 impl<'a> PrecompGraph<'a> {
     pub fn from_scene(scene: &'a Scene) -> anyhow::Result<Self> {
         let root = CompositionNode {
@@ -57,7 +148,10 @@ impl<'a> PrecompGraph<'a> {
             id: node.composition.id.as_str(),
             layers: node.layers.as_slice(),
         });
-        Self::from_nodes(scene.composition.id.as_str(), std::iter::once(root).chain(nested))
+        Self::from_nodes(
+            scene.composition.id.as_str(),
+            std::iter::once(root).chain(nested),
+        )
     }
 
     pub fn from_nodes(
@@ -189,6 +283,80 @@ impl<'a> PrecompGraph<'a> {
         })
     }
 
+    pub fn deferred_raster_plan_for_precomp_layer(
+        &self,
+        parent_composition: &str,
+        layer_id: &str,
+    ) -> anyhow::Result<PrecompDeferredRasterPlan<'a>> {
+        let (parent_composition, layer) = self
+            .find_layer(parent_composition, layer_id)?
+            .ok_or_else(|| {
+                anyhow::anyhow!(
+                    "layer '{}' in composition '{}' is missing",
+                    layer_id,
+                    parent_composition
+                )
+            })?;
+
+        let collapse_plan = plan_precomp_collapse(parent_composition, layer, |composition_id| {
+            self.layers_for(composition_id)
+        })?;
+
+        let Layer::Precomp {
+            id,
+            composition,
+            collapse_transformations,
+            transform,
+            ..
+        } = layer
+        else {
+            anyhow::bail!(
+                "layer '{}' in composition '{}' is not a precomp",
+                layer.id(),
+                parent_composition
+            );
+        };
+
+        let target = composition.as_str();
+        let raster_barriers = if *collapse_transformations {
+            self.deferred_raster_barriers_for_precomp(parent_composition, id, target)
+        } else {
+            Vec::new()
+        };
+        let mode = if *collapse_transformations && raster_barriers.is_empty() {
+            CollapseMode::CollapseSupportedVectors
+        } else {
+            CollapseMode::RasterizeFirst
+        };
+
+        let deferred_primitives = if *collapse_transformations {
+            collapse_plan
+                .flattened_layers
+                .iter()
+                .filter_map(|layer_ref| {
+                    self.deferred_primitive_for_layer_ref(
+                        parent_composition,
+                        id,
+                        transform,
+                        layer_ref,
+                    )
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+
+        Ok(PrecompDeferredRasterPlan {
+            parent_composition,
+            layer_id: id,
+            target_composition: target,
+            collapse_requested: *collapse_transformations,
+            mode,
+            deferred_primitives,
+            raster_barriers,
+        })
+    }
+
     pub fn validate_collapse_feasibility(&self) -> anyhow::Result<()> {
         let issues = self.collapse_issues();
         if issues.is_empty() {
@@ -292,6 +460,217 @@ impl<'a> PrecompGraph<'a> {
         };
         plan_target_collapse(target, |composition_id| self.layers_for(composition_id)).issues
     }
+
+    fn find_layer(
+        &self,
+        composition_id: &str,
+        layer_id: &str,
+    ) -> anyhow::Result<Option<(&'a str, &'a Layer)>> {
+        let (composition_id, layers) = self
+            .compositions
+            .iter()
+            .find(|(id, _)| **id == composition_id)
+            .map(|(id, layers)| (*id, *layers))
+            .ok_or_else(|| anyhow::anyhow!("composition '{}' is missing", composition_id))?;
+
+        Ok(layers
+            .iter()
+            .find(|layer| layer.id() == layer_id)
+            .map(|layer| (composition_id, layer)))
+    }
+
+    fn deferred_primitive_for_layer_ref(
+        &self,
+        parent_composition: &'a str,
+        root_layer_id: &'a str,
+        root_transform: &'a Transform2D,
+        layer_ref: &crate::collapse::CollapsedLayerRef<'a>,
+    ) -> Option<DeferredRasterPrimitive<'a>> {
+        let (kind, source_transform) = deferred_primitive_kind_and_transform(layer_ref.layer)?;
+        let mut transform_steps =
+            Vec::with_capacity(layer_ref.nested_precomp_path.len().saturating_add(2));
+        transform_steps.push(DeferredTransformStep {
+            composition_id: parent_composition,
+            layer_id: root_layer_id,
+            kind: DeferredTransformStepKind::RootPrecompBoundary,
+            transform: root_transform,
+        });
+        for boundary in &layer_ref.nested_precomp_path {
+            transform_steps.push(DeferredTransformStep {
+                composition_id: boundary.parent_composition,
+                layer_id: boundary.layer_id,
+                kind: DeferredTransformStepKind::NestedPrecompBoundary,
+                transform: boundary.transform,
+            });
+        }
+        transform_steps.push(DeferredTransformStep {
+            composition_id: layer_ref.composition_id,
+            layer_id: layer_ref.layer.id(),
+            kind: DeferredTransformStepKind::SourceLayer,
+            transform: source_transform,
+        });
+
+        let mut source_time_steps =
+            Vec::with_capacity(layer_ref.nested_precomp_path.len().saturating_add(1));
+        if let Some((_, root_layer)) = self.find_layer(parent_composition, root_layer_id).ok()? {
+            let (start, duration) = root_layer.time_range();
+            source_time_steps.push(DeferredSourceTimeStep {
+                composition_id: parent_composition,
+                layer_id: root_layer_id,
+                start,
+                duration,
+                rule: DeferredSourceTimeRule::LayerRelativeClampedToZero,
+            });
+        }
+        for boundary in &layer_ref.nested_precomp_path {
+            let (_, boundary_layer) = self
+                .find_layer(boundary.parent_composition, boundary.layer_id)
+                .ok()??;
+            let (start, duration) = boundary_layer.time_range();
+            source_time_steps.push(DeferredSourceTimeStep {
+                composition_id: boundary.parent_composition,
+                layer_id: boundary.layer_id,
+                start,
+                duration,
+                rule: DeferredSourceTimeRule::LayerRelativeClampedToZero,
+            });
+        }
+
+        let (start, duration) = layer_ref.layer.time_range();
+        Some(DeferredRasterPrimitive {
+            kind,
+            source_composition: layer_ref.composition_id,
+            source_layer_id: layer_ref.layer.id(),
+            source_layer: layer_ref.layer,
+            transform_steps,
+            source_time_steps,
+            active_window: DeferredActiveWindow { start, duration },
+            opacity: DeferredOpacityContract {
+                base_opacity_percent: source_transform.opacity,
+                rule: DeferredOpacityRule::EvaluateSourceTransformAtFinalSourceTime,
+            },
+        })
+    }
+
+    fn deferred_raster_barriers_for_precomp(
+        &self,
+        parent_composition: &'a str,
+        layer_id: &'a str,
+        target: &str,
+    ) -> Vec<DeferredRasterBarrier<'a>> {
+        let Some(target) = self.canonical_composition_id(target) else {
+            return vec![DeferredRasterBarrier {
+                composition_id: parent_composition,
+                layer_id,
+                reason: ISSUE_TARGET_MISSING,
+            }];
+        };
+        let mut visiting = BTreeSet::new();
+        let mut barriers = Vec::new();
+        self.collect_deferred_raster_barriers(target, &mut visiting, &mut barriers);
+        barriers
+    }
+
+    fn collect_deferred_raster_barriers(
+        &self,
+        composition_id: &'a str,
+        visiting: &mut BTreeSet<&'a str>,
+        barriers: &mut Vec<DeferredRasterBarrier<'a>>,
+    ) {
+        if !visiting.insert(composition_id) {
+            return;
+        }
+
+        let Some(layers) = self.layers_for(composition_id) else {
+            visiting.remove(composition_id);
+            return;
+        };
+
+        for layer in layers {
+            if crate::collapse::layer_has_effects(layer) {
+                push_barrier_unique(
+                    barriers,
+                    DeferredRasterBarrier {
+                        composition_id,
+                        layer_id: layer.id(),
+                        reason: crate::collapse::ISSUE_EFFECTS_REQUIRE_RASTER,
+                    },
+                );
+            }
+
+            match layer {
+                Layer::Solid { .. } | Layer::Text { .. } => {}
+                Layer::Footage { .. } => push_barrier_unique(
+                    barriers,
+                    DeferredRasterBarrier {
+                        composition_id,
+                        layer_id: layer.id(),
+                        reason: crate::collapse::ISSUE_FOOTAGE_REQUIRES_RASTER,
+                    },
+                ),
+                Layer::Adjustment { .. } => push_barrier_unique(
+                    barriers,
+                    DeferredRasterBarrier {
+                        composition_id,
+                        layer_id: layer.id(),
+                        reason: crate::collapse::ISSUE_ADJUSTMENT_REQUIRES_RASTER,
+                    },
+                ),
+                Layer::Precomp {
+                    composition,
+                    collapse_transformations,
+                    ..
+                } => {
+                    if !*collapse_transformations {
+                        push_barrier_unique(
+                            barriers,
+                            DeferredRasterBarrier {
+                                composition_id,
+                                layer_id: layer.id(),
+                                reason: crate::collapse::ISSUE_NESTED_PRECOMP_RASTERIZES,
+                            },
+                        );
+                        continue;
+                    }
+                    if crate::collapse::layer_has_effects(layer) {
+                        continue;
+                    }
+                    let Some(target) = self.canonical_composition_id(composition) else {
+                        push_barrier_unique(
+                            barriers,
+                            DeferredRasterBarrier {
+                                composition_id,
+                                layer_id: layer.id(),
+                                reason: ISSUE_TARGET_MISSING,
+                            },
+                        );
+                        continue;
+                    };
+                    if visiting.contains(target) {
+                        push_barrier_unique(
+                            barriers,
+                            DeferredRasterBarrier {
+                                composition_id,
+                                layer_id: layer.id(),
+                                reason: crate::collapse::ISSUE_NESTED_PRECOMP_CYCLE,
+                            },
+                        );
+                        continue;
+                    }
+                    self.collect_deferred_raster_barriers(target, visiting, barriers);
+                }
+            }
+        }
+
+        visiting.remove(composition_id);
+    }
+
+    fn canonical_composition_id(&self, composition_id: &str) -> Option<&'a str> {
+        self.compositions
+            .keys()
+            .find(|id| **id == composition_id)
+            .copied()
+    }
 }
 
 fn cycle_error(stack: &[&str], repeated: &str) -> anyhow::Error {
@@ -302,6 +681,25 @@ fn cycle_error(stack: &[&str], repeated: &str) -> anyhow::Error {
     let mut cycle = stack[start..].to_vec();
     cycle.push(repeated);
     anyhow::anyhow!("precomp composition cycle detected: {}", cycle.join(" -> "))
+}
+
+fn deferred_primitive_kind_and_transform(
+    layer: &Layer,
+) -> Option<(DeferredPrimitiveKind, &Transform2D)> {
+    match layer {
+        Layer::Solid { transform, .. } => Some((DeferredPrimitiveKind::SolidVector, transform)),
+        Layer::Text { transform, .. } => Some((DeferredPrimitiveKind::TextVector, transform)),
+        _ => None,
+    }
+}
+
+fn push_barrier_unique<'a>(
+    barriers: &mut Vec<DeferredRasterBarrier<'a>>,
+    barrier: DeferredRasterBarrier<'a>,
+) {
+    if !barriers.contains(&barrier) {
+        barriers.push(barrier);
+    }
 }
 
 #[cfg(test)]
@@ -454,6 +852,257 @@ mod tests {
     }
 
     #[test]
+    fn deferred_contract_lists_vector_and_text_primitives() {
+        let mut root_pre = precomp_layer("root_pre", "child", true);
+        if let Layer::Precomp {
+            start, transform, ..
+        } = &mut root_pre
+        {
+            *start = 2.0;
+            transform.scale = [180.0, 180.0];
+        }
+        let mut title = text_layer("title");
+        if let Layer::Text {
+            start, duration, ..
+        } = &mut title
+        {
+            *start = 0.5;
+            *duration = 3.0;
+        }
+        let child_layers = vec![solid_layer("shape"), title];
+        let root_layers = vec![root_pre];
+        let graph = PrecompGraph::from_nodes(
+            "root",
+            [
+                CompositionNode {
+                    id: "root",
+                    layers: &root_layers,
+                },
+                CompositionNode {
+                    id: "child",
+                    layers: &child_layers,
+                },
+            ],
+        )
+        .unwrap();
+
+        let plan = graph
+            .deferred_raster_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+
+        assert!(plan.can_defer_all_primitives());
+        assert_eq!(plan.mode, CollapseMode::CollapseSupportedVectors);
+        assert!(plan.raster_barriers.is_empty());
+        assert_eq!(plan.deferred_primitives.len(), 2);
+        assert_eq!(
+            plan.deferred_primitives
+                .iter()
+                .map(|primitive| (primitive.source_layer_id, primitive.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                ("shape", DeferredPrimitiveKind::SolidVector),
+                ("title", DeferredPrimitiveKind::TextVector)
+            ]
+        );
+
+        let title = plan
+            .deferred_primitives
+            .iter()
+            .find(|primitive| primitive.source_layer_id == "title")
+            .unwrap();
+        assert_eq!(title.source_composition, "child");
+        assert_eq!(
+            title
+                .transform_steps
+                .iter()
+                .map(|step| (step.layer_id, step.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                ("root_pre", DeferredTransformStepKind::RootPrecompBoundary),
+                ("title", DeferredTransformStepKind::SourceLayer)
+            ]
+        );
+        assert_eq!(title.transform_steps[0].transform.scale, [180.0, 180.0]);
+        assert_eq!(
+            title.source_time_steps,
+            vec![DeferredSourceTimeStep {
+                composition_id: "root",
+                layer_id: "root_pre",
+                start: 2.0,
+                duration: 1.0,
+                rule: DeferredSourceTimeRule::LayerRelativeClampedToZero,
+            }]
+        );
+        assert_eq!(
+            title.active_window,
+            DeferredActiveWindow {
+                start: 0.5,
+                duration: 3.0,
+            }
+        );
+        assert_eq!(
+            title.opacity.rule,
+            DeferredOpacityRule::EvaluateSourceTransformAtFinalSourceTime
+        );
+    }
+
+    #[test]
+    fn deferred_contract_accumulates_nested_precomp_boundaries_in_order() {
+        let root_layers = vec![precomp_layer("root_pre", "child", true)];
+        let mut child_pre = precomp_layer("child_pre", "grandchild", true);
+        if let Layer::Precomp {
+            start, transform, ..
+        } = &mut child_pre
+        {
+            *start = 1.25;
+            transform.position = [10.0, 20.0];
+        }
+        let child_layers = vec![solid_layer("shape"), child_pre];
+        let grandchild_layers = vec![text_layer("title")];
+        let graph = PrecompGraph::from_nodes(
+            "root",
+            [
+                CompositionNode {
+                    id: "root",
+                    layers: &root_layers,
+                },
+                CompositionNode {
+                    id: "child",
+                    layers: &child_layers,
+                },
+                CompositionNode {
+                    id: "grandchild",
+                    layers: &grandchild_layers,
+                },
+            ],
+        )
+        .unwrap();
+
+        let plan = graph
+            .deferred_raster_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+
+        assert!(plan.can_defer_all_primitives());
+        let title = plan
+            .deferred_primitives
+            .iter()
+            .find(|primitive| primitive.source_layer_id == "title")
+            .unwrap();
+        assert_eq!(title.source_composition, "grandchild");
+        assert_eq!(
+            title
+                .transform_steps
+                .iter()
+                .map(|step| (step.composition_id, step.layer_id, step.kind))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "root",
+                    "root_pre",
+                    DeferredTransformStepKind::RootPrecompBoundary
+                ),
+                (
+                    "child",
+                    "child_pre",
+                    DeferredTransformStepKind::NestedPrecompBoundary
+                ),
+                (
+                    "grandchild",
+                    "title",
+                    DeferredTransformStepKind::SourceLayer
+                )
+            ]
+        );
+        assert_eq!(title.transform_steps[1].transform.position, [10.0, 20.0]);
+        assert_eq!(
+            title
+                .source_time_steps
+                .iter()
+                .map(|step| (step.composition_id, step.layer_id, step.start, step.rule))
+                .collect::<Vec<_>>(),
+            vec![
+                (
+                    "root",
+                    "root_pre",
+                    0.0,
+                    DeferredSourceTimeRule::LayerRelativeClampedToZero
+                ),
+                (
+                    "child",
+                    "child_pre",
+                    1.25,
+                    DeferredSourceTimeRule::LayerRelativeClampedToZero
+                )
+            ]
+        );
+    }
+
+    #[test]
+    fn deferred_contract_reports_raster_barriers_by_layer() {
+        let root_layers = vec![precomp_layer("root_pre", "child", true)];
+        let child_layers = vec![
+            text_layer("title"),
+            footage_layer("movie"),
+            adjustment_layer("grade"),
+            solid_layer_with_effect("shadowed"),
+            precomp_layer("child_pre", "grandchild", false),
+        ];
+        let grandchild_layers = vec![text_layer("nested_title")];
+        let graph = PrecompGraph::from_nodes(
+            "root",
+            [
+                CompositionNode {
+                    id: "root",
+                    layers: &root_layers,
+                },
+                CompositionNode {
+                    id: "child",
+                    layers: &child_layers,
+                },
+                CompositionNode {
+                    id: "grandchild",
+                    layers: &grandchild_layers,
+                },
+            ],
+        )
+        .unwrap();
+
+        let plan = graph
+            .deferred_raster_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+
+        assert!(!plan.can_defer_all_primitives());
+        assert_eq!(plan.mode, CollapseMode::RasterizeFirst);
+        assert_eq!(plan.deferred_primitives.len(), 1);
+        assert_eq!(plan.deferred_primitives[0].source_layer_id, "title");
+        assert_eq!(
+            plan.raster_barriers,
+            vec![
+                DeferredRasterBarrier {
+                    composition_id: "child",
+                    layer_id: "movie",
+                    reason: crate::collapse::ISSUE_FOOTAGE_REQUIRES_RASTER,
+                },
+                DeferredRasterBarrier {
+                    composition_id: "child",
+                    layer_id: "grade",
+                    reason: crate::collapse::ISSUE_ADJUSTMENT_REQUIRES_RASTER,
+                },
+                DeferredRasterBarrier {
+                    composition_id: "child",
+                    layer_id: "shadowed",
+                    reason: crate::collapse::ISSUE_EFFECTS_REQUIRE_RASTER,
+                },
+                DeferredRasterBarrier {
+                    composition_id: "child",
+                    layer_id: "child_pre",
+                    reason: crate::collapse::ISSUE_NESTED_PRECOMP_RASTERIZES,
+                },
+            ]
+        );
+    }
+
+    #[test]
     fn marks_nested_collapsed_vector_precomp_as_supported() {
         let root_layers = vec![precomp_layer("root_pre", "child", true)];
         let child_layers = vec![
@@ -599,6 +1248,7 @@ mod tests {
                 fps: 24.0,
                 duration: 1.0,
                 background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
             },
             compositions: Vec::new(),
             assets: Vec::new(),

@@ -1,0 +1,114 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "minimax_enum_channel_probe_v1",
+  "purpose": "Resolve After Effects ADBE Minimax operation/channel enum behavior before formula tuning.",
+  "source": {
+    "type": "generated_in_ae",
+    "name": "alpha_square_like",
+    "precomp": {
+      "width": 256,
+      "height": 256,
+      "opaque_square": {
+        "width": 128,
+        "height": 128,
+        "position": [128, 128],
+        "rgba": [1, 1, 1, 1]
+      }
+    },
+    "placement": {
+      "comp_position": [256, 256],
+      "scale_percent": [70, 70],
+      "expected_edge_row": {
+        "y": 256,
+        "x_start": 211,
+        "x_end": 300
+      }
+    }
+  },
+  "composition": {
+    "width": 512,
+    "height": 512,
+    "fps": 30,
+    "duration_seconds": 2.0,
+    "bits_per_channel": 8
+  },
+  "effect": {
+    "match_name": "ADBE Minimax",
+    "properties_to_dump": [
+      { "index": 1, "param": "0001", "expected_role": "operation enum" },
+      { "index": 2, "param": "0002", "expected_role": "radius" },
+      { "index": 3, "param": "0003", "expected_role": "channel enum" }
+    ]
+  },
+  "render_outputs": {
+    "png_sequences": "ae_goldens/png/<case_id>/<case_id>_[#####].png",
+    "metadata_dump": "ae_goldens/metadata/minimax_property_dump.json",
+    "measurement_dump": "ae_goldens/metadata/minimax_measurements.json"
+  },
+  "measurement_requirements": {
+    "bbox": ["rgb_non_background", "alpha_nonzero"],
+    "row_samples": {
+      "y": 256,
+      "x_start": 211,
+      "x_end": 300,
+      "channels": ["r", "g", "b", "a"]
+    },
+    "include_final_png_path": true
+  },
+  "cases": [
+    {
+      "id": "MINIMAX_PRE",
+      "title": "alpha-square-like source before Minimax",
+      "effect_params": null,
+      "role": "pre-effect reference"
+    },
+    {
+      "id": "MINIMAX_OP1_CH1_R0",
+      "title": "Minimax op 1 channel 1 radius 0 identity probe",
+      "effect_params": { "0001": 1, "0002": 0, "0003": 1 },
+      "role": "radius 0 identity"
+    },
+    {
+      "id": "MINIMAX_OP1_CH1_R12",
+      "title": "Minimax op 1 channel 1 radius 12",
+      "effect_params": { "0001": 1, "0002": 12, "0003": 1 },
+      "role": "operation/channel enum probe"
+    },
+    {
+      "id": "MINIMAX_OP1_CH2_R0",
+      "title": "Minimax op 1 channel 2 radius 0 identity probe",
+      "effect_params": { "0001": 1, "0002": 0, "0003": 2 },
+      "role": "radius 0 identity"
+    },
+    {
+      "id": "MINIMAX_OP1_CH2_R12",
+      "title": "Minimax op 1 channel 2 radius 12",
+      "effect_params": { "0001": 1, "0002": 12, "0003": 2 },
+      "role": "operation/channel enum probe"
+    },
+    {
+      "id": "MINIMAX_OP2_CH1_R0",
+      "title": "Minimax op 2 channel 1 radius 0 identity probe",
+      "effect_params": { "0001": 2, "0002": 0, "0003": 1 },
+      "role": "radius 0 identity"
+    },
+    {
+      "id": "MINIMAX_OP2_CH1_R12_EFF050",
+      "title": "Minimax op 2 channel 1 radius 12 EFF_050 tuple",
+      "effect_params": { "0001": 2, "0002": 12, "0003": 1 },
+      "role": "EFF_050 tuple"
+    },
+    {
+      "id": "MINIMAX_OP2_CH2_R0",
+      "title": "Minimax op 2 channel 2 radius 0 identity probe",
+      "effect_params": { "0001": 2, "0002": 0, "0003": 2 },
+      "role": "radius 0 identity"
+    },
+    {
+      "id": "MINIMAX_OP2_CH2_R12",
+      "title": "Minimax op 2 channel 2 radius 12",
+      "effect_params": { "0001": 2, "0002": 12, "0003": 2 },
+      "role": "operation/channel enum probe"
+    }
+  ]
+}

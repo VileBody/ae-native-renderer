@@ -11,10 +11,24 @@ for each layer:
     render once at frame time
 ```
 
-Initial implementation:
+Implemented v1:
 
-- fixed samples per frame;
-- shutter angle;
-- shutter phase;
-- per-layer switch;
+- composition settings: `motion_blur.enabled`, `samples`, `shutter_angle`,
+  `shutter_phase`;
+- per-layer `transform.motion_blur` switch;
+- payload `layer_meta.motionBlur` import;
+- default 17-sample ladder for imported AE Transform/Geometry2-style motion
+  blur, matching the observed `Transform.aex` caller constant `0x11`;
+- bounded midpoint temporal samples across the shutter interval when explicit
+  sample placement is not otherwise known;
+- subframe transform/keyframe/expression evaluation through the existing layer
+  render path;
 - no optical-flow blur.
+
+Current parity notes:
+
+- accumulation is still straight RGBA8 and needs an AE premultiplied-alpha audit;
+- static layers are not yet skipped from temporal sampling;
+- exact AE endpoint placement, shutter-weight curve, and Geometry2 effect
+  shutter override behavior still need probes before formula tuning;
+- AE reference PNGs for the conformance fixture still need to be exported.

@@ -14,7 +14,12 @@ impl Sampler for NearestSampler {
             return [0, 0, 0, 0];
         }
         let idx = (((yi as u32) * image.width + xi as u32) * 4) as usize;
-        [image.data[idx], image.data[idx + 1], image.data[idx + 2], image.data[idx + 3]]
+        [
+            image.data[idx],
+            image.data[idx + 1],
+            image.data[idx + 2],
+            image.data[idx + 3],
+        ]
     }
 }
 
@@ -27,8 +32,7 @@ impl Sampler for BilinearSampler {
         if image.width == 0 || image.height == 0 {
             return [0, 0, 0, 0];
         }
-        if x < 0.0 || y < 0.0 || x > (image.width - 1) as f32 || y > (image.height - 1) as f32
-        {
+        if x < 0.0 || y < 0.0 || x > (image.width - 1) as f32 || y > (image.height - 1) as f32 {
             return [0, 0, 0, 0];
         }
         let x0 = x.floor() as u32;

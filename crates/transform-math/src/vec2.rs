@@ -16,6 +16,9 @@ impl Vec2 {
 
 impl From<[f32; 2]> for Vec2 {
     fn from(value: [f32; 2]) -> Self {
-        Self { x: value[0], y: value[1] }
+        Self {
+            x: value[0],
+            y: value[1],
+        }
     }
 }

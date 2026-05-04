@@ -1,0 +1,172 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "turbulent_field_probe_pack_round5",
+  "purpose": "AE coordinate-field evidence for ADBE Turbulent Displace field, sampler, edge, pinning, resize, displacement type, and seed behavior.",
+  "composition": {
+    "width": 512,
+    "height": 512,
+    "fps": 30,
+    "duration_seconds": 2.0,
+    "pixel_aspect": 1.0,
+    "recommended_color_depths": [8, 16]
+  },
+  "assets": {
+    "generator": "scripts/generate_assets.py",
+    "asset_manifest": "assets/primitives/assets_manifest.json",
+    "primitives": [
+      {
+        "id": "coordinate_field",
+        "path": "assets/primitives/coordinate_field.png",
+        "width": 512,
+        "height": 512,
+        "channels": "R=x mod 256, G=y mod 256, B=32px tile parity, A=255"
+      },
+      {
+        "id": "sparse_impulse_grid",
+        "path": "assets/primitives/sparse_impulse_grid.png",
+        "width": 512,
+        "height": 512,
+        "channels": "white one-pixel impulses every 32px with red/green center axes"
+      },
+      {
+        "id": "hard_edge_alpha_ramp",
+        "path": "assets/primitives/hard_edge_alpha_ramp.png",
+        "width": 512,
+        "height": 512,
+        "channels": "hard vertical/horizontal RGB edges with horizontal alpha ramp"
+      },
+      {
+        "id": "unique_checkerboard",
+        "path": "assets/primitives/unique_checkerboard.png",
+        "width": 512,
+        "height": 512,
+        "channels": "16x16 unique 32px cells with 4px intra-cell parity"
+      }
+    ]
+  },
+  "ae_project_builder": {
+    "script": "jsx/build_turbulent_field_probe_project.jsx",
+    "render_output": "ae_goldens/png8/<case_id>/<case_id>_[#####].png",
+    "builder_log": "ae_goldens/logs/turbulent_field_builder_log.txt",
+    "notes": [
+      "The JSX writes an ADBE Turbulent Displace property dump to confirm AE control order.",
+      "Pinning, resize layer, and seed controls are set by name search when exposed by AE.",
+      "Displacement type variants set property index 1 to values 1 through 9."
+    ]
+  },
+  "sample_grid": {
+    "required_points": [
+      "corners",
+      "edge midpoints",
+      "center",
+      "every 32px grid point",
+      "17x17 center patch",
+      "16px border band"
+    ],
+    "fields_to_record": [
+      "case_id",
+      "frame",
+      "comp_time_seconds",
+      "output_x",
+      "output_y",
+      "observed_rgba",
+      "decoded_source_x",
+      "decoded_source_y",
+      "inferred_dx",
+      "inferred_dy",
+      "outside_source_estimate",
+      "ae_bits_per_channel",
+      "effect_params"
+    ]
+  },
+  "probe_suites": [
+    {
+      "id": "TD_AMOUNT_SWEEP",
+      "source": "coordinate_field",
+      "variants": { "amount": [0, 1, 10, 45, 100] },
+      "fixed_params": { "size": 65, "complexity": 2, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Determine amplitude scale, zero behavior, and sign convention."
+    },
+    {
+      "id": "TD_SIZE_SWEEP",
+      "source": "coordinate_field",
+      "variants": { "size": [1, 8, 16, 32, 65, 128, 256] },
+      "fixed_params": { "amount": 45, "complexity": 2, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Identify noise frequency normalization and coordinate origin."
+    },
+    {
+      "id": "TD_COMPLEXITY_SWEEP",
+      "source": "coordinate_field",
+      "variants": { "complexity": [1, 2, 3, 4, 6] },
+      "fixed_params": { "amount": 45, "size": 65, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Identify octave accumulation and rounding/clamping semantics."
+    },
+    {
+      "id": "TD_EVOLUTION_STATIC",
+      "source": "coordinate_field",
+      "variants": { "evolution": [0, 45, 90, 180, 360, 720] },
+      "fixed_params": { "amount": 45, "size": 65, "complexity": 2 },
+      "frames_to_sample": [0],
+      "purpose": "Determine static phase/evolution mapping and periodicity."
+    },
+    {
+      "id": "TD_EVOLUTION_ANIM",
+      "source": "coordinate_field",
+      "variants": { "evolution_keyframes": [{ "time": 0.0, "value": 0 }, { "time": 2.0, "value": 180 }] },
+      "fixed_params": { "amount": 45, "size": 65, "complexity": 2 },
+      "frames_to_sample": [0, 1, 15, 30, 45, 59],
+      "purpose": "Verify temporal interpolation and frame-time sampling."
+    },
+    {
+      "id": "TD_DISPLACEMENT_TYPE",
+      "source": "coordinate_field",
+      "variants": { "displacement_type_menu_value": [1, 2, 3, 4, 5, 6, 7, 8, 9] },
+      "fixed_params": { "amount": 45, "size": 65, "complexity": 2, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Determine whether AE changes the vector field basis by displacement type."
+    },
+    {
+      "id": "TD_SEED_SWEEP",
+      "source": "coordinate_field",
+      "variants": { "seed_if_exposed": [0, 1, 2, 10, 999] },
+      "fixed_params": { "amount": 45, "size": 65, "complexity": 2, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Determine seed field stability and value domain if AE exposes a seed/random control."
+    },
+    {
+      "id": "TD_PINNING_EDGE",
+      "source": "hard_edge_alpha_ramp",
+      "variants": { "pinning_if_exposed": [0, 1] },
+      "fixed_params": { "amount": 90, "size": 65, "complexity": 2, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Separate field generation from edge, alpha, and pinning behavior."
+    },
+    {
+      "id": "TD_RESIZE_LAYER",
+      "source": "coordinate_field",
+      "variants": { "resize_layer_if_exposed": [0, 1] },
+      "fixed_params": { "amount": 120, "size": 48, "complexity": 2, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Determine canvas extent and out-of-bounds policy near borders."
+    },
+    {
+      "id": "TD_SAMPLER_CHECK",
+      "source": ["coordinate_field", "unique_checkerboard"],
+      "variants": { "amount": [1, 2, 4] },
+      "fixed_params": { "size": 256, "complexity": 1, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Distinguish nearest, floor, bilinear, and pixel-center conventions."
+    },
+    {
+      "id": "TD_IMPULSE_GRID",
+      "source": "sparse_impulse_grid",
+      "variants": { "amount": [45] },
+      "fixed_params": { "size": 65, "complexity": 2, "evolution": 0 },
+      "frames_to_sample": [0],
+      "purpose": "Visualize sparse displacement flow and impulse spreading."
+    }
+  ]
+}

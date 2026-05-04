@@ -1,6 +1,6 @@
 use crate::layer_eval::{
     render_frame_with_footage_traced, CheckerboardFootageProvider, EffectTiming, FootageProvider,
-    FrameRenderTrace, LayerTiming,
+    FrameRenderTrace, LayerTiming, MotionBlurTrace, TemporalTraceRecord,
 };
 use raster_cpu::Canvas;
 use render_ir::{EffectSpec, Layer, Scene, Transform2D};
@@ -106,6 +106,11 @@ where
     let mut layer_profile = BTreeMap::<String, LayerTimingAggregate>::new();
     let mut effect_profile = BTreeMap::<String, EffectTimingAggregate>::new();
     let mut log = File::create(out_dir.join("render-log.jsonl"))?;
+    let mut adjustment_effects_log = File::create(out_dir.join("adjustment_effects.jsonl"))?;
+    let mut temporal_telemetry_log = File::create(out_dir.join("temporal_telemetry.jsonl"))?;
+    let mut text_telemetry_log = File::create(out_dir.join("text_telemetry.jsonl"))?;
+    let mut expression_telemetry_log = File::create(out_dir.join("expression_telemetry.jsonl"))?;
+    let mut collapse_telemetry_log = File::create(out_dir.join("collapse_telemetry.jsonl"))?;
     write_json_line(
         &mut log,
         &json!({
@@ -143,6 +148,36 @@ where
         );
         frame_timings.push(frame_timing.clone());
         record_profile(&trace, &mut layer_profile, &mut effect_profile);
+        write_adjustment_effect_trace_lines(&mut adjustment_effects_log, &trace)?;
+        write_temporal_trace_lines(&mut temporal_telemetry_log, &trace)?;
+        write_trace_value_lines(
+            &mut text_telemetry_log,
+            trace.frame,
+            trace.time,
+            "text.layout",
+            &trace.text_layouts,
+        )?;
+        write_trace_value_lines(
+            &mut text_telemetry_log,
+            trace.frame,
+            trace.time,
+            "text.selector_weights",
+            &trace.text_selector_weights,
+        )?;
+        write_trace_value_lines(
+            &mut expression_telemetry_log,
+            trace.frame,
+            trace.time,
+            "expression.position",
+            &trace.position_expressions,
+        )?;
+        write_trace_value_lines(
+            &mut collapse_telemetry_log,
+            trace.frame,
+            trace.time,
+            "collapse",
+            &trace.collapse,
+        )?;
         write_json_line(
             &mut log,
             &frame_log_json(
@@ -324,10 +359,12 @@ fn record_profile(
 ) {
     for layer in &trace.layers {
         let key = format!("{}:{}", layer.composition, layer.layer_id);
-        let entry = layer_profile.entry(key).or_insert_with(|| LayerTimingAggregate {
-            layer_type: layer.layer_type,
-            ..LayerTimingAggregate::default()
-        });
+        let entry = layer_profile
+            .entry(key)
+            .or_insert_with(|| LayerTimingAggregate {
+                layer_type: layer.layer_type,
+                ..LayerTimingAggregate::default()
+            });
         entry.calls += 1;
         entry.content_ms += layer.content_ms;
         entry.effects_ms += layer.effects_ms;
@@ -349,7 +386,14 @@ fn frame_trace_json(trace: &FrameRenderTrace) -> serde_json::Value {
         "frame": trace.frame,
         "time": trace.time,
         "layers": trace.layers.iter().map(layer_timing_json).collect::<Vec<_>>(),
-        "effects": trace.effects.iter().map(effect_timing_json).collect::<Vec<_>>()
+        "effects": trace.effects.iter().map(effect_timing_json).collect::<Vec<_>>(),
+        "adjustment_effects": trace.adjustment_effects.iter().map(adjustment_effect_trace_json).collect::<Vec<_>>(),
+        "temporal": trace.temporal.iter().map(temporal_trace_record_json).collect::<Vec<_>>(),
+        "motion_blur": trace.motion_blur.iter().map(motion_blur_trace_json).collect::<Vec<_>>(),
+        "text_layouts": &trace.text_layouts,
+        "text_selector_weights": &trace.text_selector_weights,
+        "position_expressions": &trace.position_expressions,
+        "collapse": &trace.collapse
     })
 }
 
@@ -373,41 +417,207 @@ fn effect_timing_json(timing: &EffectTiming) -> serde_json::Value {
     })
 }
 
-fn layer_profile_json(profile: &BTreeMap<String, LayerTimingAggregate>) -> serde_json::Value {
-    json!(
-        profile
-            .iter()
-            .map(|(key, aggregate)| {
-                json!({
-                    "layer": key,
-                    "type": aggregate.layer_type,
-                    "calls": aggregate.calls,
-                    "content_ms": aggregate.content_ms,
-                    "effects_ms": aggregate.effects_ms,
-                    "total_ms": aggregate.total_ms,
-                    "avg_total_ms": aggregate.total_ms / aggregate.calls.max(1) as f64,
-                    "max_total_ms": aggregate.max_total_ms
-                })
+fn adjustment_effect_trace_json(
+    trace: &crate::layer_eval::AdjustmentEffectTrace,
+) -> serde_json::Value {
+    json!({
+        "composition": trace.composition,
+        "layer_id": trace.layer_id,
+        "effect_index": trace.effect_index,
+        "match_name": trace.match_name,
+        "comp_time": trace.comp_time,
+        "layer_time": trace.layer_time,
+        "lower_stack_time": trace.lower_stack_time,
+        "param_time": trace.param_time,
+        "input_hash": trace.input_hash,
+        "output_hash": trace.output_hash,
+        "posterize": trace.posterize.map(|posterize| {
+            json!({
+                "frame_rate": posterize.frame_rate,
+                "bucket": posterize.bucket,
+                "bucket_time": posterize.bucket_time
             })
-            .collect::<Vec<_>>()
-    )
+        })
+    })
+}
+
+fn adjustment_effect_sidecar_json(
+    frame: u32,
+    time: f64,
+    trace: &crate::layer_eval::AdjustmentEffectTrace,
+) -> serde_json::Value {
+    let bucket_time = trace
+        .posterize
+        .map(|posterize| posterize.bucket_time)
+        .unwrap_or(trace.lower_stack_time);
+    json!({
+        "frame": frame,
+        "time": time,
+        "composition": trace.composition,
+        "layer_id": trace.layer_id,
+        "effect_index": trace.effect_index,
+        "match_name": trace.match_name,
+        "comp_time": trace.comp_time,
+        "layer_time": trace.layer_time,
+        "lower_stack_time": trace.lower_stack_time,
+        "bucket_time": bucket_time,
+        "param_time": trace.param_time,
+        "input_hash": trace.input_hash,
+        "output_hash": trace.output_hash,
+        "posterize": trace.posterize.map(|posterize| {
+            json!({
+                "frame_rate": posterize.frame_rate,
+                "bucket": posterize.bucket,
+                "bucket_time": posterize.bucket_time
+            })
+        })
+    })
+}
+
+fn temporal_trace_record_json(record: &TemporalTraceRecord) -> serde_json::Value {
+    json!({
+        "event": record.event,
+        "composition": record.composition,
+        "layer_id": record.layer_id,
+        "layer_type": record.layer_type,
+        "comp_time": record.comp_time,
+        "layer_start": record.layer_start,
+        "layer_time": record.layer_time,
+        "posterized_time": record.posterized_time,
+        "source_id": record.source_id,
+        "source_start": record.source_start,
+        "source_time": record.source_time,
+        "source_frame_id": record.source_frame_id,
+        "adjustment_lower_stack_time": record.adjustment_lower_stack_time,
+        "posterize": record.posterize.map(|posterize| {
+            json!({
+                "frame_rate": posterize.frame_rate,
+                "bucket": posterize.bucket,
+                "bucket_time": posterize.bucket_time
+            })
+        })
+    })
+}
+
+fn motion_blur_trace_json(trace: &MotionBlurTrace) -> serde_json::Value {
+    json!({
+        "event": "temporal.motion_blur",
+        "composition": trace.composition,
+        "layer_id": trace.layer_id,
+        "comp_time": trace.comp_time,
+        "frame_duration": trace.frame_duration,
+        "shutter_open": trace.shutter_open,
+        "shutter_close": trace.shutter_close,
+        "shutter_angle": trace.shutter_angle,
+        "shutter_phase": trace.shutter_phase,
+        "requested_samples": trace.requested_samples,
+        "effective_samples": trace.effective_samples,
+        "divisor": trace.divisor,
+        "samples": trace.samples.iter().map(|sample| {
+            json!({
+                "sample_index": sample.sample_index,
+                "sample_time": sample.sample_time,
+                "layer_time": sample.layer_time,
+                "posterized_time": sample.posterized_time,
+                "source_time": sample.source_time,
+                "source_frame_id": sample.source_frame_id,
+                "active": sample.active,
+                "opacity": sample.opacity,
+                "weight": sample.weight
+            })
+        }).collect::<Vec<_>>()
+    })
+}
+
+fn write_adjustment_effect_trace_lines(
+    log: &mut File,
+    trace: &FrameRenderTrace,
+) -> anyhow::Result<()> {
+    for effect_trace in &trace.adjustment_effects {
+        write_json_line(
+            log,
+            &adjustment_effect_sidecar_json(trace.frame, trace.time, effect_trace),
+        )?;
+    }
+    Ok(())
+}
+
+fn write_temporal_trace_lines(log: &mut File, trace: &FrameRenderTrace) -> anyhow::Result<()> {
+    for record in &trace.temporal {
+        write_json_line(
+            log,
+            &json!({
+                "frame": trace.frame,
+                "time": trace.time,
+                "record": temporal_trace_record_json(record)
+            }),
+        )?;
+    }
+    for motion_blur in &trace.motion_blur {
+        write_json_line(
+            log,
+            &json!({
+                "frame": trace.frame,
+                "time": trace.time,
+                "record": motion_blur_trace_json(motion_blur)
+            }),
+        )?;
+    }
+    Ok(())
+}
+
+fn write_trace_value_lines(
+    log: &mut File,
+    frame: u32,
+    time: f64,
+    event: &str,
+    records: &[serde_json::Value],
+) -> anyhow::Result<()> {
+    for record in records {
+        write_json_line(
+            log,
+            &json!({
+                "event": event,
+                "frame": frame,
+                "time": time,
+                "record": record
+            }),
+        )?;
+    }
+    Ok(())
+}
+
+fn layer_profile_json(profile: &BTreeMap<String, LayerTimingAggregate>) -> serde_json::Value {
+    json!(profile
+        .iter()
+        .map(|(key, aggregate)| {
+            json!({
+                "layer": key,
+                "type": aggregate.layer_type,
+                "calls": aggregate.calls,
+                "content_ms": aggregate.content_ms,
+                "effects_ms": aggregate.effects_ms,
+                "total_ms": aggregate.total_ms,
+                "avg_total_ms": aggregate.total_ms / aggregate.calls.max(1) as f64,
+                "max_total_ms": aggregate.max_total_ms
+            })
+        })
+        .collect::<Vec<_>>())
 }
 
 fn effect_profile_json(profile: &BTreeMap<String, EffectTimingAggregate>) -> serde_json::Value {
-    json!(
-        profile
-            .iter()
-            .map(|(match_name, aggregate)| {
-                json!({
-                    "match_name": match_name,
-                    "calls": aggregate.calls,
-                    "total_ms": aggregate.total_ms,
-                    "avg_ms": aggregate.total_ms / aggregate.calls.max(1) as f64,
-                    "max_ms": aggregate.max_ms
-                })
+    json!(profile
+        .iter()
+        .map(|(match_name, aggregate)| {
+            json!({
+                "match_name": match_name,
+                "calls": aggregate.calls,
+                "total_ms": aggregate.total_ms,
+                "avg_ms": aggregate.total_ms / aggregate.calls.max(1) as f64,
+                "max_ms": aggregate.max_ms
             })
-            .collect::<Vec<_>>()
-    )
+        })
+        .collect::<Vec<_>>())
 }
 
 pub fn mux_png_sequence_to_mp4(
@@ -551,18 +761,10 @@ fn collect_layer_features(
             if is_supported_effect(&effect.match_name) {
                 counts.effects.supported += 1;
                 counts.effects.approximate += 1;
-                approximate.insert(format!(
-                    "layer.{}.effect.{}",
-                    layer.id(),
-                    effect.match_name
-                ));
+                approximate.insert(format!("layer.{}.effect.{}", layer.id(), effect.match_name));
             } else {
                 counts.effects.unsupported += 1;
-                unsupported.insert(format!(
-                    "layer.{}.effect.{}",
-                    layer.id(),
-                    effect.match_name
-                ));
+                unsupported.insert(format!("layer.{}.effect.{}", layer.id(), effect.match_name));
             }
         }
     }
@@ -673,13 +875,23 @@ fn approximate_keyframes(transform: Option<&Transform2D>) -> Vec<&'static str> {
         return Vec::new();
     };
     let mut features = Vec::new();
-    if transform.animation.position.iter().any(|key| key.approximate) {
+    if transform
+        .animation
+        .position
+        .iter()
+        .any(|key| key.approximate)
+    {
         features.push("keyframes.position.bezier_ease_approx");
     }
     if transform.animation.scale.iter().any(|key| key.approximate) {
         features.push("keyframes.scale.bezier_ease_approx");
     }
-    if transform.animation.opacity.iter().any(|key| key.approximate) {
+    if transform
+        .animation
+        .opacity
+        .iter()
+        .any(|key| key.approximate)
+    {
         features.push("keyframes.opacity.bezier_ease_approx");
     }
     if transform.animation.reveal.iter().any(|key| key.approximate) {
@@ -715,6 +927,7 @@ fn write_json_line(log: &mut File, value: &serde_json::Value) -> anyhow::Result<
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::layer_eval::{AdjustmentEffectTrace, PosterizeTiming};
     use render_ir::{Asset, AssetKind, Composition, CompositionNode, Rect};
 
     #[test]
@@ -728,6 +941,7 @@ mod tests {
                 fps: 30.0,
                 duration: 1.0,
                 background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
             },
             compositions: vec![CompositionNode {
                 composition: Composition {
@@ -737,6 +951,7 @@ mod tests {
                     fps: 30.0,
                     duration: 1.0,
                     background: [0, 0, 0, 0],
+                    motion_blur: render_ir::MotionBlurSettings::default(),
                 },
                 layers: vec![Layer::Adjustment {
                     id: "adjust".to_string(),
@@ -799,6 +1014,7 @@ mod tests {
                 fps: 30.0,
                 duration: 0.0,
                 background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
             },
             compositions: Vec::new(),
             assets: vec![Asset {
@@ -817,5 +1033,62 @@ mod tests {
         assert_eq!(first[0]["type"].as_str(), Some("image"));
         assert_eq!(first[0]["source"].as_str(), Some("asset_spec"));
         assert_eq!(first[0]["algorithm"].as_str(), Some("sha256"));
+    }
+
+    #[test]
+    fn adjustment_effect_sidecar_writes_one_record_per_effect() {
+        let trace = FrameRenderTrace {
+            frame: 5,
+            time: 0.16666666666666666,
+            layers: Vec::new(),
+            effects: Vec::new(),
+            adjustment_effects: vec![AdjustmentEffectTrace {
+                composition: "main".to_string(),
+                layer_id: "adjust".to_string(),
+                effect_index: 1,
+                match_name: "ADBE Posterize Time".to_string(),
+                comp_time: 0.16666666666666666,
+                layer_time: 0.16666666666666666,
+                lower_stack_time: 0.0,
+                param_time: 0.0,
+                input_hash: "input".to_string(),
+                output_hash: "output".to_string(),
+                posterize: Some(PosterizeTiming {
+                    frame_rate: 6.0,
+                    bucket: Some(1),
+                    bucket_time: 0.0,
+                }),
+            }],
+            temporal: Vec::new(),
+            motion_blur: Vec::new(),
+            effect_debug: Vec::new(),
+            text_layouts: Vec::new(),
+            text_selector_weights: Vec::new(),
+            position_expressions: Vec::new(),
+            collapse: Vec::new(),
+        };
+        let path = std::env::temp_dir().join(format!(
+            "ae_native_adjustment_effects_{}_{}.jsonl",
+            std::process::id(),
+            trace.frame
+        ));
+
+        {
+            let mut file = File::create(&path).unwrap();
+            write_adjustment_effect_trace_lines(&mut file, &trace).unwrap();
+        }
+
+        let raw = std::fs::read_to_string(&path).unwrap();
+        let lines = raw.lines().collect::<Vec<_>>();
+        assert_eq!(lines.len(), 1);
+        let record: serde_json::Value = serde_json::from_str(lines[0]).unwrap();
+        assert_eq!(record["frame"].as_u64(), Some(5));
+        assert_eq!(record["match_name"].as_str(), Some("ADBE Posterize Time"));
+        assert_eq!(record["bucket_time"].as_f64(), Some(0.0));
+        assert_eq!(record["param_time"].as_f64(), Some(0.0));
+        assert_eq!(record["input_hash"].as_str(), Some("input"));
+        assert_eq!(record["output_hash"].as_str(), Some("output"));
+        assert_eq!(record["posterize"]["frame_rate"].as_f64(), Some(6.0));
+        let _ = std::fs::remove_file(path);
     }
 }

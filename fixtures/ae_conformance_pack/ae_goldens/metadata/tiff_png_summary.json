@@ -1,0 +1,273 @@
+﻿{
+    "status":  "OK",
+    "host":  "85.239.48.31",
+    "run_id":  "ae_conformance_clean_cases_85_20260503_170505",
+    "project":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\work\\project.aep",
+    "tiff_root":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\tiff",
+    "png_root":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\png",
+    "cases":  23,
+    "expected_frames_per_case":  60,
+    "total_tif":  1380,
+    "total_png":  1380,
+    "missing_font_case_count":  0,
+    "render_rows":  [
+                        {
+                            "id":  "PRI_010",
+                            "comp":  "PRI_010__primitive impulse/alpha/color source sanity",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\PRI_010.aerender.log"
+                        },
+                        {
+                            "id":  "INT_010",
+                            "comp":  "INT_010__linear/hold position and opacity interpolation",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\INT_010.aerender.log"
+                        },
+                        {
+                            "id":  "INT_020",
+                            "comp":  "INT_020__bezier/ease position and opacity interpolation",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\INT_020.aerender.log"
+                        },
+                        {
+                            "id":  "TMP_010",
+                            "comp":  "TMP_010__source/layer start time and frame mapping",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\TMP_010.aerender.log"
+                        },
+                        {
+                            "id":  "TMP_020",
+                            "comp":  "TMP_020__Posterize Time numbered-frame boundaries",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\TMP_020.aerender.log"
+                        },
+                        {
+                            "id":  "TMP_030",
+                            "comp":  "TMP_030__motion blur velocity and shutter window",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\TMP_030.aerender.log"
+                        },
+                        {
+                            "id":  "EFF_010",
+                            "comp":  "EFF_010__Drop Shadow on alpha square",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\EFF_010.aerender.log"
+                        },
+                        {
+                            "id":  "EFF_020",
+                            "comp":  "EFF_020__Glow on luma ramp",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\EFF_020.aerender.log"
+                        },
+                        {
+                            "id":  "EFF_030",
+                            "comp":  "EFF_030__Box Blur on impulse",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\EFF_030.aerender.log"
+                        },
+                        {
+                            "id":  "EFF_040",
+                            "comp":  "EFF_040__Geometry2 coordinate-field transform",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\EFF_040.aerender.log"
+                        },
+                        {
+                            "id":  "EFF_050",
+                            "comp":  "EFF_050__Minimax alpha-square morphology",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\EFF_050.aerender.log"
+                        },
+                        {
+                            "id":  "EFF_060",
+                            "comp":  "EFF_060__Turbulent Displace coordinate-field warp",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\EFF_060.aerender.log"
+                        },
+                        {
+                            "id":  "EFF_070",
+                            "comp":  "EFF_070__animated effect params over fixed primitive",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\EFF_070.aerender.log"
+                        },
+                        {
+                            "id":  "TXT_010",
+                            "comp":  "TXT_010__Montserrat word reveal",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\TXT_010.aerender.log"
+                        },
+                        {
+                            "id":  "TXT_020",
+                            "comp":  "TXT_020__Montserrat character and line reveal",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\TXT_020.aerender.log"
+                        },
+                        {
+                            "id":  "TXT_030",
+                            "comp":  "TXT_030__Point-Light glyph animator position/scale/rotation/blur",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\TXT_030.aerender.log"
+                        },
+                        {
+                            "id":  "TXT_040",
+                            "comp":  "TXT_040__expression-selector bounce pattern",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\TXT_040.aerender.log"
+                        },
+                        {
+                            "id":  "EXP_010",
+                            "comp":  "EXP_010__edge_wobble expression subset",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\EXP_010.aerender.log"
+                        },
+                        {
+                            "id":  "STK_010",
+                            "comp":  "STK_010__Drop Shadow x2 stack",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\STK_010.aerender.log"
+                        },
+                        {
+                            "id":  "STK_020",
+                            "comp":  "STK_020__Blur then Minimax non-commutative stack",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\STK_020.aerender.log"
+                        },
+                        {
+                            "id":  "STK_030",
+                            "comp":  "STK_030__Geometry2 -\u003e Posterize -\u003e Minimax -\u003e Turbulent adjustment stack",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\STK_030.aerender.log"
+                        },
+                        {
+                            "id":  "GPH_010",
+                            "comp":  "GPH_010__nested precomp and collapse-transform text sharpness",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\GPH_010.aerender.log"
+                        },
+                        {
+                            "id":  "CMP_010",
+                            "comp":  "CMP_010__alpha/composite/sampling audit",
+                            "tif_count":  60,
+                            "missing_fonts":  false,
+                            "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_pack\\ae_goldens\\logs_tiff\\CMP_010.aerender.log"
+                        }
+                    ],
+    "convert_rows":  [
+                         {
+                             "id":  "PRI_010",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "INT_010",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "INT_020",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "TMP_010",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "TMP_020",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "TMP_030",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "EFF_010",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "EFF_020",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "EFF_030",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "EFF_040",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "EFF_050",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "EFF_060",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "EFF_070",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "TXT_010",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "TXT_020",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "TXT_030",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "TXT_040",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "EXP_010",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "STK_010",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "STK_020",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "STK_030",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "GPH_010",
+                             "png_count":  60
+                         },
+                         {
+                             "id":  "CMP_010",
+                             "png_count":  60
+                         }
+                     ],
+    "log":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\render_tiff_then_png.log",
+    "archive":  "C:\\ae_jobs\\ae_conformance_clean_cases_85_20260503_170505\\ae_conformance_goldens_png_tiff_ae_conformance_clean_cases_85_20260503_170505.zip",
+    "note":  "resumed after STK_030 manifest/jsx comp-title mismatch; used actual comp names"
+}

@@ -1,0 +1,128 @@
+{
+  "version": "v0",
+  "composition": {
+    "id": "conformance_effects_stack_probe",
+    "width": 96,
+    "height": 64,
+    "fps": 30.0,
+    "duration": 0.1,
+    "background": [10, 12, 16, 255]
+  },
+  "assets": [],
+  "layers": [
+    {
+      "type": "adjustment",
+      "id": "adjustment_effects_probe",
+      "start": 0.0,
+      "duration": 0.1,
+      "effects": [
+        {
+          "match_name": "ADBE Geometry2",
+          "params": {
+            "0001": [48, 32],
+            "0002": [49, 31],
+            "0003": 98,
+            "0008": 102
+          }
+        },
+        {
+          "match_name": "ADBE Minimax",
+          "params": {
+            "0001": 1,
+            "0002": 1,
+            "0003": 1
+          }
+        },
+        {
+          "match_name": "ADBE Posterize Time",
+          "params": {
+            "0001": 12
+          }
+        },
+        {
+          "match_name": "ADBE Turbulent Displace",
+          "params": {
+            "0002": 2,
+            "0003": 18,
+            "0005": 1,
+            "0006": 45
+          }
+        }
+      ]
+    },
+    {
+      "type": "solid",
+      "id": "shadow_glow_blur_subject",
+      "start": 0.0,
+      "duration": 0.1,
+      "color": [238, 246, 255, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 24.0, "h": 18.0 },
+      "transform": {
+        "anchor": [12.0, 9.0],
+        "position": [40.0, 30.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": [
+        {
+          "match_name": "ADBE Drop Shadow",
+          "params": {
+            "0001": [0, 0, 0, 1],
+            "0002": 180,
+            "0003": 135,
+            "0004": 5,
+            "0005": 4
+          }
+        },
+        {
+          "match_name": "ADBE Glo2",
+          "params": {
+            "0002": 70,
+            "0003": 8,
+            "0004": 0.7
+          }
+        },
+        {
+          "match_name": "ADBE Box Blur2",
+          "params": {
+            "0001": 1,
+            "0002": 1
+          }
+        }
+      ]
+    },
+    {
+      "type": "solid",
+      "id": "effect_color_reference",
+      "start": 0.0,
+      "duration": 0.1,
+      "color": [68, 214, 128, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 12.0, "h": 28.0 },
+      "transform": {
+        "anchor": [6.0, 14.0],
+        "position": [64.0, 32.0],
+        "scale": [100.0, 100.0],
+        "rotation": 12.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    },
+    {
+      "type": "solid",
+      "id": "effects_background",
+      "start": 0.0,
+      "duration": 0.1,
+      "color": [20, 24, 32, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 96.0, "h": 64.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [0.0, 0.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    }
+  ]
+}

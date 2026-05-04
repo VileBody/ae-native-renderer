@@ -1,0 +1,87 @@
+[
+  {
+    "id": "transparent",
+    "path": "assets/primitives/transparent.png",
+    "width": 256,
+    "height": 256,
+    "description": "fully transparent RGBA"
+  },
+  {
+    "id": "impulse_center",
+    "path": "assets/primitives/impulse_center.png",
+    "width": 256,
+    "height": 256,
+    "description": "single-pixel impulse"
+  },
+  {
+    "id": "impulse_grid",
+    "path": "assets/primitives/impulse_grid.png",
+    "width": 256,
+    "height": 256,
+    "description": "three-pixel impulse grid"
+  },
+  {
+    "id": "alpha_square",
+    "path": "assets/primitives/alpha_square.png",
+    "width": 256,
+    "height": 256,
+    "description": "hard opaque square on transparent"
+  },
+  {
+    "id": "alpha_ramp",
+    "path": "assets/primitives/alpha_ramp.png",
+    "width": 256,
+    "height": 256,
+    "description": "white RGB with horizontal alpha ramp"
+  },
+  {
+    "id": "luma_ramp",
+    "path": "assets/primitives/luma_ramp.png",
+    "width": 256,
+    "height": 256,
+    "description": "horizontal luminance ramp"
+  },
+  {
+    "id": "coordinate_field",
+    "path": "assets/primitives/coordinate_field.png",
+    "width": 256,
+    "height": 256,
+    "description": "R=x, G=y coordinate field"
+  },
+  {
+    "id": "checkerboard_16",
+    "path": "assets/primitives/checkerboard_16.png",
+    "width": 256,
+    "height": 256,
+    "description": "16px checkerboard"
+  },
+  {
+    "id": "hard_edge",
+    "path": "assets/primitives/hard_edge.png",
+    "width": 256,
+    "height": 256,
+    "description": "black/white hard vertical edge"
+  },
+  {
+    "id": "color_bars",
+    "path": "assets/primitives/color_bars.png",
+    "width": 256,
+    "height": 256,
+    "description": "RGBA color bars"
+  },
+  {
+    "id": "premult_probe",
+    "path": "assets/primitives/premult_probe.png",
+    "width": 256,
+    "height": 256,
+    "description": "red alpha ramp for premult audit"
+  },
+  {
+    "id": "numbered_frames",
+    "path": "assets/primitives/numbered_frames/frame_0000.png",
+    "width": 256,
+    "height": 256,
+    "frames": 90,
+    "description": "PNG sequence with frame index encoded in RGB and top bit bars"
+  }
+]

@@ -1,0 +1,247 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "glow_shadow_probe_pack_round5",
+  "purpose": "After Effects probe compositions for Glow and Drop Shadow intermediate questions. This pack contains no AE goldens.",
+  "composition": {
+    "width": 512,
+    "height": 512,
+    "fps": 30,
+    "case_duration_seconds": 1.0,
+    "master_comp": "master_glow_shadow_probe_reel"
+  },
+  "builder": {
+    "jsx": "jsx/build_glow_shadow_probe_project.jsx",
+    "procedural_assets": [
+      "SRC_luma_ramp_16_steps",
+      "SRC_alpha_split_probe",
+      "SRC_alpha_square",
+      "MASK_luma_ge_120",
+      "MASK_alpha_split_luma_rule",
+      "MASK_alpha_split_alpha_rule"
+    ],
+    "external_assets": []
+  },
+  "render_outputs": {
+    "individual_png_sequences": "ae_probe_outputs/png/<case_id>/<case_id>_[#####].png",
+    "master_preview": "ae_probe_outputs/preview/master_glow_shadow_probe_reel.mov",
+    "required_channels": "RGB + Alpha, straight/unmatted when available",
+    "frames_to_export": [0]
+  },
+  "effect_params": {
+    "glow_eff_020_match": {
+      "match_name": "ADBE Glo2",
+      "threshold": 120,
+      "radius": 35,
+      "intensity": 1.25
+    },
+    "drop_shadow_eff_010_match": {
+      "match_name": "ADBE Drop Shadow",
+      "color_rgba": [0, 0, 0, 1],
+      "opacity": 180,
+      "direction_degrees": 135,
+      "distance": 28,
+      "softness": 18,
+      "shadow_only": false
+    }
+  },
+  "cases": [
+    {
+      "id": "GLO_010",
+      "title": "Glow threshold source, opaque luma ramp",
+      "effect": "Glow",
+      "stage": "threshold_source_rgba",
+      "comp": "GLO_010__Glow threshold source opaque luma ramp",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_luma_ramp_16_steps"],
+      "desired_output": "ae_probe_outputs/png/GLO_010/GLO_010_[#####].png",
+      "question": "What exact RGBA source is being fed into Glow thresholding for the opaque luma ramp?"
+    },
+    {
+      "id": "GLO_020",
+      "title": "Glow luma threshold mask candidate",
+      "effect": "Glow",
+      "stage": "threshold_mask_candidate",
+      "comp": "GLO_020__Glow luma threshold mask candidate",
+      "frames": [0],
+      "expected_assets": ["procedural:MASK_luma_ge_120"],
+      "desired_output": "ae_probe_outputs/png/GLO_020/GLO_020_[#####].png",
+      "question": "Does the AE final look consistent with a luma >= 120 mask on the opaque ramp?"
+    },
+    {
+      "id": "GLO_030",
+      "title": "Glow blurred luma mask candidate",
+      "effect": "Glow",
+      "stage": "blurred_glow_rgba_candidate",
+      "comp": "GLO_030__Glow blurred luma mask candidate",
+      "frames": [0],
+      "expected_assets": ["procedural:MASK_luma_ge_120"],
+      "desired_output": "ae_probe_outputs/png/GLO_030/GLO_030_[#####].png",
+      "question": "How close is a radius-35 blurred threshold mask to the spread seen in AE Glow?"
+    },
+    {
+      "id": "GLO_040",
+      "title": "Glow intensity scaled luma candidate",
+      "effect": "Glow",
+      "stage": "intensity_scaled_glow_rgba_candidate",
+      "comp": "GLO_040__Glow intensity scaled luma candidate",
+      "frames": [0],
+      "expected_assets": ["procedural:MASK_luma_ge_120"],
+      "desired_output": "ae_probe_outputs/png/GLO_040/GLO_040_[#####].png",
+      "question": "Does the 1.25x candidate explain AE Glow brightness before final composite?"
+    },
+    {
+      "id": "GLO_050",
+      "title": "Glow final AE output on opaque luma ramp",
+      "effect": "Glow",
+      "stage": "final_rgba",
+      "comp": "GLO_050__Glow final AE output opaque luma ramp",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_luma_ramp_16_steps"],
+      "desired_output": "ae_probe_outputs/png/GLO_050/GLO_050_[#####].png",
+      "question": "What is AE's final Glow output for the current EFF_020 parameter set?"
+    },
+    {
+      "id": "GLO_060",
+      "title": "Glow threshold source, alpha/luma split",
+      "effect": "Glow",
+      "stage": "threshold_source_rgba",
+      "comp": "GLO_060__Glow threshold source alpha luma split",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_split_probe"],
+      "desired_output": "ae_probe_outputs/png/GLO_060/GLO_060_[#####].png",
+      "question": "What source separates bright-low-alpha from dark-high-alpha pixels?"
+    },
+    {
+      "id": "GLO_070",
+      "title": "Glow alpha-split luma-rule mask candidate",
+      "effect": "Glow",
+      "stage": "threshold_mask_candidate",
+      "comp": "GLO_070__Glow alpha split luma rule mask candidate",
+      "frames": [0],
+      "expected_assets": ["procedural:MASK_alpha_split_luma_rule"],
+      "desired_output": "ae_probe_outputs/png/GLO_070/GLO_070_[#####].png",
+      "question": "Would AE include bright pixels even when their alpha is below threshold?"
+    },
+    {
+      "id": "GLO_080",
+      "title": "Glow alpha-split alpha-rule mask candidate",
+      "effect": "Glow",
+      "stage": "threshold_mask_candidate",
+      "comp": "GLO_080__Glow alpha split alpha rule mask candidate",
+      "frames": [0],
+      "expected_assets": ["procedural:MASK_alpha_split_alpha_rule"],
+      "desired_output": "ae_probe_outputs/png/GLO_080/GLO_080_[#####].png",
+      "question": "Would AE include dark pixels when their alpha is above threshold?"
+    },
+    {
+      "id": "GLO_090",
+      "title": "Glow final AE output on alpha/luma split source",
+      "effect": "Glow",
+      "stage": "final_rgba",
+      "comp": "GLO_090__Glow final AE output alpha luma split",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_split_probe"],
+      "desired_output": "ae_probe_outputs/png/GLO_090/GLO_090_[#####].png",
+      "question": "Does default AE Glow follow luma, alpha, or both on separated source pixels?"
+    },
+    {
+      "id": "GLO_100",
+      "title": "Glow final AE output alpha-split with Glow Based On value 1",
+      "effect": "Glow",
+      "stage": "final_rgba",
+      "comp": "GLO_100__Glow final AE output based on enum 1",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_split_probe"],
+      "desired_output": "ae_probe_outputs/png/GLO_100/GLO_100_[#####].png",
+      "question": "If AE accepts Glow Based On enum value 1, which threshold behavior does it produce?"
+    },
+    {
+      "id": "GLO_101",
+      "title": "Glow final AE output alpha-split with Glow Based On value 2",
+      "effect": "Glow",
+      "stage": "final_rgba",
+      "comp": "GLO_101__Glow final AE output based on enum 2",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_split_probe"],
+      "desired_output": "ae_probe_outputs/png/GLO_101/GLO_101_[#####].png",
+      "question": "If AE accepts Glow Based On enum value 2, which threshold behavior does it produce?"
+    },
+    {
+      "id": "DSH_010",
+      "title": "Drop Shadow source alpha square",
+      "effect": "Drop Shadow",
+      "stage": "source_alpha_rgba",
+      "comp": "DSH_010__Drop Shadow source alpha square",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_square"],
+      "desired_output": "ae_probe_outputs/png/DSH_010/DSH_010_[#####].png",
+      "question": "What exact alpha mask enters Drop Shadow generation?"
+    },
+    {
+      "id": "DSH_020",
+      "title": "Drop Shadow no-softness shadow-only raw output",
+      "effect": "Drop Shadow",
+      "stage": "raw_offset_shadow_rgba",
+      "comp": "DSH_020__Drop Shadow no softness shadow only raw output",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_square"],
+      "desired_output": "ae_probe_outputs/png/DSH_020/DSH_020_[#####].png",
+      "question": "With softness 0 and Shadow Only on, what raw offset does AE use?"
+    },
+    {
+      "id": "DSH_030",
+      "title": "Drop Shadow no-softness final composite",
+      "effect": "Drop Shadow",
+      "stage": "final_rgba_no_softness",
+      "comp": "DSH_030__Drop Shadow no softness final composite",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_square"],
+      "desired_output": "ae_probe_outputs/png/DSH_030/DSH_030_[#####].png",
+      "question": "How does AE composite the unblurred shadow with the original source?"
+    },
+    {
+      "id": "DSH_040",
+      "title": "Drop Shadow softened shadow-only output",
+      "effect": "Drop Shadow",
+      "stage": "blurred_shadow_rgba",
+      "comp": "DSH_040__Drop Shadow softened shadow only output",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_square"],
+      "desired_output": "ae_probe_outputs/png/DSH_040/DSH_040_[#####].png",
+      "question": "What softened shadow does AE generate before source compositing?"
+    },
+    {
+      "id": "DSH_050",
+      "title": "Drop Shadow softened final composite",
+      "effect": "Drop Shadow",
+      "stage": "final_rgba",
+      "comp": "DSH_050__Drop Shadow softened final composite",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_square"],
+      "desired_output": "ae_probe_outputs/png/DSH_050/DSH_050_[#####].png",
+      "question": "What is AE's final Drop Shadow output for the current EFF_010 parameter set?"
+    },
+    {
+      "id": "DSH_060",
+      "title": "Drop Shadow manual raw offset dx -20 dy +20 candidate",
+      "effect": "Drop Shadow",
+      "stage": "raw_offset_shadow_rgba_candidate",
+      "comp": "DSH_060__Drop Shadow manual raw offset dx neg20 dy pos20",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_square"],
+      "desired_output": "ae_probe_outputs/png/DSH_060/DSH_060_[#####].png",
+      "question": "Does the no-softness AE output match native's current dx=-20, dy=20 convention?"
+    },
+    {
+      "id": "DSH_061",
+      "title": "Drop Shadow manual raw offset dx +20 dy +20 candidate",
+      "effect": "Drop Shadow",
+      "stage": "raw_offset_shadow_rgba_candidate",
+      "comp": "DSH_061__Drop Shadow manual raw offset dx pos20 dy pos20",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_alpha_square"],
+      "desired_output": "ae_probe_outputs/png/DSH_061/DSH_061_[#####].png",
+      "question": "Does the no-softness AE output instead match a positive-x direction convention?"
+    }
+  ]
+}

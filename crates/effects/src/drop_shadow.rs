@@ -1,5 +1,5 @@
 use crate::{
-    box_blur::{blur_canvas, blur_radius},
+    box_blur::{blur_canvas, blur_radius, canvas_debug_hash},
     param_bool_any, param_f32_any, param_rgba_any, Effect, EffectContext,
 };
 use raster_cpu::{composite_normal, Canvas};
@@ -22,12 +22,10 @@ impl Effect for DropShadow {
         let params = DropShadowParams::from_json(params);
         let color = params.color;
         let opacity = normalize_opacity(params.opacity);
-        let direction = params.direction_degrees.to_radians();
         let distance = params.distance;
         let softness = params.softness;
         let shadow_only = params.shadow_only;
-        let dx = (direction.cos() * distance).round() as i32;
-        let dy = (direction.sin() * distance).round() as i32;
+        let (dx, dy) = drop_shadow_offset(params.direction_degrees, distance);
 
         let mut shadow = Canvas::transparent(input.width, input.height);
         for y in 0..input.height {
@@ -46,18 +44,14 @@ impl Effect for DropShadow {
                     .clamp(0.0, 255.0) as u8;
                 let existing = shadow.pixel(sx as u32, sy as u32);
                 if alpha > existing[3] {
-                    shadow.set_pixel(
-                        sx as u32,
-                        sy as u32,
-                        [color[0], color[1], color[2], alpha],
-                    );
+                    shadow.set_pixel(sx as u32, sy as u32, [color[0], color[1], color[2], alpha]);
                 }
             }
         }
 
-        let radius = blur_radius(softness / 2.0);
+        let radius = drop_shadow_blur_radius(softness);
         if radius > 0 {
-            shadow = blur_canvas(&shadow, radius);
+            shadow = blur_shadow_alpha_channel_only(&shadow, radius, color);
         }
 
         if shadow_only {
@@ -93,6 +87,162 @@ impl DropShadowParams {
     }
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DropShadowDebugParams {
+    pub color: [u8; 4],
+    pub opacity: f32,
+    pub opacity_normalized: f32,
+    pub direction_degrees: f32,
+    pub distance: f32,
+    pub softness: f32,
+    pub shadow_only: bool,
+    pub dx: i32,
+    pub dy: i32,
+    pub blur_radius: u32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct DropShadowIntermediateHashes {
+    pub input_rgba: u64,
+    pub source_alpha_rgba: u64,
+    pub raw_offset_shadow_rgba: u64,
+    pub blurred_shadow_rgba: u64,
+    pub final_rgba: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DropShadowDebugTrace {
+    pub params: DropShadowDebugParams,
+    pub hashes: DropShadowIntermediateHashes,
+}
+
+pub fn drop_shadow_debug_trace(input: &Canvas, params: &Value) -> DropShadowDebugTrace {
+    let params = DropShadowParams::from_json(params);
+    let resolved = resolve_drop_shadow_debug_params(params);
+    let source_alpha = alpha_mask_canvas(input);
+    let raw_shadow = raw_offset_shadow_canvas(input, params, resolved);
+    let mut blurred_shadow = raw_shadow.clone();
+    if resolved.blur_radius > 0 {
+        blurred_shadow =
+            blur_shadow_alpha_channel_only(&blurred_shadow, resolved.blur_radius, params.color);
+    }
+
+    let mut output = blurred_shadow.clone();
+    if !params.shadow_only {
+        composite_normal(&mut output, input, 100.0);
+    }
+
+    DropShadowDebugTrace {
+        params: resolved,
+        hashes: DropShadowIntermediateHashes {
+            input_rgba: canvas_debug_hash(input),
+            source_alpha_rgba: canvas_debug_hash(&source_alpha),
+            raw_offset_shadow_rgba: canvas_debug_hash(&raw_shadow),
+            blurred_shadow_rgba: canvas_debug_hash(&blurred_shadow),
+            final_rgba: canvas_debug_hash(&output),
+        },
+    }
+}
+
+fn resolve_drop_shadow_debug_params(params: DropShadowParams) -> DropShadowDebugParams {
+    let (dx, dy) = drop_shadow_offset(params.direction_degrees, params.distance);
+    DropShadowDebugParams {
+        color: params.color,
+        opacity: params.opacity,
+        opacity_normalized: normalize_opacity(params.opacity),
+        direction_degrees: params.direction_degrees,
+        distance: params.distance,
+        softness: params.softness,
+        shadow_only: params.shadow_only,
+        dx,
+        dy,
+        blur_radius: drop_shadow_blur_radius(params.softness),
+    }
+}
+
+fn drop_shadow_offset(direction_degrees: f32, distance: f32) -> (i32, i32) {
+    let direction = direction_degrees.to_radians();
+    (
+        (-direction.cos() * distance).trunc() as i32,
+        (direction.sin() * distance).trunc() as i32,
+    )
+}
+
+fn drop_shadow_blur_radius(softness: f32) -> u32 {
+    if softness <= 0.0 {
+        0
+    } else {
+        blur_radius(softness / 2.0).saturating_add(1)
+    }
+}
+
+fn alpha_mask_canvas(input: &Canvas) -> Canvas {
+    let mut mask = Canvas::transparent(input.width, input.height);
+    for y in 0..input.height {
+        for x in 0..input.width {
+            let alpha = input.pixel(x, y)[3];
+            mask.set_pixel(x, y, [alpha, alpha, alpha, alpha]);
+        }
+    }
+    mask
+}
+
+fn blur_shadow_alpha_channel_only(shadow: &Canvas, radius: u32, color: [u8; 4]) -> Canvas {
+    let mut alpha_only = Canvas::transparent(shadow.width, shadow.height);
+    for y in 0..shadow.height {
+        for x in 0..shadow.width {
+            let alpha = shadow.pixel(x, y)[3];
+            alpha_only.set_pixel(x, y, [0, 0, 0, alpha]);
+        }
+    }
+
+    let blurred_alpha = blur_canvas(&alpha_only, radius);
+    let mut output = Canvas::transparent(shadow.width, shadow.height);
+    for y in 0..shadow.height {
+        for x in 0..shadow.width {
+            let alpha = blurred_alpha.pixel(x, y)[3];
+            if alpha != 0 {
+                output.set_pixel(x, y, [color[0], color[1], color[2], alpha]);
+            }
+        }
+    }
+    output
+}
+
+fn raw_offset_shadow_canvas(
+    input: &Canvas,
+    params: DropShadowParams,
+    resolved: DropShadowDebugParams,
+) -> Canvas {
+    let mut shadow = Canvas::transparent(input.width, input.height);
+    for y in 0..input.height {
+        for x in 0..input.width {
+            let source = input.pixel(x, y);
+            if source[3] == 0 {
+                continue;
+            }
+            let sx = x as i32 + resolved.dx;
+            let sy = y as i32 + resolved.dy;
+            if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
+                continue;
+            }
+            let alpha =
+                (source[3] as f32 * resolved.opacity_normalized * (params.color[3] as f32 / 255.0))
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+            let existing = shadow.pixel(sx as u32, sy as u32);
+            if alpha > existing[3] {
+                shadow.set_pixel(
+                    sx as u32,
+                    sy as u32,
+                    [params.color[0], params.color[1], params.color[2], alpha],
+                );
+            }
+        }
+    }
+    shadow
+}
+
 fn normalize_opacity(value: f32) -> f32 {
     if value > 100.0 {
         (value / 255.0).clamp(0.0, 1.0)
@@ -121,7 +271,7 @@ mod tests {
                 &json!({
                     "0001": [0, 0, 0, 1],
                     "0002": 255,
-                    "0003": 0,
+                    "0003": 180,
                     "0004": 1,
                     "0005": 0,
                     "0006": true
@@ -149,5 +299,35 @@ mod tests {
         assert_eq!(params.distance, 12.0);
         assert_eq!(params.softness, 4.0);
         assert!(params.shadow_only);
+    }
+
+    #[test]
+    fn ae_probe_direction_135_offsets_down_and_right() {
+        assert_eq!(drop_shadow_offset(135.0, 28.0), (19, 19));
+    }
+
+    #[test]
+    fn offset_uses_truncation_for_fractional_distances() {
+        assert_eq!(drop_shadow_offset(180.0, 1.9), (1, 0));
+        assert_eq!(drop_shadow_offset(270.0, 1.9), (0, -1));
+    }
+
+    #[test]
+    fn softness_blurs_alpha_without_diluting_shadow_rgb() {
+        let color = [200, 100, 50, 255];
+        let mut shadow = Canvas::transparent(3, 1);
+        shadow.set_pixel(1, 0, [color[0], color[1], color[2], 255]);
+
+        let blurred = blur_shadow_alpha_channel_only(&shadow, 1, color);
+
+        assert_eq!(blurred.pixel(0, 0), [200, 100, 50, 127]);
+        assert_eq!(blurred.pixel(1, 0), [200, 100, 50, 85]);
+        assert_eq!(blurred.pixel(2, 0), [200, 100, 50, 127]);
+    }
+
+    #[test]
+    fn ae_probe_softness_18_expands_shadow_by_ten_pixels() {
+        assert_eq!(drop_shadow_blur_radius(18.0), 10);
+        assert_eq!(drop_shadow_blur_radius(0.0), 0);
     }
 }

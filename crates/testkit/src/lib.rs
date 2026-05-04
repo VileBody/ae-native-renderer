@@ -1,4 +1,26 @@
+pub mod conformance;
+pub mod fixtures;
 pub mod golden;
 pub mod image_diff;
+pub mod interpolation;
+pub mod obligations;
+pub mod operator;
+pub mod phase1;
+pub mod phase2;
+pub mod phase3;
+pub mod phase4;
+pub mod phase5;
+pub mod telemetry;
+pub mod temporal;
 
+pub use conformance::*;
+pub use fixtures::*;
 pub use image_diff::*;
+pub use interpolation::*;
+pub use obligations::*;
+pub use operator::*;
+pub use phase1::*;
+pub use phase2::*;
+pub use phase4::*;
+pub use telemetry::*;
+pub use temporal::*;

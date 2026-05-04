@@ -1,6 +1,6 @@
 use crate::{
-    box_blur::BoxBlur2, drop_shadow::DropShadow, geometry::Geometry2, glow::Glow,
-    minimax::Minimax, posterize_time::PosterizeTime, turbulent_displace::TurbulentDisplace, Effect,
+    box_blur::BoxBlur2, drop_shadow::DropShadow, geometry::Geometry2, glow::Glow, minimax::Minimax,
+    posterize_time::PosterizeTime, turbulent_displace::TurbulentDisplace, Effect,
 };
 
 pub struct EffectRegistry;

@@ -1,3 +1,5 @@
+#![allow(non_snake_case)]
+
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -28,10 +30,49 @@ pub struct Composition {
     pub duration: f64,
     #[serde(default = "default_background")]
     pub background: [u8; 4],
+    #[serde(default)]
+    pub motion_blur: MotionBlurSettings,
 }
 
 fn default_background() -> [u8; 4] {
     [0, 0, 0, 0]
+}
+
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct MotionBlurSettings {
+    #[serde(default)]
+    pub enabled: bool,
+    #[serde(default = "default_motion_blur_samples")]
+    pub samples: u32,
+    #[serde(default = "default_shutter_angle")]
+    pub shutter_angle: f64,
+    #[serde(default = "default_shutter_phase")]
+    pub shutter_phase: f64,
+}
+
+impl Default for MotionBlurSettings {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            samples: default_motion_blur_samples(),
+            shutter_angle: default_shutter_angle(),
+            shutter_phase: default_shutter_phase(),
+        }
+    }
+}
+
+pub const DEFAULT_MOTION_BLUR_SAMPLES: u32 = 17;
+
+fn default_motion_blur_samples() -> u32 {
+    DEFAULT_MOTION_BLUR_SAMPLES
+}
+
+fn default_shutter_angle() -> f64 {
+    180.0
+}
+
+fn default_shutter_phase() -> f64 {
+    -90.0
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -67,6 +108,8 @@ pub struct Transform2D {
     pub rotation: f32,
     pub opacity: f32,
     #[serde(default)]
+    pub motion_blur: bool,
+    #[serde(default)]
     pub animation: Transform2DAnimation,
 }
 
@@ -78,6 +121,7 @@ impl Default for Transform2D {
             scale: [100.0, 100.0],
             rotation: 0.0,
             opacity: 100.0,
+            motion_blur: false,
             animation: Transform2DAnimation::default(),
         }
     }
@@ -264,6 +308,7 @@ pub enum TextExpressionSelector {
     },
 }
 
+#[allow(non_snake_case)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum Layer {
@@ -299,6 +344,7 @@ pub enum Layer {
         duration: f64,
         text: String,
         font: String,
+        #[allow(non_snake_case)]
         fontSize: f32,
         fill: [u8; 4],
         #[serde(rename = "box")]
@@ -346,11 +392,21 @@ impl Layer {
 
     pub fn time_range(&self) -> (f64, f64) {
         match self {
-            Layer::Solid { start, duration, .. }
-            | Layer::Footage { start, duration, .. }
-            | Layer::Text { start, duration, .. }
-            | Layer::Precomp { start, duration, .. } => (*start, *duration),
-            Layer::Adjustment { start, duration, .. } => (*start, *duration),
+            Layer::Solid {
+                start, duration, ..
+            }
+            | Layer::Footage {
+                start, duration, ..
+            }
+            | Layer::Text {
+                start, duration, ..
+            }
+            | Layer::Precomp {
+                start, duration, ..
+            } => (*start, *duration),
+            Layer::Adjustment {
+                start, duration, ..
+            } => (*start, *duration),
         }
     }
 

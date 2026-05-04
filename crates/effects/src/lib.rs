@@ -21,12 +21,8 @@ pub struct EffectContext {
 pub trait Effect: Send + Sync {
     fn match_name(&self) -> &'static str;
 
-    fn render(
-        &self,
-        input: &Canvas,
-        ctx: &EffectContext,
-        params: &Value,
-    ) -> anyhow::Result<Canvas>;
+    fn render(&self, input: &Canvas, ctx: &EffectContext, params: &Value)
+        -> anyhow::Result<Canvas>;
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -144,7 +140,11 @@ fn evaluate_scalar_keyframes(keyframes: &[Value], time: f64) -> Option<f32> {
     if keyframes.is_empty() {
         return None;
     }
-    let value_at = |key: &Value| key.get("v").and_then(Value::as_f64).map(|value| value as f32);
+    let value_at = |key: &Value| {
+        key.get("v")
+            .and_then(Value::as_f64)
+            .map(|value| value as f32)
+    };
     let time_at = |key: &Value| key.get("t").and_then(Value::as_f64);
     if time <= time_at(&keyframes[0])? {
         return value_at(&keyframes[0]);

@@ -7,22 +7,30 @@ pub struct Mat3 {
 
 impl Mat3 {
     pub fn identity() -> Self {
-        Self { m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]] }
+        Self {
+            m: [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0], [0.0, 0.0, 1.0]],
+        }
     }
 
     pub fn translate(v: Vec2) -> Self {
-        Self { m: [[1.0, 0.0, v.x], [0.0, 1.0, v.y], [0.0, 0.0, 1.0]] }
+        Self {
+            m: [[1.0, 0.0, v.x], [0.0, 1.0, v.y], [0.0, 0.0, 1.0]],
+        }
     }
 
     pub fn scale(v: Vec2) -> Self {
-        Self { m: [[v.x, 0.0, 0.0], [0.0, v.y, 0.0], [0.0, 0.0, 1.0]] }
+        Self {
+            m: [[v.x, 0.0, 0.0], [0.0, v.y, 0.0], [0.0, 0.0, 1.0]],
+        }
     }
 
     pub fn rotate_degrees(deg: f32) -> Self {
         let r = deg.to_radians();
         let c = r.cos();
         let s = r.sin();
-        Self { m: [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]] }
+        Self {
+            m: [[c, -s, 0.0], [s, c, 0.0], [0.0, 0.0, 1.0]],
+        }
     }
 
     pub fn mul(self, rhs: Self) -> Self {

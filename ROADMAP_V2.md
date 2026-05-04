@@ -625,27 +625,28 @@ Status: first native hardening pass implemented with controlled approximations.
 This is the current source of truth for the remaining visual-math work. The old
 `ROADMAP.md` milestone numbers are preserved here as anchors; V2 marks many of
 these features as implemented only in controlled or approximate form.
+Detailed template-specific status and promotion criteria live in
+`docs/MATH_PARITY_STATUS.md`.
 
 | Remaining block | Old roadmap anchor | V2 anchor / current state | What is done now | What remains for AE-like parity |
 | --- | --- | --- | --- | --- |
-| Motion blur | R10 non-goal, R19 target | V2-R8 non-goal; V2.1 backlog | Not implemented. | Composition/layer blur flags, shutter angle/phase, subframe sampling, animated transform evaluation at subframe time, static-layer skip, AE reference micro-scenes. |
-| True glyph-level text animator | R8 text glyph instances, R17 text animator | V2-R13, Text Animator v2 | Range selector basics, characters/words/lines, opacity, simple position/scale/rotation/blur, deterministic randomize/wiggly approximations. | Real glyph/object metrics from text layout, per-glyph/per-word/per-line selector weights, index units, per-glyph transform/blur application, paragraph/box text parity, AE references. |
-| Expression evaluator v2 | R18 expression subset | V2-R14, Expression Engine v2 | Deterministic named/fingerprint evaluator for generated patterns, `value`, time-ish context vars, simple numeric/Vec2 expressions, generated bounce selector. | Trait-based evaluator per property, scalar/vector coercion, more `thisLayer`/`thisComp` access, math functions with AE-ish coercion, expression selector amount, audio-level expressions if templates need them. |
-| Bezier/ease parity | R11 non-goal, R12 target | V2-R10, Bezier/Ease Keyframes | Hold/linear plus compact cubic ease approximation for scalar/Vec2 properties. | AE temporal ease tangent mapping, monotonic solving thresholds, golden ease-in/ease-out micro-scenes, closer spatial/temporal behavior. Spatial paths and roving keys remain later scope. |
-| Effects golden parity | R13 module system, R14 effects, R21 conformance | V2-R12, V2-R15, V2-R16, Effect System Hardening | Supported effect registry/params for Drop Shadow, Glow, Box Blur, Geometry2, Posterize Time, Minimax, Turbulent Displace; adjustment layers; approximate reports. | AE-ish parameter mapping, per-effect golden PNGs, tighter math for blur/glow/shadow/minimax/turbulent displacement, strict thresholds per effect/template class. |
-| Collapse transformations parity | R15 precomp, R16 collapse, R21 conformance | V2-R11, True Collapse Transformations | Nested precomp graph, cycle detection, text/solid-only collapse flattening, matrix composition for supported cases, raster fallback reports. | Defer rasterization for more text/vector children, preserve sharp text under parent scale, expand supported nested cases, AE reference tests, clear fallback/fail policy. |
+| Motion blur | R10 non-goal, R19 target | V2-R8 non-goal; V2.2 implemented v1 | Composition/layer blur flags, shutter angle/phase, bounded temporal sample times, animated transform evaluation at subframe time, payload `motionBlur` import, and motion-blur conformance micro-scene. | AE shutter/sample parity, smarter static-layer skip, premultiplied accumulation audit, AE reference PNG thresholds. |
+| True glyph-level text animator | R8 text glyph instances, R17 text animator | V2-R13, Text Animator v2 controlled subset | Range selector basics, characters/words/lines, opacity, simple position/scale/rotation/blur, deterministic randomize/wiggly approximations, real fontdue glyph layout, glyph/word/line bbox units wired into render-core text animators. | HarfBuzz/AE glyph shaping, paragraph/box text parity, exact selector weighting/order, per-glyph metrics export/debug JSON, AE references. |
+| Expression evaluator v2 | R18 expression subset | V2-R14, Expression Engine v2 controlled subset | Deterministic named/fingerprint evaluator, parser with precedence/parentheses/unary/sub/div, scalar/Vec2 coercion, `Math.sin/cos/exp/min/max/PI`, `thisComp.*`, `thisLayer.*`, `value`, `textIndex`, generated bounce selector. | Trait-based evaluator wired into more render properties, more AE property graph access, expression selector amount parity, audio-level expressions if templates need them. |
+| Bezier/ease parity | R11 non-goal, R12 target | V2-R10, Bezier/Ease Keyframes | Hold/linear plus compact cubic ease approximation for scalar/Vec2 properties; conformance fixture scaffold for ease probes. | AE temporal ease tangent mapping, monotonic solving thresholds tuned against goldens, closer spatial/temporal behavior. Spatial paths and roving keys remain later scope. |
+| Effects golden parity | R13 module system, R14 effects, R21 conformance | V2-R12, V2-R15, V2-R16, Effect System Hardening | Supported effect registry/params for Drop Shadow, Glow, Box Blur, Geometry2, Posterize Time, Minimax, Turbulent Displace; adjustment layers; approximate reports; conformance fixture scaffold for effect stacks. | AE-ish parameter mapping, checked-in AE PNGs, tighter math for blur/glow/shadow/minimax/turbulent displacement, strict thresholds per effect/template class. |
+| Collapse transformations parity | R15 precomp, R16 collapse, R21 conformance | V2-R11, True Collapse Transformations controlled subset | Nested precomp graph, cycle detection, text/solid-only collapse flattening, matrix composition, scale-aware collapsed text rasterization to preserve sharpness under parent scale, raster fallback reports, collapse conformance fixture scaffold. | Defer rasterization for more vector children, expand supported nested/effect cases, AE reference tests, clear fallback/fail policy. |
 | Color/compositing/sampling parity | R6 canvas/composite, R10 transforms, R21 conformance | V2-R8, V2-R16; not yet isolated as its own V2 block | Alpha-over, transforms, ROI bounds, deterministic output. | Premultiplied/straight alpha audit, AE sampling/filtering behavior, gamma/color-space assumptions, blend-mode/matte/mask inventory if templates start using them. |
 | Later AE expansion | R10/R11/R12/R16/R18 non-goals | Explicit V2 non-goals | 2D controlled subset only. | 3D layers, cameras, spatial paths, roving keyframes, arbitrary ExtendScript, broad property graph access. |
 
 Suggested implementation order:
 
-1. Build/refresh AE golden micro-scenes for each block before changing math.
-2. Motion blur v1, because it is currently absent and has clear acceptance tests.
-3. True glyph-level text animator, because current text animation is visibly approximate.
-4. Expression evaluator v2, limited to properties/patterns emitted by current templates.
-5. Bezier/ease parity and collapse parity, driven by failing golden fixtures.
-6. Effects parity pass, one effect at a time, with per-effect thresholds.
-7. Color/compositing/sampling audit as a cross-cutting parity pass.
+1. Export AE PNG references for the new conformance micro-scenes and flip ready cases from `pending_ae_export`.
+2. Tune motion blur accumulation and shutter semantics against AE references.
+3. Tighten glyph-level text animator weighting/order after adding glyph debug export.
+4. Wire the expression evaluator into more property paths only when generator payloads require them.
+5. Drive Bezier/ease, collapse, and effects parity from failing conformance thresholds.
+6. Run color/compositing/sampling audit as a cross-cutting parity pass.
 
 ### V2.3 — Remaining Gaps From V1 + V2 Roadmaps
 
@@ -656,10 +657,10 @@ and should not disappear just because the V2 MVP renders current examples.
 | --- | --- | --- | --- |
 | Doctor strict mode and runtime path checks | R1 | V2-R0 says doctor succeeds; no strict doctor mode | `doctor` reports plugins/binaries, but does not fail in strict mode or validate `/work/jobs`/runtime paths as a deployment preflight. |
 | `dump-frames` backend selection | R3 | V2-R5, V2.1 media backends | Render uses selectable GStreamer/FFmpeg media backends, but `dump-frames` is still hardwired to the FFmpeg source path. |
-| Real glyph-layout debug/export | R8 | V2-R7, V2-R13, V2.2 text backlog | `text-engine` has a glyph skeleton, but production rasterization does not expose inspectable shaped glyph layout/debug JSON. |
+| Real glyph-layout debug/export | R8 | V2-R7, V2-R13, V2.2 text backlog | `text-engine` now has real fontdue glyph layout used by rendering, but still lacks inspectable shaped glyph layout/debug JSON and HarfBuzz-grade shaping. |
 | Vec3/color animated values | R11 | V2-R10 narrowed scope | Current runtime keyframes cover scalar and Vec2 paths needed by templates. Vec3/color animated values from V1 remain outside the implemented subset. |
 | Strict/permissive effect runtime policy | R13/R22 | V2-R2/V2-R17 capability routing | Unknown effects fail during render, and payload/job validation can route unsupported work, but there is no clean render-time `strict-effects` policy switch. |
-| Organized AE golden fixture suite | R14/R21/RXXX | V2-R16 exists | Compare CLI works, but we still lack per-feature AE golden fixtures/thresholds for effects, text, ease, collapse, sampling, and motion blur. |
+| Organized AE golden fixture suite | R14/R21/RXXX | V2-R16 plus conformance manifest scaffold | Compare CLI works and micro-scene manifests exist for ease/effects/collapse/motion blur, but AE reference PNGs and enforced thresholds still need to be exported. |
 | SSIM/perceptual metric placeholder | R21 | V2-R16 non-goal-ish | Current compare reports max/mean/changed pixels and diff images; no SSIM/perceptual metric yet. |
 | Audio in final jobs | R2/R18/R20 adjacent | V2-R4 probes audio; audio muxing is V2-R9 non-goal | Audio assets are recognized/probed and audio layers are ignored with diagnostics. No audio decode/mix/mux, no audio-level expressions. |
 | Production resource controls | R20 | V2-R17 job runner | Job runner exists, but `RENDER_MAX_THREADS`, `RENDER_TMP_DIR`, `RENDER_STRICT` style deployment controls are not implemented as a cohesive contract. |

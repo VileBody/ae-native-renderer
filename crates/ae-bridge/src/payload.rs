@@ -428,6 +428,7 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         .map(|(_, layer)| layer)
         .collect::<Vec<_>>();
     diagnostics.assets = assets.len();
+    let comp_motion_blur_enabled = layers.iter().any(ir_layer_motion_blur_enabled);
 
     let scene = render_ir::Scene {
         version: "0.2-payload".to_string(),
@@ -438,6 +439,10 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
             fps: main_comp.fps,
             duration: main_comp.dur,
             background: bg_color_to_rgba(main_comp.bg_color),
+            motion_blur: render_ir::MotionBlurSettings {
+                enabled: comp_motion_blur_enabled,
+                ..render_ir::MotionBlurSettings::default()
+            },
         },
         compositions: Vec::new(),
         assets,
@@ -462,13 +467,10 @@ fn main_precomp_sources<'a>(
 }
 
 fn precomp_has_text_children(payload: &GeneratedPayload, comp_name: &str) -> bool {
-    payload
-        .text_layers
-        .iter()
-        .any(|layer| {
-            matches!(layer.kind.as_str(), "text" | "adjustment")
-                && layer_target_comp(layer) == Some(comp_name)
-        })
+    payload.text_layers.iter().any(|layer| {
+        matches!(layer.kind.as_str(), "text" | "adjustment")
+            && layer_target_comp(layer) == Some(comp_name)
+    })
 }
 
 fn import_flattened_text_layer(
@@ -656,6 +658,16 @@ fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
         layer: Some(layer.name.clone()),
         detail: detail.to_string(),
     });
+
+    if layer_motion_blur(layer) {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Approximate,
+            feature: "transform.motion_blur".to_string(),
+            layer: Some(layer.name.clone()),
+            detail: "native temporal supersampling is enabled with fixed shutter defaults"
+                .to_string(),
+        });
+    }
 }
 
 fn classify_text_animator(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
@@ -764,6 +776,25 @@ fn is_audio_layer(layer: &PayloadLayer) -> bool {
     audio_enabled || file_name.ends_with(".mp3") || file_name.ends_with(".wav")
 }
 
+fn layer_motion_blur(layer: &PayloadLayer) -> bool {
+    layer
+        .text_data
+        .pointer("/layer_meta/motionBlur")
+        .or_else(|| layer.text_data.pointer("/layer_meta/motion_blur"))
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+}
+
+fn ir_layer_motion_blur_enabled(layer: &render_ir::Layer) -> bool {
+    match layer {
+        render_ir::Layer::Solid { transform, .. }
+        | render_ir::Layer::Footage { transform, .. }
+        | render_ir::Layer::Text { transform, .. }
+        | render_ir::Layer::Precomp { transform, .. } => transform.motion_blur,
+        render_ir::Layer::Adjustment { .. } => false,
+    }
+}
+
 fn main_sort_key(layer: &PayloadLayer) -> i64 {
     i64::from(layer.z_index) * 10_000
 }
@@ -791,6 +822,7 @@ fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
         opacity: prop_f32(layer, "tf_opacity")
             .or_else(|| prop_f32(layer, "layer_opacity"))
             .unwrap_or(default.opacity),
+        motion_blur: layer_motion_blur(layer),
         animation: render_ir::Transform2DAnimation {
             position: prop_vec2_keyframes(layer, "tf_position").unwrap_or_default(),
             scale: prop_vec2_keyframes(layer, "tf_scale").unwrap_or_default(),
@@ -822,6 +854,7 @@ fn compose_precomp_transform(
         scale: [child.scale[0] * sx, child.scale[1] * sy],
         rotation: parent.rotation + child.rotation,
         opacity: parent.opacity * child.opacity / 100.0,
+        motion_blur: parent.motion_blur || child.motion_blur,
         animation,
     }
 }
@@ -989,12 +1022,7 @@ fn text_animators_of(layer: &PayloadLayer) -> Vec<render_ir::TextAnimatorSpec> {
             end,
             start_keyframes,
             end_keyframes,
-            based_on: based_on_code(
-                advanced
-                    .get("basedOn")
-                    .and_then(Value::as_i64)
-                    .unwrap_or(1),
-            ),
+            based_on: based_on_code(advanced.get("basedOn").and_then(Value::as_i64).unwrap_or(1)),
             smoothness: advanced
                 .get("smoothness")
                 .and_then(Value::as_f64)
@@ -1357,7 +1385,10 @@ fn effect_detail(effect_name: &str) -> &'static str {
         "ADBE Glo2" => "implemented as an approximate alpha/luminance glow",
         "ADBE Box Blur2" => "implemented as an approximate RGBA box blur",
         "ADBE Geometry2" => "implemented as an approximate canvas transform",
-        "ADBE Posterize Time" => "recognized as a stateless canvas-stage no-op",
+        "ADBE Posterize Time" => concat!(
+            "implemented as temporal quantization in render-core; ",
+            "canvas stage is pass-through"
+        ),
         "ADBE Minimax" => "implemented as an approximate alpha/RGBA minimax",
         "ADBE Turbulent Displace" => "implemented as an approximate deterministic displacement",
         _ => "unknown effect is unsupported",

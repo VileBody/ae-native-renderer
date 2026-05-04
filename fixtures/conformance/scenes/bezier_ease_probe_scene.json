@@ -1,0 +1,120 @@
+{
+  "version": "v0",
+  "composition": {
+    "id": "conformance_bezier_ease_probe",
+    "width": 120,
+    "height": 80,
+    "fps": 12.0,
+    "duration": 1.0,
+    "background": [8, 10, 14, 255]
+  },
+  "assets": [],
+  "layers": [
+    {
+      "type": "solid",
+      "id": "ease_in_position",
+      "start": 0.0,
+      "duration": 1.0,
+      "color": [48, 220, 255, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 12.0, "h": 12.0 },
+      "transform": {
+        "anchor": [6.0, 6.0],
+        "position": [12.0, 18.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0,
+        "animation": {
+          "position": [
+            {
+              "time": 0.0,
+              "value": [12.0, 18.0],
+              "approximate": true,
+              "ease": { "x1": 0.42, "y1": 0.0, "x2": 1.0, "y2": 1.0 }
+            },
+            { "time": 1.0, "value": [108.0, 18.0] }
+          ]
+        }
+      },
+      "effects": []
+    },
+    {
+      "type": "solid",
+      "id": "ease_out_opacity",
+      "start": 0.0,
+      "duration": 1.0,
+      "color": [255, 64, 168, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 12.0, "h": 12.0 },
+      "transform": {
+        "anchor": [6.0, 6.0],
+        "position": [12.0, 40.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0,
+        "animation": {
+          "position": [
+            {
+              "time": 0.0,
+              "value": [12.0, 40.0],
+              "approximate": true,
+              "ease": { "x1": 0.0, "y1": 0.0, "x2": 0.58, "y2": 1.0 }
+            },
+            { "time": 1.0, "value": [108.0, 40.0] }
+          ],
+          "opacity": [
+            {
+              "time": 0.0,
+              "value": 20.0,
+              "approximate": true,
+              "ease": { "x1": 0.0, "y1": 0.0, "x2": 0.58, "y2": 1.0 }
+            },
+            { "time": 1.0, "value": 100.0 }
+          ]
+        }
+      },
+      "effects": []
+    },
+    {
+      "type": "solid",
+      "id": "ease_in_out_scale",
+      "start": 0.0,
+      "duration": 1.0,
+      "color": [255, 214, 64, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 12.0, "h": 12.0 },
+      "transform": {
+        "anchor": [6.0, 6.0],
+        "position": [60.0, 62.0],
+        "scale": [40.0, 40.0],
+        "rotation": 0.0,
+        "opacity": 100.0,
+        "animation": {
+          "scale": [
+            {
+              "time": 0.0,
+              "value": [40.0, 40.0],
+              "approximate": true,
+              "ease": { "x1": 0.42, "y1": 0.0, "x2": 0.58, "y2": 1.0 }
+            },
+            { "time": 1.0, "value": [150.0, 150.0] }
+          ]
+        }
+      },
+      "effects": []
+    },
+    {
+      "type": "solid",
+      "id": "linear_reference_track",
+      "start": 0.0,
+      "duration": 1.0,
+      "color": [112, 120, 132, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 96.0, "h": 2.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [12.0, 29.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    }
+  ]
+}

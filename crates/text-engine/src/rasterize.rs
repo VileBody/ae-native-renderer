@@ -1,54 +1,45 @@
-use fontdue::{Font, FontSettings};
 use raster_cpu::Canvas;
-use std::collections::HashMap;
-use std::fs;
-use std::sync::{Arc, Mutex, OnceLock};
 
-use crate::{resolve_font_path, TextLayoutRequest, TextLayoutResult};
+use crate::{layout_text, load_font, TextLayoutRequest, TextLayoutResult};
 
-static FONT_CACHE: OnceLock<Mutex<HashMap<String, Arc<Font>>>> = OnceLock::new();
-
-pub fn rasterize_text(req: &TextLayoutRequest, width: u32, height: u32, color: [u8; 4]) -> anyhow::Result<Canvas> {
+pub fn rasterize_text(
+    req: &TextLayoutRequest,
+    width: u32,
+    height: u32,
+    color: [u8; 4],
+) -> anyhow::Result<Canvas> {
     let font = load_font(&req.font_id)?;
     let mut canvas = Canvas::transparent(width, height);
-    let box_rect = req.box_rect.unwrap_or([0.0, 0.0, width as f32, height as f32]);
-    let lines = req.text.lines().collect::<Vec<_>>();
-    let lines = if lines.is_empty() { vec![""] } else { lines };
-    let line_height = font
-        .horizontal_line_metrics(req.font_size)
-        .map(|metrics| metrics.new_line_size.abs().max(req.font_size))
-        .unwrap_or(req.font_size * 1.2);
-    let total_height = line_height * lines.len() as f32;
-    let mut baseline = box_rect[1] + ((box_rect[3] - total_height) * 0.5).max(0.0) + req.font_size;
+    let layout = layout_text(req)?;
 
-    for line in lines {
-        let line_width = measure_line(&font, line, req.font_size);
-        let mut pen_x = box_rect[0] + ((box_rect[2] - line_width) * 0.5).max(0.0);
-
-        for ch in line.chars() {
-            if ch == '\t' {
-                pen_x += req.font_size * 2.0;
-                continue;
-            }
-            if ch.is_whitespace() {
-                pen_x += font.metrics(' ', req.font_size).advance_width.max(req.font_size * 0.3);
-                continue;
-            }
-
-            let (metrics, bitmap) = font.rasterize(ch, req.font_size);
-            let glyph_x = pen_x + metrics.xmin as f32;
-            let glyph_y = baseline - metrics.ymin as f32 - metrics.height as f32;
-            blend_bitmap(&mut canvas, glyph_x, glyph_y, metrics.width, metrics.height, &bitmap, color);
-            pen_x += metrics.advance_width;
+    for glyph in &layout.glyphs {
+        let Some(ch) = req.text.chars().nth(glyph.char_index) else {
+            continue;
+        };
+        if ch.is_whitespace() {
+            continue;
         }
-
-        baseline += line_height;
+        let (metrics, bitmap) = font.rasterize(ch, req.font_size);
+        blend_bitmap(
+            &mut canvas,
+            glyph.bbox[0],
+            glyph.bbox[1],
+            metrics.width,
+            metrics.height,
+            &bitmap,
+            color,
+        );
     }
 
     Ok(canvas)
 }
 
-pub fn rasterize_text_debug(layout: &TextLayoutResult, width: u32, height: u32, color: [u8; 4]) -> Canvas {
+pub fn rasterize_text_debug(
+    layout: &TextLayoutResult,
+    width: u32,
+    height: u32,
+    color: [u8; 4],
+) -> Canvas {
     // TODO: real glyph rasterization.
     // Current debug behavior: draw tiny rectangles at glyph positions.
     let mut canvas = Canvas::transparent(width, height);
@@ -64,36 +55,6 @@ pub fn rasterize_text_debug(layout: &TextLayoutResult, width: u32, height: u32, 
         }
     }
     canvas
-}
-
-fn load_font(font_id: &str) -> anyhow::Result<Arc<Font>> {
-    let cache = FONT_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
-    if let Some(font) = cache.lock().expect("font cache poisoned").get(font_id).cloned() {
-        return Ok(font);
-    }
-
-    let path = resolve_font_path(font_id).ok_or_else(|| anyhow::anyhow!("font '{font_id}' was not found"))?;
-    let bytes = fs::read(&path)?;
-    let font = Font::from_bytes(bytes, FontSettings::default())
-        .map_err(|err| anyhow::anyhow!("failed to load font {}: {err}", path.display()))?;
-    let font = Arc::new(font);
-    cache
-        .lock()
-        .expect("font cache poisoned")
-        .insert(font_id.to_string(), font.clone());
-    Ok(font)
-}
-
-fn measure_line(font: &Font, line: &str, font_size: f32) -> f32 {
-    line.chars()
-        .map(|ch| {
-            if ch == '\t' {
-                font_size * 2.0
-            } else {
-                font.metrics(ch, font_size).advance_width
-            }
-        })
-        .sum()
 }
 
 fn blend_bitmap(

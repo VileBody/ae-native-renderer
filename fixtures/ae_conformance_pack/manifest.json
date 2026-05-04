@@ -1,0 +1,232 @@
+{
+  "schema": "ae-native-renderer.conformance-pack.v1",
+  "pack_id": "ae_conformance_pack_v1",
+  "purpose": "AE-generated golden frames for primitive/operator/stack/template-slice parity work",
+  "composition": {
+    "width": 512,
+    "height": 512,
+    "fps": 30,
+    "case_duration_seconds": 2.0,
+    "master_comp": "master_conformance_reel"
+  },
+  "required_fonts": [
+    {
+      "family_or_postscript": "Montserrat-BoldItalic",
+      "used_by": ["TXT_010", "TXT_020"],
+      "source_note": "Montserrat is OFL and available from Google Fonts; variable italic TTF is included in assets/fonts for convenience."
+    },
+    {
+      "family_or_postscript": "Point-Light",
+      "used_by": ["TXT_030", "TXT_040"],
+      "source_note": "Point-Light.ttf is provided locally for native conformance runs; AE goldens were rendered with the matching installed Point-Light face."
+    }
+  ],
+  "assets": {
+    "primitive_manifest": "assets/primitives/assets_manifest.json",
+    "numbered_frame_sequence": "assets/primitives/numbered_frames/frame_0000.png",
+    "font_files": [
+      "assets/fonts/Montserrat-Italic[wght].ttf",
+      "assets/fonts/Point-Light.ttf",
+      "assets/fonts/OFL-Montserrat.txt"
+    ]
+  },
+  "render_outputs": {
+    "individual_png_sequences": "ae_goldens/png/<case_id>/<case_id>_[#####].png",
+    "master_preview": "ae_goldens/preview/master_conformance_reel"
+  },
+  "case_ladder": [
+    "primitive",
+    "property_interpolation",
+    "operator_static",
+    "animated_operator",
+    "stack",
+    "template_slice",
+    "full_template"
+  ],
+  "cases": [
+    {
+      "id": "PRI_010",
+      "title": "primitive impulse/alpha/color source sanity",
+      "ladder": "primitive",
+      "modules": ["M01", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["impulse_center", "alpha_square", "coordinate_field", "color_bars"]
+    },
+    {
+      "id": "INT_010",
+      "title": "linear/hold position and opacity interpolation",
+      "ladder": "property_interpolation",
+      "modules": ["M04"],
+      "frames_to_compare": [0, 10, 20, 30, 45, 59],
+      "assets": ["alpha_square"]
+    },
+    {
+      "id": "INT_020",
+      "title": "bezier/ease position and opacity interpolation",
+      "ladder": "property_interpolation",
+      "modules": ["M04"],
+      "frames_to_compare": [0, 5, 10, 15, 30, 45, 59],
+      "assets": ["alpha_square"]
+    },
+    {
+      "id": "TMP_010",
+      "title": "source/layer start time and frame mapping",
+      "ladder": "property_interpolation",
+      "modules": ["M02", "M15"],
+      "frames_to_compare": [0, 5, 10, 15, 30, 45],
+      "assets": ["numbered_frames"]
+    },
+    {
+      "id": "TMP_020",
+      "title": "Posterize Time numbered-frame boundaries",
+      "ladder": "animated_operator",
+      "modules": ["M15"],
+      "frames_to_compare": [0, 1, 2, 3, 4, 5, 10, 11, 20, 21, 30, 31],
+      "assets": ["numbered_frames"]
+    },
+    {
+      "id": "TMP_030",
+      "title": "motion blur velocity and shutter window",
+      "ladder": "animated_operator",
+      "modules": ["M18"],
+      "frames_to_compare": [5, 10, 15, 20, 25, 30],
+      "assets": ["alpha_square"]
+    },
+    {
+      "id": "EFF_010",
+      "title": "Drop Shadow on alpha square",
+      "ladder": "operator_static",
+      "modules": ["M10"],
+      "frames_to_compare": [0],
+      "assets": ["alpha_square"]
+    },
+    {
+      "id": "EFF_020",
+      "title": "Glow on luma ramp",
+      "ladder": "operator_static",
+      "modules": ["M11"],
+      "frames_to_compare": [0],
+      "assets": ["luma_ramp"]
+    },
+    {
+      "id": "EFF_030",
+      "title": "Box Blur on impulse",
+      "ladder": "operator_static",
+      "modules": ["M10"],
+      "frames_to_compare": [0],
+      "assets": ["impulse_center"]
+    },
+    {
+      "id": "EFF_040",
+      "title": "Geometry2 coordinate-field transform",
+      "ladder": "operator_static",
+      "modules": ["M12"],
+      "frames_to_compare": [0],
+      "assets": ["coordinate_field"]
+    },
+    {
+      "id": "EFF_050",
+      "title": "Minimax alpha-square morphology",
+      "ladder": "operator_static",
+      "modules": ["M13"],
+      "frames_to_compare": [0],
+      "assets": ["alpha_square"]
+    },
+    {
+      "id": "EFF_060",
+      "title": "Turbulent Displace coordinate-field warp",
+      "ladder": "operator_static",
+      "modules": ["M14"],
+      "frames_to_compare": [0, 15, 30, 45],
+      "assets": ["coordinate_field", "checkerboard_16"]
+    },
+    {
+      "id": "EFF_070",
+      "title": "animated effect params over fixed primitive",
+      "ladder": "animated_operator",
+      "modules": ["M04", "M10", "M11", "M14"],
+      "frames_to_compare": [0, 10, 20, 30, 45, 59],
+      "assets": ["impulse_center", "luma_ramp", "coordinate_field"]
+    },
+    {
+      "id": "TXT_010",
+      "title": "Montserrat word reveal",
+      "ladder": "animated_operator",
+      "modules": ["M05", "M06"],
+      "frames_to_compare": [0, 8, 16, 24, 32, 45, 59],
+      "assets": []
+    },
+    {
+      "id": "TXT_020",
+      "title": "Montserrat character and line reveal",
+      "ladder": "animated_operator",
+      "modules": ["M05", "M06"],
+      "frames_to_compare": [0, 8, 16, 24, 32, 45, 59],
+      "assets": []
+    },
+    {
+      "id": "TXT_030",
+      "title": "Point-Light glyph animator position/scale/rotation/blur",
+      "ladder": "animated_operator",
+      "modules": ["M05", "M07"],
+      "frames_to_compare": [0, 8, 16, 24, 32, 45, 59],
+      "assets": []
+    },
+    {
+      "id": "TXT_040",
+      "title": "expression-selector bounce pattern",
+      "ladder": "animated_operator",
+      "modules": ["M08", "M09"],
+      "frames_to_compare": [0, 5, 10, 15, 20, 30, 45, 59],
+      "assets": []
+    },
+    {
+      "id": "EXP_010",
+      "title": "edge_wobble expression subset",
+      "ladder": "animated_operator",
+      "modules": ["M09"],
+      "frames_to_compare": [0, 5, 10, 15, 20, 30, 45, 59],
+      "assets": ["alpha_square"]
+    },
+    {
+      "id": "STK_010",
+      "title": "Drop Shadow x2 stack",
+      "ladder": "stack",
+      "modules": ["M10", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["alpha_square"]
+    },
+    {
+      "id": "STK_020",
+      "title": "Blur then Minimax non-commutative stack",
+      "ladder": "stack",
+      "modules": ["M10", "M13", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["alpha_square", "hard_edge"]
+    },
+    {
+      "id": "STK_030",
+      "title": "Geometry2 -> Posterize Time -> Minimax -> Turbulent Displace adjustment stack",
+      "ladder": "template_slice",
+      "modules": ["M12", "M13", "M14", "M15", "M16", "M19"],
+      "frames_to_compare": [0, 1, 5, 10, 15, 20, 30, 45, 59],
+      "assets": ["coordinate_field", "numbered_frames"]
+    },
+    {
+      "id": "GPH_010",
+      "title": "nested precomp and collapse-transform text sharpness",
+      "ladder": "template_slice",
+      "modules": ["M17", "M05", "M19"],
+      "frames_to_compare": [0, 15, 30, 45],
+      "assets": []
+    },
+    {
+      "id": "CMP_010",
+      "title": "alpha/composite/sampling audit",
+      "ladder": "operator_static",
+      "modules": ["M19"],
+      "frames_to_compare": [0],
+      "assets": ["premult_probe", "checkerboard_16", "coordinate_field"]
+    }
+  ]
+}

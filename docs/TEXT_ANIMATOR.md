@@ -16,6 +16,15 @@ bbox
 local_anchor
 ```
 
+Current `TextLayoutTelemetry` exposes this as serialized runtime telemetry:
+
+- `font_resolution`: requested id, resolved path/family/style/fullname/
+  postscript, source, and fallback flag.
+- `glyphs`: per-glyph character, font glyph id, char/word/line index,
+  advance, bbox, normalized bbox, bbox center, baseline, line width, text box.
+- `line_boxes`: per-line char range, baseline, line width/height, logical line
+  box, normalized line box, and union glyph bbox when glyphs exist.
+
 ## First supported subset
 
 - Range Selector;
@@ -49,7 +58,11 @@ Supported at helper level:
   per source unit, so randomize order is repeatable across runs.
 - `evaluate_range_selector_v2(text, selector, time_seconds)` returns
   source-order `TextUnitWeight` entries with selector index, total, and clamped
-  weight.
+  weight. Each weight also carries selector-center percent and the pre-wiggly
+  base range weight for AE sidecar comparison.
+- `evaluate_range_selector_v2_telemetry(text, selector, time_seconds)` returns
+  a serializable selector passport with selector parameters, unit count, and
+  source-order unit weights.
 - `plan_blur_animator(weights, blur)` creates per-unit blur data plus an
   approximate layer fallback blur. It is data/planning only; no filtering is
   performed here.
@@ -72,6 +85,11 @@ Approximate helper behavior:
   order so downstream glyph mapping can stay stable.
 
 ## Evaluation rule
+
+Runtime `text.selector_weights` telemetry includes source unit index, ordered
+selector index, selector-center percent, unit rect, range/expression/final
+weights, and animator contribution fields for position/scale/rotation/opacity/
+blur when those properties are active.
 
 Do not interpolate matrices directly. Interpolate properties, then build matrix:
 

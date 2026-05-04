@@ -1,0 +1,124 @@
+{
+  "version": "v0",
+  "composition": {
+    "id": "conformance_collapse_transform_probe",
+    "width": 96,
+    "height": 96,
+    "fps": 12.0,
+    "duration": 0.25,
+    "background": [6, 8, 12, 255]
+  },
+  "compositions": [
+    {
+      "composition": {
+        "id": "collapse_tile",
+        "width": 32,
+        "height": 32,
+        "fps": 12.0,
+        "duration": 0.25,
+        "background": [0, 0, 0, 0]
+      },
+      "layers": [
+        {
+          "type": "solid",
+          "id": "tile_cross_vertical",
+          "start": 0.0,
+          "duration": 0.25,
+          "color": [255, 216, 76, 255],
+          "rect": { "x": 0.0, "y": 0.0, "w": 4.0, "h": 28.0 },
+          "transform": {
+            "anchor": [2.0, 14.0],
+            "position": [16.0, 16.0],
+            "scale": [100.0, 100.0],
+            "rotation": 0.0,
+            "opacity": 100.0
+          },
+          "effects": []
+        },
+        {
+          "type": "solid",
+          "id": "tile_cross_horizontal",
+          "start": 0.0,
+          "duration": 0.25,
+          "color": [68, 204, 255, 255],
+          "rect": { "x": 0.0, "y": 0.0, "w": 28.0, "h": 4.0 },
+          "transform": {
+            "anchor": [14.0, 2.0],
+            "position": [16.0, 16.0],
+            "scale": [100.0, 100.0],
+            "rotation": 0.0,
+            "opacity": 100.0
+          },
+          "effects": []
+        },
+        {
+          "type": "solid",
+          "id": "tile_corner_marker",
+          "start": 0.0,
+          "duration": 0.25,
+          "color": [255, 78, 128, 255],
+          "rect": { "x": 0.0, "y": 0.0, "w": 6.0, "h": 6.0 },
+          "transform": {
+            "anchor": [3.0, 3.0],
+            "position": [24.0, 8.0],
+            "scale": [100.0, 100.0],
+            "rotation": 0.0,
+            "opacity": 100.0
+          },
+          "effects": []
+        }
+      ]
+    }
+  ],
+  "assets": [],
+  "layers": [
+    {
+      "type": "precomp",
+      "id": "collapsed_tile",
+      "start": 0.0,
+      "duration": 0.25,
+      "composition": "collapse_tile",
+      "collapse_transformations": true,
+      "transform": {
+        "anchor": [16.0, 16.0],
+        "position": [62.0, 48.0],
+        "scale": [160.0, 80.0],
+        "rotation": 30.0,
+        "opacity": 90.0
+      },
+      "effects": []
+    },
+    {
+      "type": "precomp",
+      "id": "rasterized_tile_reference",
+      "start": 0.0,
+      "duration": 0.25,
+      "composition": "collapse_tile",
+      "collapse_transformations": false,
+      "transform": {
+        "anchor": [16.0, 16.0],
+        "position": [32.0, 48.0],
+        "scale": [160.0, 80.0],
+        "rotation": 30.0,
+        "opacity": 60.0
+      },
+      "effects": []
+    },
+    {
+      "type": "solid",
+      "id": "collapse_background",
+      "start": 0.0,
+      "duration": 0.25,
+      "color": [18, 22, 30, 255],
+      "rect": { "x": 0.0, "y": 0.0, "w": 96.0, "h": 96.0 },
+      "transform": {
+        "anchor": [0.0, 0.0],
+        "position": [0.0, 0.0],
+        "scale": [100.0, 100.0],
+        "rotation": 0.0,
+        "opacity": 100.0
+      },
+      "effects": []
+    }
+  ]
+}

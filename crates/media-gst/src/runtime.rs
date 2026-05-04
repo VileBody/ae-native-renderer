@@ -103,7 +103,9 @@ impl TimelineMediaPlan {
     }
 
     pub fn source_plan(&self, asset_id: &str) -> Option<&SourcePlan> {
-        self.sources.iter().find(|source| source.asset_id == asset_id)
+        self.sources
+            .iter()
+            .find(|source| source.asset_id == asset_id)
     }
 }
 
