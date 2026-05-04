@@ -112,6 +112,28 @@ target/ae_agents/native_text_passport_smoke/TXT_030/text_telemetry.jsonl
 target/ae_agents/native_text_passport_smoke/TXT_040/text_telemetry.jsonl
 ```
 
+### Step 2 AE/CoolType Reference Diff
+
+The conformance runner now has a text-passport comparison lane. For every
+rendered frame it looks for:
+
+```text
+fixtures/ae_conformance_pack/ae_goldens/text_telemetry/<case_id>/<case_id>_<frame>.jsonl
+```
+
+When a reference exists, it compares AE/CoolType text rows against native
+`text.layout` and `text.selector_weights` records as a subset contract. This
+lets probes compare only the fields they can measure, such as glyph ids,
+advances, bboxes, selector weights, final matrices, opacity, and blur radius.
+When the reference is absent, the report records `missing_reference` and keeps
+the visual PNG comparison non-blocking.
+
+The per-case diagnostic output is:
+
+```text
+<out>/<case_id>/text_passport_comparison.json
+```
+
 ## Template Inventory
 
 | Template | Observed math/features | Highest-risk parity areas |

@@ -91,6 +91,33 @@ selector index, selector-center percent, unit rect, range/expression/final
 weights, and animator contribution fields for position/scale/rotation/opacity/
 blur when those properties are active.
 
+## Text Passport Comparison
+
+`render-cli conformance-pack` now writes a per-case diagnostic file:
+
+```text
+<out>/<case_id>/text_passport_comparison.json
+```
+
+The optional AE/CoolType reference location is:
+
+```text
+fixtures/ae_conformance_pack/ae_goldens/text_telemetry/<case_id>/<case_id>_<frame>.jsonl
+```
+
+Each reference file can use the same JSONL event shape as native
+`text_telemetry.jsonl`:
+
+```json
+{"event":"text.layout","frame":0,"record":{...}}
+{"event":"text.selector_weights","frame":0,"record":{...}}
+```
+
+References are compared as subsets: an AE probe may include only glyph ids,
+advances, bboxes, selector weights, or animator matrices that it actually knows.
+Extra native fields are ignored. Missing reference files are reported as
+`missing_reference`; they do not fail the PNG conformance run.
+
 Do not interpolate matrices directly. Interpolate properties, then build matrix:
 
 ```text

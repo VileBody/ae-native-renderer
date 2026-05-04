@@ -10,7 +10,7 @@ use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -258,6 +258,7 @@ fn run_case(
     let mut rgb_over_native_background_summary = MetricsAccumulator::new(3);
     let mut rgb_over_ae_background_summary = MetricsAccumulator::new(3);
     let mut background_corner_alpha_diff_frames = Vec::new();
+    let mut text_passport_frame_reports = Vec::new();
 
     for frame in &case.frames_to_compare {
         let time = *frame as f64 / recipe.scene.composition.fps;
@@ -297,6 +298,8 @@ fn run_case(
         let effects_debug =
             write_effect_debug_sidecars(out_root, &case.id, *frame, &render_trace.effect_debug)?;
         let trace_sidecars = write_trace_sidecars(&case_dir, &render_trace)?;
+        let text_passport_report =
+            compare_frame_text_passport(pack_root, case, *frame, &render_trace)?;
         write_warps_fields_debug_sidecars(case, &recipe.scene, *frame, time, &case_dir)?;
         native_canvas.save_png(&native_path)?;
         fs::copy(&ae_source_path, &ae_path)
@@ -389,8 +392,10 @@ fn run_case(
             },
             "background_corner": background_corner.to_json(),
             "effects_debug": effects_debug,
-            "trace_sidecars": trace_sidecars
+            "trace_sidecars": trace_sidecars,
+            "text_passport": text_passport_frame_ref(&text_passport_report)
         }));
+        text_passport_frame_reports.push(text_passport_report);
     }
 
     let rgba_metrics = rgba_summary.metrics();
@@ -403,6 +408,19 @@ fn run_case(
     let rgb_over_ae_background_metrics = rgb_over_ae_background_summary.metrics();
     let background_corner_summary =
         background_corner_summary_json(&background_corner_alpha_diff_frames);
+    let text_passport_summary = text_passport_summary_json(&text_passport_frame_reports);
+    let text_passport_report_path = case_dir.join("text_passport_comparison.json");
+    let text_passport_report = json!({
+        "schema": "ae-native-renderer.text-passport-comparison.v1",
+        "case": case.id,
+        "reference_root": pack_root.join("ae_goldens/text_telemetry").display().to_string(),
+        "summary": text_passport_summary,
+        "frames": text_passport_frame_reports
+    });
+    fs::write(
+        &text_passport_report_path,
+        serde_json::to_string_pretty(&text_passport_report)?,
+    )?;
     let threshold_ok = threshold_mean.map_or(true, |limit| rgba_metrics.mean_abs_diff <= limit)
         && threshold_max.map_or(true, |limit| rgba_metrics.max_abs_diff <= limit);
     let status = if threshold_mean.is_some() || threshold_max.is_some() {
@@ -442,6 +460,7 @@ fn run_case(
                 "rgb_over_ae_background": metric_json(rgb_over_ae_background_metrics)
             },
             "background_corner": background_corner_summary,
+            "text_passport": text_passport_report["summary"].clone(),
             "elapsed_ms": elapsed_ms(case_started)
         },
         "frames": frame_reports
@@ -463,6 +482,7 @@ fn run_case(
         "native_dir": native_dir.display().to_string(),
         "ae_dir": ae_dir.display().to_string(),
         "diff_dir": diff_dir.display().to_string(),
+        "text_passport": text_passport_report_path.display().to_string(),
         "summary": metrics["summary"].clone(),
         "notes": recipe.notes
     }))
@@ -556,6 +576,575 @@ fn background_corner_summary_json(rgb_matches_alpha_differs_frames: &[u32]) -> V
             Value::Null
         } else {
             json!("At least one frame has matching native/AE background-corner RGB with differing alpha; use rgb or background_alpha_normalized metrics before formula tuning.")
+        }
+    })
+}
+
+#[derive(Debug, Clone, Default)]
+struct TextPassportSnapshot {
+    layouts: BTreeMap<String, Vec<Value>>,
+    selectors: BTreeMap<String, Vec<Value>>,
+}
+
+#[derive(Debug, Clone, Default)]
+struct TextPassportCompareStats {
+    fields_compared: u64,
+    mismatches: u64,
+    max_abs_delta: f64,
+    first_mismatch: Option<Value>,
+}
+
+impl TextPassportCompareStats {
+    fn is_ok(&self) -> bool {
+        self.mismatches == 0
+    }
+
+    fn push_match(&mut self) {
+        self.fields_compared += 1;
+    }
+
+    fn push_mismatch(&mut self, path: &str, expected: &Value, actual: Option<&Value>) {
+        self.fields_compared += 1;
+        self.mismatches += 1;
+        if self.first_mismatch.is_none() {
+            self.first_mismatch = Some(json!({
+                "path": path,
+                "expected": expected,
+                "actual": actual.cloned().unwrap_or(Value::Null)
+            }));
+        }
+    }
+
+    fn push_numeric_mismatch(
+        &mut self,
+        path: &str,
+        expected: &Value,
+        actual: &Value,
+        delta: f64,
+        tolerance: f64,
+    ) {
+        self.fields_compared += 1;
+        self.mismatches += 1;
+        self.max_abs_delta = self.max_abs_delta.max(delta.abs());
+        if self.first_mismatch.is_none() {
+            self.first_mismatch = Some(json!({
+                "path": path,
+                "expected": expected,
+                "actual": actual,
+                "abs_delta": delta.abs(),
+                "tolerance": tolerance
+            }));
+        }
+    }
+
+    fn to_json(&self) -> Value {
+        json!({
+            "ok": self.is_ok(),
+            "fields_compared": self.fields_compared,
+            "mismatches": self.mismatches,
+            "max_abs_delta": self.max_abs_delta,
+            "first_mismatch": self.first_mismatch
+        })
+    }
+}
+
+fn compare_frame_text_passport(
+    pack_root: &Path,
+    case: &PackCase,
+    frame: u32,
+    trace: &render_core::layer_eval::FrameRenderTrace,
+) -> Result<Value> {
+    let reference_path = text_passport_reference_path(pack_root, &case.id, frame);
+    let native = text_passport_snapshot_from_trace(trace);
+    let native_summary = text_passport_snapshot_summary(&native);
+    if !reference_path.exists() {
+        return Ok(json!({
+            "frame": frame,
+            "status": "missing_reference",
+            "ok": Value::Null,
+            "reference": reference_path.display().to_string(),
+            "native": native_summary,
+            "contract": text_passport_contract_json()
+        }));
+    }
+
+    let reference_records = read_jsonl_values(&reference_path)?;
+    let reference = text_passport_snapshot_from_jsonl_records(&reference_records);
+    let reference_summary = text_passport_snapshot_summary(&reference);
+    let stats = compare_text_passport_snapshots(&reference, &native);
+    let status = if reference.layouts.is_empty() && reference.selectors.is_empty() {
+        "empty_reference"
+    } else {
+        "compared"
+    };
+    Ok(json!({
+        "frame": frame,
+        "status": status,
+        "ok": stats.is_ok(),
+        "reference": reference_path.display().to_string(),
+        "native": native_summary,
+        "reference_summary": reference_summary,
+        "comparison": stats.to_json(),
+        "contract": text_passport_contract_json()
+    }))
+}
+
+fn text_passport_reference_path(pack_root: &Path, case_id: &str, frame: u32) -> PathBuf {
+    pack_root
+        .join("ae_goldens/text_telemetry")
+        .join(case_id)
+        .join(format!("{case_id}_{frame:05}.jsonl"))
+}
+
+fn read_jsonl_values(path: &Path) -> Result<Vec<Value>> {
+    let file = fs::File::open(path).with_context(|| format!("opening {}", path.display()))?;
+    let reader = BufReader::new(file);
+    let mut values = Vec::new();
+    for (index, line) in reader.lines().enumerate() {
+        let line =
+            line.with_context(|| format!("reading {} line {}", path.display(), index + 1))?;
+        if line.trim().is_empty() {
+            continue;
+        }
+        values.push(
+            serde_json::from_str(&line)
+                .with_context(|| format!("parsing {} line {}", path.display(), index + 1))?,
+        );
+    }
+    Ok(values)
+}
+
+fn text_passport_snapshot_from_trace(
+    trace: &render_core::layer_eval::FrameRenderTrace,
+) -> TextPassportSnapshot {
+    let mut snapshot = TextPassportSnapshot::default();
+    for record in &trace.text_layouts {
+        push_text_layout_record(&mut snapshot, record);
+    }
+    for record in &trace.text_selector_weights {
+        push_text_selector_record(&mut snapshot, record);
+    }
+    snapshot
+}
+
+fn text_passport_snapshot_from_jsonl_records(records: &[Value]) -> TextPassportSnapshot {
+    let mut snapshot = TextPassportSnapshot::default();
+    for line in records {
+        let event = line.get("event").and_then(Value::as_str);
+        let record = line.get("record").unwrap_or(line);
+        match event {
+            Some("text.layout") => push_text_layout_record(&mut snapshot, record),
+            Some("text.selector_weights") => push_text_selector_record(&mut snapshot, record),
+            _ => {
+                if record.get("layout").is_some() {
+                    push_text_layout_record(&mut snapshot, record);
+                }
+                if record.get("units").is_some() {
+                    push_text_selector_record(&mut snapshot, record);
+                }
+            }
+        }
+    }
+    snapshot
+}
+
+fn push_text_layout_record(snapshot: &mut TextPassportSnapshot, record: &Value) {
+    let key = text_layout_key(record);
+    let glyphs = record
+        .pointer("/layout/glyphs")
+        .and_then(Value::as_array)
+        .map(|glyphs| {
+            glyphs
+                .iter()
+                .map(project_text_glyph_row)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    snapshot.layouts.entry(key).or_default().push(json!({
+        "composition": record.get("composition").cloned().unwrap_or(Value::Null),
+        "layer_id": record.get("layer_id").cloned().unwrap_or(Value::Null),
+        "render_path": record.get("render_path").cloned().unwrap_or(Value::Null),
+        "glyphs": glyphs,
+        "line_boxes": record.pointer("/layout/line_boxes").cloned().unwrap_or(Value::Null)
+    }));
+}
+
+fn push_text_selector_record(snapshot: &mut TextPassportSnapshot, record: &Value) {
+    let key = text_selector_key(record);
+    let units = record
+        .get("units")
+        .and_then(Value::as_array)
+        .map(|units| {
+            units
+                .iter()
+                .map(project_text_selector_unit)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    snapshot.selectors.entry(key).or_default().push(json!({
+        "composition": record.get("composition").cloned().unwrap_or(Value::Null),
+        "layer_id": record.get("layer_id").cloned().unwrap_or(Value::Null),
+        "animator": record.get("animator").cloned().unwrap_or(Value::Null),
+        "selector": record.get("selector").cloned().unwrap_or(Value::Null),
+        "expression_selector": record.get("expression_selector").cloned().unwrap_or(Value::Null),
+        "units": units
+    }));
+}
+
+fn project_text_glyph_row(glyph: &Value) -> Value {
+    json!({
+        "character": glyph.get("character").cloned().unwrap_or(Value::Null),
+        "font_glyph_id": glyph.get("font_glyph_id").cloned().unwrap_or(Value::Null),
+        "glyph_run_index": glyph.get("glyph_run_index").cloned().unwrap_or(Value::Null),
+        "char_index": glyph.get("char_index").cloned().unwrap_or(Value::Null),
+        "word_index": glyph.get("word_index").cloned().unwrap_or(Value::Null),
+        "line_index": glyph.get("line_index").cloned().unwrap_or(Value::Null),
+        "advance": glyph.get("advance").cloned().unwrap_or(Value::Null),
+        "advance_x": glyph.get("advance_x").cloned().unwrap_or(Value::Null),
+        "advance_y": glyph.get("advance_y").cloned().unwrap_or(Value::Null),
+        "bbox": glyph.get("bbox").cloned().unwrap_or(Value::Null),
+        "cooltype_bbox_minmax": glyph
+            .get("cooltype_bbox_minmax")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "bbox_center": glyph.get("bbox_center").cloned().unwrap_or(Value::Null),
+        "baseline": glyph.get("baseline").cloned().unwrap_or(Value::Null),
+        "baseline_delta": glyph.get("baseline_delta").cloned().unwrap_or(Value::Null),
+        "metric_source": glyph.get("metric_source").cloned().unwrap_or(Value::Null),
+        "cooltype_reference_status": glyph
+            .get("cooltype_reference_status")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "font_postscript_name": glyph
+            .get("font_postscript_name")
+            .cloned()
+            .unwrap_or(Value::Null)
+    })
+}
+
+fn project_text_selector_unit(unit: &Value) -> Value {
+    json!({
+        "index": unit.get("index").cloned().unwrap_or(Value::Null),
+        "selector_index": unit.get("selector_index").cloned().unwrap_or(Value::Null),
+        "selector_position_percent": unit
+            .get("selector_position_percent")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "range_weight": unit.get("range_weight").cloned().unwrap_or(Value::Null),
+        "expression_weight": unit
+            .get("expression_weight")
+            .cloned()
+            .unwrap_or(Value::Null),
+        "final_weight": unit.get("final_weight").cloned().unwrap_or(Value::Null),
+        "expression": unit.get("expression").cloned().unwrap_or(Value::Null),
+        "glyph_passport": unit.get("glyph_passport").cloned().unwrap_or(Value::Null),
+        "animator_contribution": unit
+            .get("animator_contribution")
+            .cloned()
+            .unwrap_or(Value::Null)
+    })
+}
+
+fn text_layout_key(record: &Value) -> String {
+    format!(
+        "{}::{}",
+        record
+            .get("composition")
+            .and_then(Value::as_str)
+            .unwrap_or("<composition>"),
+        record
+            .get("layer_id")
+            .and_then(Value::as_str)
+            .unwrap_or("<layer>")
+    )
+}
+
+fn text_selector_key(record: &Value) -> String {
+    format!(
+        "{}::{}::{}",
+        record
+            .get("composition")
+            .and_then(Value::as_str)
+            .unwrap_or("<composition>"),
+        record
+            .get("layer_id")
+            .and_then(Value::as_str)
+            .unwrap_or("<layer>"),
+        record
+            .get("animator")
+            .and_then(Value::as_str)
+            .unwrap_or("<animator>")
+    )
+}
+
+fn compare_text_passport_snapshots(
+    expected: &TextPassportSnapshot,
+    actual: &TextPassportSnapshot,
+) -> TextPassportCompareStats {
+    let mut stats = TextPassportCompareStats::default();
+    compare_text_passport_record_map("layouts", &expected.layouts, &actual.layouts, &mut stats);
+    compare_text_passport_record_map(
+        "selectors",
+        &expected.selectors,
+        &actual.selectors,
+        &mut stats,
+    );
+    stats
+}
+
+fn compare_text_passport_record_map(
+    root: &str,
+    expected: &BTreeMap<String, Vec<Value>>,
+    actual: &BTreeMap<String, Vec<Value>>,
+    stats: &mut TextPassportCompareStats,
+) {
+    for (key, expected_records) in expected {
+        let path = format!("{root}.{key}");
+        let Some(actual_records) = actual.get(key) else {
+            stats.push_mismatch(&path, &json!({ "records": expected_records.len() }), None);
+            continue;
+        };
+        compare_json_subset(
+            &Value::Array(expected_records.clone()),
+            &Value::Array(actual_records.clone()),
+            &path,
+            stats,
+        );
+    }
+}
+
+fn compare_json_subset(
+    expected: &Value,
+    actual: &Value,
+    path: &str,
+    stats: &mut TextPassportCompareStats,
+) {
+    match (expected, actual) {
+        (Value::Object(expected_object), Value::Object(actual_object)) => {
+            for (key, expected_value) in expected_object {
+                let next_path = format!("{path}.{key}");
+                let Some(actual_value) = actual_object.get(key) else {
+                    stats.push_mismatch(&next_path, expected_value, None);
+                    continue;
+                };
+                compare_json_subset(expected_value, actual_value, &next_path, stats);
+            }
+        }
+        (Value::Array(expected_array), Value::Array(actual_array)) => {
+            if expected_array.len() != actual_array.len() {
+                stats.push_mismatch(
+                    &format!("{path}.len"),
+                    &json!(expected_array.len()),
+                    Some(&json!(actual_array.len())),
+                );
+            }
+            for (index, (expected_value, actual_value)) in
+                expected_array.iter().zip(actual_array.iter()).enumerate()
+            {
+                compare_json_subset(
+                    expected_value,
+                    actual_value,
+                    &format!("{path}[{index}]"),
+                    stats,
+                );
+            }
+        }
+        (Value::Number(expected_number), Value::Number(actual_number)) => {
+            compare_json_numbers(
+                expected_number,
+                actual_number,
+                expected,
+                actual,
+                path,
+                stats,
+            );
+        }
+        _ if expected == actual => stats.push_match(),
+        _ => stats.push_mismatch(path, expected, Some(actual)),
+    }
+}
+
+fn compare_json_numbers(
+    expected_number: &serde_json::Number,
+    actual_number: &serde_json::Number,
+    expected: &Value,
+    actual: &Value,
+    path: &str,
+    stats: &mut TextPassportCompareStats,
+) {
+    if expected_number.is_i64()
+        || expected_number.is_u64()
+        || actual_number.is_i64()
+        || actual_number.is_u64()
+    {
+        if expected == actual {
+            stats.push_match();
+        } else {
+            stats.push_mismatch(path, expected, Some(actual));
+        }
+        return;
+    }
+
+    let Some(expected_value) = expected_number.as_f64() else {
+        stats.push_mismatch(path, expected, Some(actual));
+        return;
+    };
+    let Some(actual_value) = actual_number.as_f64() else {
+        stats.push_mismatch(path, expected, Some(actual));
+        return;
+    };
+    let delta = (expected_value - actual_value).abs();
+    let tolerance = text_passport_numeric_tolerance(path);
+    if delta <= tolerance {
+        stats.push_match();
+        stats.max_abs_delta = stats.max_abs_delta.max(delta);
+    } else {
+        stats.push_numeric_mismatch(path, expected, actual, delta, tolerance);
+    }
+}
+
+fn text_passport_numeric_tolerance(path: &str) -> f64 {
+    if path.contains("weight")
+        || path.contains("selector_position_percent")
+        || path.contains("opacity_alpha_scale")
+    {
+        0.0001
+    } else if path.contains("matrix")
+        || path.contains("bbox")
+        || path.contains("advance")
+        || path.contains("baseline")
+        || path.contains("center")
+        || path.contains("position")
+        || path.contains("scale")
+        || path.contains("rotation")
+        || path.contains("blur_radius")
+    {
+        0.001
+    } else {
+        0.0
+    }
+}
+
+fn text_passport_snapshot_summary(snapshot: &TextPassportSnapshot) -> Value {
+    let layout_records = snapshot.layouts.values().map(Vec::len).sum::<usize>();
+    let selector_records = snapshot.selectors.values().map(Vec::len).sum::<usize>();
+    let glyph_rows = snapshot
+        .layouts
+        .values()
+        .flatten()
+        .map(|record| {
+            record
+                .get("glyphs")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        })
+        .sum::<usize>();
+    let selector_units = snapshot
+        .selectors
+        .values()
+        .flatten()
+        .map(|record| {
+            record
+                .get("units")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len)
+        })
+        .sum::<usize>();
+    json!({
+        "layout_layers": snapshot.layouts.len(),
+        "layout_records": layout_records,
+        "glyph_rows": glyph_rows,
+        "selector_animators": snapshot.selectors.len(),
+        "selector_records": selector_records,
+        "selector_units": selector_units
+    })
+}
+
+fn text_passport_summary_json(frame_reports: &[Value]) -> Value {
+    let mut status_counts = BTreeMap::<String, u64>::new();
+    let mut compared_frames = 0_u64;
+    let mut missing_reference_frames = Vec::new();
+    let mut empty_reference_frames = Vec::new();
+    let mut mismatched_frames = Vec::new();
+    let mut total_mismatches = 0_u64;
+    let mut max_abs_delta = 0.0_f64;
+    let mut first_mismatch = None;
+
+    for report in frame_reports {
+        let frame = report.get("frame").and_then(Value::as_u64).unwrap_or(0);
+        let status = report
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown");
+        *status_counts.entry(status.to_string()).or_default() += 1;
+        match status {
+            "compared" => compared_frames += 1,
+            "missing_reference" => missing_reference_frames.push(frame),
+            "empty_reference" => empty_reference_frames.push(frame),
+            _ => {}
+        }
+        if let Some(comparison) = report.get("comparison") {
+            let mismatches = comparison
+                .get("mismatches")
+                .and_then(Value::as_u64)
+                .unwrap_or(0);
+            total_mismatches += mismatches;
+            if mismatches > 0 {
+                mismatched_frames.push(frame);
+            }
+            max_abs_delta = max_abs_delta.max(
+                comparison
+                    .get("max_abs_delta")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(0.0),
+            );
+            if first_mismatch.is_none() {
+                first_mismatch = comparison
+                    .get("first_mismatch")
+                    .filter(|value| !value.is_null())
+                    .cloned();
+            }
+        }
+    }
+
+    let all_present_ok = compared_frames > 0
+        && total_mismatches == 0
+        && missing_reference_frames.is_empty()
+        && empty_reference_frames.is_empty();
+    json!({
+        "ok": all_present_ok,
+        "frames": frame_reports.len(),
+        "compared_frames": compared_frames,
+        "status_counts": status_counts,
+        "missing_reference_frames": missing_reference_frames,
+        "empty_reference_frames": empty_reference_frames,
+        "mismatched_frames": mismatched_frames,
+        "total_mismatches": total_mismatches,
+        "max_abs_delta": max_abs_delta,
+        "first_mismatch": first_mismatch
+    })
+}
+
+fn text_passport_frame_ref(report: &Value) -> Value {
+    json!({
+        "status": report.get("status").cloned().unwrap_or(Value::Null),
+        "ok": report.get("ok").cloned().unwrap_or(Value::Null),
+        "reference": report.get("reference").cloned().unwrap_or(Value::Null),
+        "native": report.get("native").cloned().unwrap_or(Value::Null),
+        "comparison": report.get("comparison").cloned().unwrap_or(Value::Null)
+    })
+}
+
+fn text_passport_contract_json() -> Value {
+    json!({
+        "schema": "ae-native-renderer.text-passport-reference.v1",
+        "reference_path": "ae_goldens/text_telemetry/<case_id>/<case_id>_<frame>.jsonl",
+        "reference_format": "JSONL records using text.layout/text.selector_weights events; reference records may contain only the fields that should be compared",
+        "comparison": "reference-as-subset; extra native fields are ignored",
+        "numeric_tolerances": {
+            "weights": 0.0001,
+            "geometry": 0.001,
+            "default": 0.0
         }
     })
 }
@@ -1829,5 +2418,129 @@ mod tests {
             render_core::layer_eval::render_frame_with_footage(&recipe.scene, 0, &mut provider)
                 .unwrap();
         assert_eq!((canvas.width, canvas.height), (512, 512));
+    }
+
+    #[test]
+    fn text_passport_compare_accepts_reference_subset() {
+        let mut expected = TextPassportSnapshot::default();
+        expected.layouts.insert(
+            "TXT_030::text".to_string(),
+            vec![json!({
+                "glyphs": [{
+                    "glyph_run_index": 0,
+                    "font_glyph_id": 42,
+                    "advance_x": 12.0,
+                    "bbox": [1.0, 2.0, 3.0, 4.0]
+                }]
+            })],
+        );
+
+        let mut actual = TextPassportSnapshot::default();
+        actual.layouts.insert(
+            "TXT_030::text".to_string(),
+            vec![json!({
+                "composition": "TXT_030",
+                "layer_id": "text",
+                "glyphs": [{
+                    "glyph_run_index": 0,
+                    "font_glyph_id": 42,
+                    "advance_x": 12.0005,
+                    "bbox": [1.0, 2.0, 3.0, 4.0],
+                    "metric_source": "fontdue"
+                }]
+            })],
+        );
+
+        let stats = compare_text_passport_snapshots(&expected, &actual);
+
+        assert!(stats.is_ok(), "{:?}", stats.first_mismatch);
+        assert_eq!(stats.mismatches, 0);
+        assert!(stats.fields_compared > 0);
+    }
+
+    #[test]
+    fn text_passport_compare_reports_first_divergent_glyph_field() {
+        let mut expected = TextPassportSnapshot::default();
+        expected.layouts.insert(
+            "TXT_030::text".to_string(),
+            vec![json!({
+                "glyphs": [{
+                    "glyph_run_index": 0,
+                    "font_glyph_id": 42,
+                    "advance_x": 12.0
+                }]
+            })],
+        );
+
+        let mut actual = TextPassportSnapshot::default();
+        actual.layouts.insert(
+            "TXT_030::text".to_string(),
+            vec![json!({
+                "glyphs": [{
+                    "glyph_run_index": 0,
+                    "font_glyph_id": 43,
+                    "advance_x": 14.0
+                }]
+            })],
+        );
+
+        let stats = compare_text_passport_snapshots(&expected, &actual);
+
+        assert!(!stats.is_ok());
+        assert_eq!(stats.mismatches, 2);
+        assert!(stats.max_abs_delta >= 2.0);
+        let first = stats.first_mismatch.unwrap();
+        assert!(first["path"].as_str().unwrap().contains("glyphs"));
+    }
+
+    #[test]
+    fn jsonl_text_passport_snapshot_reads_native_sidecar_events() {
+        let records = vec![
+            json!({
+                "event": "text.layout",
+                "frame": 0,
+                "record": {
+                    "composition": "TXT_030",
+                    "layer_id": "text",
+                    "layout": {
+                        "glyphs": [{
+                            "character": "G",
+                            "font_glyph_id": 42,
+                            "glyph_run_index": 0,
+                            "advance_x": 12.0
+                        }]
+                    }
+                }
+            }),
+            json!({
+                "event": "text.selector_weights",
+                "frame": 0,
+                "record": {
+                    "composition": "TXT_030",
+                    "layer_id": "text",
+                    "animator": "glyph_motion",
+                    "units": [{
+                        "index": 0,
+                        "glyph_passport": {
+                            "glyph_run_indices": [0],
+                            "font_glyph_ids": [42]
+                        }
+                    }]
+                }
+            }),
+        ];
+
+        let snapshot = text_passport_snapshot_from_jsonl_records(&records);
+
+        assert_eq!(snapshot.layouts.len(), 1);
+        assert_eq!(snapshot.selectors.len(), 1);
+        assert_eq!(
+            text_passport_snapshot_summary(&snapshot)["glyph_rows"],
+            json!(1)
+        );
+        assert_eq!(
+            text_passport_snapshot_summary(&snapshot)["selector_units"],
+            json!(1)
+        );
     }
 }
