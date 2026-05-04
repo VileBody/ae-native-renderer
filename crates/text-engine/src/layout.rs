@@ -56,17 +56,24 @@ pub struct GlyphLayoutTelemetry {
     pub font_resolution_source: FontResolutionSource,
     pub font_size: f32,
     pub font_glyph_id: u32,
+    pub glyph_run_index: usize,
     pub char_index: usize,
     pub word_index: usize,
     pub line_index: usize,
     pub advance: f32,
+    pub advance_x: f32,
+    pub advance_y: f32,
     pub bbox: [f32; 4],
+    pub cooltype_bbox_minmax: [f32; 4],
     pub bbox_center: [f32; 2],
     pub bbox_normalized: [f32; 4],
     pub bbox_center_normalized: [f32; 2],
     pub baseline: f32,
+    pub baseline_delta: Option<[f32; 2]>,
     pub line_width: f32,
     pub text_box_rect: [f32; 4],
+    pub metric_source: String,
+    pub cooltype_reference_status: String,
 }
 
 pub fn layout_text(req: &TextLayoutRequest) -> anyhow::Result<TextLayoutResult> {
@@ -113,6 +120,7 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
 
             let char_index = char_offset + local_index;
             let advance = stub_glyph_advance(ch, req.font_size);
+            let glyph_run_index = glyphs.len();
             let glyph = GlyphInstance {
                 glyph_id: ch as u32,
                 char_index,
@@ -136,17 +144,24 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
                 font_resolution_source: font_resolution.source.clone(),
                 font_size: req.font_size,
                 font_glyph_id: glyph.glyph_id,
+                glyph_run_index,
                 char_index,
                 word_index,
                 line_index,
                 advance,
+                advance_x: advance,
+                advance_y: 0.0,
                 bbox: glyph.bbox,
+                cooltype_bbox_minmax: bbox_to_minmax(glyph.bbox),
                 bbox_center,
                 bbox_normalized: normalize_bbox_to_text_box(glyph.bbox, box_rect),
                 bbox_center_normalized: normalize_point_to_text_box(bbox_center, box_rect),
                 baseline,
+                baseline_delta: None,
                 line_width,
                 text_box_rect: box_rect,
+                metric_source: "stub".to_string(),
+                cooltype_reference_status: "not_cooltype_verified".to_string(),
             });
             glyphs.push(glyph);
             x += advance;
@@ -220,6 +235,7 @@ fn layout_with_font(
             let font_glyph_id = font.lookup_glyph_index(ch);
             let bbox = glyph_bbox(font, ch, req.font_size, pen_x, baseline, advance);
             let bbox_center = glyph_bbox_center(bbox);
+            let glyph_run_index = glyphs.len();
             let glyph = GlyphInstance {
                 glyph_id: font_glyph_id as u32,
                 char_index: char_offset + local_index,
@@ -242,17 +258,24 @@ fn layout_with_font(
                 font_resolution_source: font_resolution.source.clone(),
                 font_size: req.font_size,
                 font_glyph_id: font_glyph_id as u32,
+                glyph_run_index,
                 char_index: glyph.char_index,
                 word_index,
                 line_index,
                 advance,
+                advance_x: advance,
+                advance_y: 0.0,
                 bbox,
+                cooltype_bbox_minmax: bbox_to_minmax(bbox),
                 bbox_center,
                 bbox_normalized: normalize_bbox_to_text_box(bbox, box_rect),
                 bbox_center_normalized: normalize_point_to_text_box(bbox_center, box_rect),
                 baseline,
+                baseline_delta: None,
                 line_width,
                 text_box_rect: box_rect,
+                metric_source: "fontdue".to_string(),
+                cooltype_reference_status: "not_cooltype_verified".to_string(),
             });
             glyphs.push(glyph);
             pen_x += advance;
@@ -353,6 +376,10 @@ fn glyph_bbox_center(bbox: [f32; 4]) -> [f32; 2] {
     [bbox[0] + bbox[2] * 0.5, bbox[1] + bbox[3] * 0.5]
 }
 
+fn bbox_to_minmax(bbox: [f32; 4]) -> [f32; 4] {
+    [bbox[0], bbox[1], bbox[0] + bbox[2], bbox[1] + bbox[3]]
+}
+
 #[allow(clippy::too_many_arguments)]
 fn line_layout_telemetry(
     line_index: usize,
@@ -366,7 +393,12 @@ fn line_layout_telemetry(
     glyph_bbox: Option<[f32; 4]>,
     text_box_rect: [f32; 4],
 ) -> LineLayoutTelemetry {
-    let line_box = [line_start_x, baseline - line_height, line_width, line_height];
+    let line_box = [
+        line_start_x,
+        baseline - line_height,
+        line_width,
+        line_height,
+    ];
     LineLayoutTelemetry {
         line_index,
         char_start,
@@ -501,8 +533,18 @@ mod tests {
         let glyph = &layout.telemetry.glyphs[0];
 
         assert_eq!(glyph.bbox, [10.0, 20.0, 12.0, 20.0]);
+        assert_eq!(glyph.glyph_run_index, 0);
+        assert_eq!(glyph.advance_x, 12.0);
+        assert_eq!(glyph.advance_y, 0.0);
+        assert_eq!(glyph.cooltype_bbox_minmax, [10.0, 20.0, 22.0, 40.0]);
+        assert_eq!(glyph.baseline_delta, None);
+        assert_eq!(glyph.metric_source, "stub");
+        assert_eq!(glyph.cooltype_reference_status, "not_cooltype_verified");
         assert_eq!(glyph.bbox_center, [16.0, 30.0]);
-        assert_eq!(layout.telemetry.line_boxes[0].line_box, [10.0, 20.0, 12.0, 20.0]);
+        assert_eq!(
+            layout.telemetry.line_boxes[0].line_box,
+            [10.0, 20.0, 12.0, 20.0]
+        );
         assert_eq!(layout.telemetry.line_boxes[0].glyph_bbox, Some(glyph.bbox));
         assert_approx(glyph.bbox_normalized[0], 0.0);
         assert_approx(glyph.bbox_normalized[1], 0.0);
@@ -568,6 +610,14 @@ mod tests {
         let expected_glyph_id = font.lookup_glyph_index('P') as u32;
         assert_eq!(layout.glyphs[0].glyph_id, expected_glyph_id);
         assert_eq!(layout.telemetry.glyphs[0].font_glyph_id, expected_glyph_id);
+        assert_eq!(layout.telemetry.glyphs[0].glyph_run_index, 0);
+        assert_eq!(layout.telemetry.glyphs[0].advance_y, 0.0);
+        assert_eq!(layout.telemetry.glyphs[0].baseline_delta, None);
+        assert_eq!(layout.telemetry.glyphs[0].metric_source, "fontdue");
+        assert_eq!(
+            layout.telemetry.glyphs[0].cooltype_reference_status,
+            "not_cooltype_verified"
+        );
         assert_eq!(
             layout.telemetry.glyphs[0].font_path.as_deref(),
             Some(path.as_path())

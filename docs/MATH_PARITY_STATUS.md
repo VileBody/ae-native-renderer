@@ -1,6 +1,6 @@
 # Math Parity Status
 
-Status date: 2026-05-03.
+Status date: 2026-05-05.
 
 This document separates two different kinds of work:
 
@@ -56,9 +56,9 @@ nearby AE math backlog. Template status is derived from this table.
 | `M02` | Footage source-time sampling and media frame selection | `implemented approximate` | all three | `source_start`, activity windows, sequential decode/cache, media plan logs. | Numbered-frame source fixtures, source-time telemetry, AE/reference frame-index goldens. |
 | `M03` | 2D transform matrix, anchor/position/scale/rotation sampling | `implemented approximate` | all three | Matrix convention, inverse sampling, bilinear sampler, ROI bounds, unit tests. | Operator passport, coordinate-field/UV diff fixtures, matrix telemetry, AE transform goldens. |
 | `M04` | Keyframes: hold/linear/cubic Bezier approximation | `instrumented/testable` | all three | Scalar/Vec2 keyframes, compact cubic ease, unit tests, Bezier conformance micro-scene scaffold. | Export AE ease PNGs, compare temporal-ease tangent mapping, tune solver/parameter mapping. |
-| `M05` | Text rasterization and glyph layout | `implemented approximate` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; CoolType glyph metric targets and passports now selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows. | Add CoolType glyph passport sidecars: glyph-run order, 12-byte row refs, advance x/y, bbox min/max, baseline deltas, metric source, and AE glyph-row comparisons. |
-| `M06` | Text Range Selector reveal by words/characters/lines | `implemented approximate` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, smoothness/randomize/wiggly approximations, glyph/word/line bbox units. | Link selector units to glyph-run records, then add boundary fixtures and AE text reveal goldens. |
-| `M07` | Character text animator position/scale/rotation/blur | `implemented approximate` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles. | Emit per-unit/glyph refs with final matrix, opacity alpha scale, and blur radius before AE expression-selector/glyph animator tuning. |
+| `M05` | Text rasterization and glyph layout | `instrumented/testable` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; CoolType glyph metric targets selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows; layout sidecars now emit glyph-run index, advance x/y, bbox min/max, baseline delta slot, metric source, and CoolType reference status. | Add AE/CoolType glyph-row references, compare native layout rows against them, then tune shaping/composer/raster coverage. |
+| `M06` | Text Range Selector reveal by words/characters/lines | `instrumented/testable` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, smoothness/randomize/wiggly approximations, glyph/word/line bbox units, selector-unit sidecars linked to glyph-run passports. | Add boundary fixtures and AE text reveal goldens; tune selector boundaries, order, smoothness, and whitespace treatment. |
+| `M07` | Character text animator position/scale/rotation/blur | `instrumented/testable` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles, per-unit glyph refs, final matrix, opacity alpha scale, and blur radius telemetry. | Add AE glyph animator goldens and tune per-glyph transform center, blur kernel, opacity composition, and selector weighting. |
 | `M08` | Expression selector bounce | `implemented approximate` | `impulse_2nd` | Recognized generated `per_character_bounce` selector with deterministic native evaluator path. | Expression selector amount telemetry, AE bounce curve samples, tune delay/frequency/decay semantics. |
 | `M09` | Property expression subset: generated `edge_wobble` | `implemented approximate` | `scenes_3rd` | Named position-expression mode plus small scalar/Vec2 expression evaluator. | Per-property expression telemetry, AE samples for footage motion, tune waveform/envelope. |
 | `M10` | Drop Shadow | `instrumented/testable` | `template_4th`, `impulse_2nd` | Effect module, typed/numbered params, unit tests, effects conformance scaffold. | Per-effect AE PNGs, alpha/shadow-mask telemetry, tune blur/offset/composite/premult. |
@@ -84,6 +84,33 @@ Observed from the current imported scene snapshots in
 | `template_4th` | `M01`, `M02`, `M03`, `M04`, `M05`, `M06`, `M10`, `M11`, `M17`, `M19` | `implemented approximate` | All observed core modules exist natively. The weakest used modules are text/glyph layout, Range Selector reveal, transform/composite, and final AE effect tuning. `M10`/`M11` already have scaffolding, but no AE goldens. |
 | `impulse_2nd` | `M01`, `M02`, `M03`, `M04`, `M05`, `M07`, `M08`, `M10`, `M17`, `M19` | `implemented approximate` | Native output covers the observed feature set, but glyph animator math, generated bounce selector, blur animator, Drop Shadow, and compositing are still approximations without AE telemetry/goldens. |
 | `scenes_3rd` | `M01`, `M02`, `M03`, `M04`, `M05`, `M06`, `M09`, `M12`, `M13`, `M14`, `M15`, `M16`, `M19` | `implemented approximate` | All observed modules now have native behavior. The template is still below formula tuning because Posterize Time, Geometry2, Minimax, Turbulent Displace, adjustment ordering, expression motion, and compositing need AE telemetry/goldens. |
+
+### Step 1 Component Passport
+
+The first finish-line step for the current templates is now in place for text
+components. Text layout sidecars expose the native glyph rows with explicit
+source labels:
+
+- `glyph_run_index`, `font_glyph_id`, `char_index`, `word_index`, `line_index`;
+- `advance`, `advance_x`, `advance_y`;
+- `bbox`, `cooltype_bbox_minmax`, `bbox_center`, normalized bbox fields;
+- `baseline`, `baseline_delta`;
+- `metric_source` (`fontdue` or `stub`);
+- `cooltype_reference_status` (`not_cooltype_verified` until AE/CoolType rows
+  are imported).
+
+Selector sidecars now attach `glyph_passport` to each animated unit. For
+characters this maps one unit to one glyph run; for words and lines it maps the
+unit to the grouped glyph runs. Each selector unit also carries
+`animator_contribution` with final matrix, opacity alpha scale, and blur radius.
+
+Smoke output for the first pass lives at:
+
+```text
+target/ae_agents/native_text_passport_smoke/report.json
+target/ae_agents/native_text_passport_smoke/TXT_030/text_telemetry.jsonl
+target/ae_agents/native_text_passport_smoke/TXT_040/text_telemetry.jsonl
+```
 
 ## Template Inventory
 

@@ -6,8 +6,11 @@ use render_ir::{
     TextAnimatorSpec, TextExpressionSelector, TextSelectorBasedOn, TextSelectorShape, Vec2Keyframe,
 };
 use serde_json::{json, Value};
+use std::collections::BTreeMap;
 use std::time::Instant;
-use text_engine::{layout_text, rasterize_text, TextLayoutRequest, TextLayoutResult};
+use text_engine::{
+    layout_text, rasterize_text, GlyphLayoutTelemetry, TextLayoutRequest, TextLayoutResult,
+};
 use transform_math::{Mat3, Transform2D, Vec2};
 
 pub trait FootageProvider {
@@ -1925,11 +1928,6 @@ fn record_text_selector_trace(
         return;
     };
     let units = unit_rects(canvas, text, layout, animator.selector.based_on);
-    let transforms_units = animator.position.is_some()
-        || animator.scale.is_some()
-        || animator.rotation.is_some()
-        || animator.blur.is_some()
-        || animator.expression_selector.is_some();
     let unit_records = units
         .iter()
         .map(|unit| {
@@ -1960,12 +1958,15 @@ fn record_text_selector_trace(
                 "range_weight": range_weight,
                 "expression_weight": expression.weight,
                 "final_weight": final_weight,
-                "expression": expression.to_json()
+                "expression": expression.to_json(),
+                "glyph_passport": selector_unit_glyph_passport(
+                    layout,
+                    animator.selector.based_on,
+                    unit.index
+                )
             });
-            if transforms_units {
-                record["animator_contribution"] =
-                    animator_contribution_json(*unit, animator, final_weight, unit_scale);
-            }
+            record["animator_contribution"] =
+                animator_contribution_json(*unit, animator, final_weight, unit_scale);
             record
         })
         .collect::<Vec<_>>();
@@ -2546,8 +2547,125 @@ fn animator_contribution_json(
         "rotation": transform.rotation,
         "opacity_alpha_scale": transform.alpha_scale,
         "blur_radius": transform.blur_radius,
-        "matrix": transform.matrix.m
+        "matrix": transform.matrix.m,
+        "final_matrix": transform.matrix.m,
+        "final_opacity_alpha_scale": transform.alpha_scale,
+        "blur_radius_px": transform.blur_radius
     })
+}
+
+fn selector_unit_glyph_passport(
+    layout: Option<&TextLayoutResult>,
+    based_on: TextSelectorBasedOn,
+    unit_index: usize,
+) -> Value {
+    let Some(layout) = layout else {
+        return json!({
+            "available": false,
+            "reason": "layout_unavailable"
+        });
+    };
+    let units = telemetry_glyph_units(&layout.telemetry.glyphs, based_on);
+    let Some(glyphs) = units.get(unit_index) else {
+        return json!({
+            "available": false,
+            "reason": "unit_without_layout_glyphs",
+            "layout_glyph_count": layout.telemetry.glyphs.len()
+        });
+    };
+    glyph_passport_json(glyphs)
+}
+
+fn telemetry_glyph_units(
+    glyphs: &[GlyphLayoutTelemetry],
+    based_on: TextSelectorBasedOn,
+) -> Vec<Vec<&GlyphLayoutTelemetry>> {
+    match based_on {
+        TextSelectorBasedOn::Characters => glyphs
+            .iter()
+            .filter(|glyph| !telemetry_glyph_is_whitespace(glyph))
+            .map(|glyph| vec![glyph])
+            .collect(),
+        TextSelectorBasedOn::Words => grouped_telemetry_glyph_units(glyphs, LayoutGroup::Word),
+        TextSelectorBasedOn::Lines => grouped_telemetry_glyph_units(glyphs, LayoutGroup::Line),
+    }
+}
+
+fn grouped_telemetry_glyph_units(
+    glyphs: &[GlyphLayoutTelemetry],
+    group: LayoutGroup,
+) -> Vec<Vec<&GlyphLayoutTelemetry>> {
+    let mut grouped = BTreeMap::<usize, Vec<&GlyphLayoutTelemetry>>::new();
+    for glyph in glyphs {
+        if telemetry_glyph_is_whitespace(glyph) {
+            continue;
+        }
+        let key = match group {
+            LayoutGroup::Word => glyph.word_index,
+            LayoutGroup::Line => glyph.line_index,
+        };
+        grouped.entry(key).or_default().push(glyph);
+    }
+    grouped.into_values().collect()
+}
+
+fn telemetry_glyph_is_whitespace(glyph: &GlyphLayoutTelemetry) -> bool {
+    glyph.character.chars().all(char::is_whitespace)
+}
+
+fn glyph_passport_json(glyphs: &[&GlyphLayoutTelemetry]) -> Value {
+    json!({
+        "available": true,
+        "glyph_count": glyphs.len(),
+        "metric_source": collapsed_text_values(
+            glyphs.iter().map(|glyph| glyph.metric_source.as_str())
+        ),
+        "cooltype_reference_status": collapsed_text_values(
+            glyphs.iter().map(|glyph| glyph.cooltype_reference_status.as_str())
+        ),
+        "glyph_run_indices": glyphs.iter().map(|glyph| glyph.glyph_run_index).collect::<Vec<_>>(),
+        "char_indices": glyphs.iter().map(|glyph| glyph.char_index).collect::<Vec<_>>(),
+        "word_indices": glyphs.iter().map(|glyph| glyph.word_index).collect::<Vec<_>>(),
+        "line_indices": glyphs.iter().map(|glyph| glyph.line_index).collect::<Vec<_>>(),
+        "font_glyph_ids": glyphs.iter().map(|glyph| glyph.font_glyph_id).collect::<Vec<_>>(),
+        "characters": glyphs.iter().map(|glyph| glyph.character.clone()).collect::<Vec<_>>(),
+        "advances": glyphs.iter().map(|glyph| glyph.advance).collect::<Vec<_>>(),
+        "advance_x": glyphs.iter().map(|glyph| glyph.advance_x).collect::<Vec<_>>(),
+        "advance_y": glyphs.iter().map(|glyph| glyph.advance_y).collect::<Vec<_>>(),
+        "bboxes": glyphs.iter().map(|glyph| glyph.bbox).collect::<Vec<_>>(),
+        "cooltype_bbox_minmax": glyphs
+            .iter()
+            .map(|glyph| glyph.cooltype_bbox_minmax)
+            .collect::<Vec<_>>(),
+        "bbox_centers": glyphs.iter().map(|glyph| glyph.bbox_center).collect::<Vec<_>>(),
+        "baselines": glyphs.iter().map(|glyph| glyph.baseline).collect::<Vec<_>>(),
+        "baseline_deltas": glyphs
+            .iter()
+            .map(|glyph| glyph.baseline_delta)
+            .collect::<Vec<_>>(),
+        "font_paths": glyphs
+            .iter()
+            .map(|glyph| glyph.font_path.as_ref().map(|path| path.display().to_string()))
+            .collect::<Vec<_>>(),
+        "font_postscript_names": glyphs
+            .iter()
+            .map(|glyph| glyph.font_postscript_name.clone())
+            .collect::<Vec<_>>()
+    })
+}
+
+fn collapsed_text_values<'a>(values: impl Iterator<Item = &'a str>) -> String {
+    let mut unique = Vec::<&str>::new();
+    for value in values {
+        if !unique.contains(&value) {
+            unique.push(value);
+        }
+    }
+    match unique.as_slice() {
+        [] => "unavailable".to_string(),
+        [single] => (*single).to_string(),
+        _ => "mixed".to_string(),
+    }
 }
 
 fn draw_transformed_unit(
@@ -3023,6 +3141,58 @@ mod tests {
             apply_unit_animator_transform(&canvas, "A", None, &animator, 0.0, 100.0, 0.0, 0.0, 1.0);
 
         assert!(animated.pixel(0, 0)[3] > 0);
+    }
+
+    #[test]
+    fn selector_glyph_passport_maps_word_units_to_glyph_runs() {
+        let layout = text_engine::layout_text_stub(&TextLayoutRequest {
+            text: "Hi all".to_string(),
+            font_id: "missing".to_string(),
+            font_size: 10.0,
+            box_rect: Some([0.0, 0.0, 100.0, 40.0]),
+        });
+
+        let passport =
+            selector_unit_glyph_passport(Some(&layout), render_ir::TextSelectorBasedOn::Words, 1);
+
+        assert_eq!(passport["available"], json!(true));
+        assert_eq!(passport["metric_source"], json!("stub"));
+        assert_eq!(
+            passport["cooltype_reference_status"],
+            json!("not_cooltype_verified")
+        );
+        assert_eq!(passport["glyph_count"], json!(3));
+        assert_eq!(passport["characters"], json!(["a", "l", "l"]));
+        assert_eq!(passport["glyph_run_indices"], json!([3, 4, 5]));
+        assert_eq!(passport["word_indices"], json!([1, 1, 1]));
+    }
+
+    #[test]
+    fn animator_contribution_reports_opacity_and_matrix_for_opacity_only_units() {
+        let animator = TextAnimatorSpec {
+            name: "fade".to_string(),
+            opacity: 0.0,
+            position: None,
+            scale: None,
+            rotation: None,
+            blur: None,
+            selector: TextRangeSelector::default(),
+            expression_selector: None,
+        };
+        let unit = UnitRect {
+            x0: 0,
+            y0: 0,
+            x1: 2,
+            y1: 2,
+            index: 0,
+            total: 1,
+        };
+
+        let contribution = animator_contribution_json(unit, &animator, 1.0, 1.0);
+
+        assert_eq!(contribution["final_opacity_alpha_scale"], json!(0.0));
+        assert_eq!(contribution["blur_radius_px"], json!(0));
+        assert!(contribution["final_matrix"].is_array());
     }
 
     #[test]
