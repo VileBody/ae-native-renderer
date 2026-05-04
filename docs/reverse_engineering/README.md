@@ -35,6 +35,8 @@ or audit without reopening the same binary.
   Start M19/color-alpha work from `MATH_CONTRACTS_GUARDRAILS.md`.
 - `docs/phase_reports/`: dated findings and module-specific reverse notes, for
   example `AE_REVERSE_GEOMETRY2_GHIDRA.md`.
+  The current artifact intake checklist is
+  `docs/phase_reports/ARTIFACT_INTAKE_20260505.md`.
 - `fixtures/conformance/`: small native scenes and manifest entries for
   focused parity fixtures.
 - `fixtures/ae_conformance_pack/`: AE-generated pack, manifest, checked-in test

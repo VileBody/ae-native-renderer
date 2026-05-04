@@ -79,7 +79,7 @@ The task manifest currently covers:
 | `basic_text_aex` | `text` | Text/glyph/CoolType candidates. |
 | `scripting_expression_host` | `expression` | Scripting.aex host bridge, ExtendScript delay-loads, BEE/time pointer table. |
 | `extendscript_expression_engine` | `expression` | Disabled until exact generic ExtendScript function targets are selected. |
-| `bee_temporal_scheduler` | `temporal` | Disabled until `BEE.dll` is imported into a project. |
+| `bee_temporal_scheduler` | `temporal` | BEE shutter/time/layer checkout targets; run with `--include-disabled` when the local `agent_bee_temporal` project exists. |
 
 ## Agent Handoff Pattern
 
