@@ -1,0 +1,90 @@
+{
+  "schema": "ae-native-renderer.text-telemetry-export.v1",
+  "generated_by": "fixtures/ae_conformance_pack/jsx/export_text_telemetry.jsx",
+  "reference_semantics": "AE sourceRectAtTime-based reference subset",
+  "frames_written": 29,
+  "cases": [
+    {
+      "id": "TXT_010",
+      "frames": [
+        0,
+        8,
+        16,
+        24,
+        32,
+        45,
+        59
+      ],
+      "layers": [
+        {
+          "layer_id": "TXT_010_word_reveal",
+          "glyph_rows": 26,
+          "selector_units": 4
+        }
+      ]
+    },
+    {
+      "id": "TXT_020",
+      "frames": [
+        0,
+        8,
+        16,
+        24,
+        32,
+        45,
+        59
+      ],
+      "layers": [
+        {
+          "layer_id": "TXT_020_character_reveal",
+          "glyph_rows": 16,
+          "selector_units": 15
+        },
+        {
+          "layer_id": "TXT_020_line_reveal",
+          "glyph_rows": 26,
+          "selector_units": 3
+        }
+      ]
+    },
+    {
+      "id": "TXT_030",
+      "frames": [
+        0,
+        8,
+        16,
+        24,
+        32,
+        45,
+        59
+      ],
+      "layers": [
+        {
+          "layer_id": "TXT_030_glyph_motion",
+          "glyph_rows": 12,
+          "selector_units": 11
+        }
+      ]
+    },
+    {
+      "id": "TXT_040",
+      "frames": [
+        0,
+        5,
+        10,
+        15,
+        20,
+        30,
+        45,
+        59
+      ],
+      "layers": [
+        {
+          "layer_id": "TXT_040_bounce_selector",
+          "glyph_rows": 15,
+          "selector_units": 14
+        }
+      ]
+    }
+  ]
+}

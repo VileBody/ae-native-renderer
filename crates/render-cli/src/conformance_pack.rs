@@ -750,6 +750,10 @@ fn text_passport_snapshot_from_jsonl_records(records: &[Value]) -> TextPassportS
 
 fn push_text_layout_record(snapshot: &mut TextPassportSnapshot, record: &Value) {
     let key = text_layout_key(record);
+    let mut projected = serde_json::Map::new();
+    copy_json_field(&mut projected, record, "composition");
+    copy_json_field(&mut projected, record, "layer_id");
+    copy_json_field(&mut projected, record, "render_path");
     let glyphs = record
         .pointer("/layout/glyphs")
         .and_then(Value::as_array)
@@ -760,17 +764,25 @@ fn push_text_layout_record(snapshot: &mut TextPassportSnapshot, record: &Value) 
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    snapshot.layouts.entry(key).or_default().push(json!({
-        "composition": record.get("composition").cloned().unwrap_or(Value::Null),
-        "layer_id": record.get("layer_id").cloned().unwrap_or(Value::Null),
-        "render_path": record.get("render_path").cloned().unwrap_or(Value::Null),
-        "glyphs": glyphs,
-        "line_boxes": record.pointer("/layout/line_boxes").cloned().unwrap_or(Value::Null)
-    }));
+    projected.insert("glyphs".to_string(), Value::Array(glyphs));
+    if let Some(line_boxes) = record.pointer("/layout/line_boxes") {
+        projected.insert("line_boxes".to_string(), line_boxes.clone());
+    }
+    snapshot
+        .layouts
+        .entry(key)
+        .or_default()
+        .push(Value::Object(projected));
 }
 
 fn push_text_selector_record(snapshot: &mut TextPassportSnapshot, record: &Value) {
     let key = text_selector_key(record);
+    let mut projected = serde_json::Map::new();
+    copy_json_field(&mut projected, record, "composition");
+    copy_json_field(&mut projected, record, "layer_id");
+    copy_json_field(&mut projected, record, "animator");
+    copy_json_field(&mut projected, record, "selector");
+    copy_json_field(&mut projected, record, "expression_selector");
     let units = record
         .get("units")
         .and_then(Value::as_array)
@@ -781,68 +793,62 @@ fn push_text_selector_record(snapshot: &mut TextPassportSnapshot, record: &Value
                 .collect::<Vec<_>>()
         })
         .unwrap_or_default();
-    snapshot.selectors.entry(key).or_default().push(json!({
-        "composition": record.get("composition").cloned().unwrap_or(Value::Null),
-        "layer_id": record.get("layer_id").cloned().unwrap_or(Value::Null),
-        "animator": record.get("animator").cloned().unwrap_or(Value::Null),
-        "selector": record.get("selector").cloned().unwrap_or(Value::Null),
-        "expression_selector": record.get("expression_selector").cloned().unwrap_or(Value::Null),
-        "units": units
-    }));
+    projected.insert("units".to_string(), Value::Array(units));
+    snapshot
+        .selectors
+        .entry(key)
+        .or_default()
+        .push(Value::Object(projected));
 }
 
 fn project_text_glyph_row(glyph: &Value) -> Value {
-    json!({
-        "character": glyph.get("character").cloned().unwrap_or(Value::Null),
-        "font_glyph_id": glyph.get("font_glyph_id").cloned().unwrap_or(Value::Null),
-        "glyph_run_index": glyph.get("glyph_run_index").cloned().unwrap_or(Value::Null),
-        "char_index": glyph.get("char_index").cloned().unwrap_or(Value::Null),
-        "word_index": glyph.get("word_index").cloned().unwrap_or(Value::Null),
-        "line_index": glyph.get("line_index").cloned().unwrap_or(Value::Null),
-        "advance": glyph.get("advance").cloned().unwrap_or(Value::Null),
-        "advance_x": glyph.get("advance_x").cloned().unwrap_or(Value::Null),
-        "advance_y": glyph.get("advance_y").cloned().unwrap_or(Value::Null),
-        "bbox": glyph.get("bbox").cloned().unwrap_or(Value::Null),
-        "cooltype_bbox_minmax": glyph
-            .get("cooltype_bbox_minmax")
-            .cloned()
-            .unwrap_or(Value::Null),
-        "bbox_center": glyph.get("bbox_center").cloned().unwrap_or(Value::Null),
-        "baseline": glyph.get("baseline").cloned().unwrap_or(Value::Null),
-        "baseline_delta": glyph.get("baseline_delta").cloned().unwrap_or(Value::Null),
-        "metric_source": glyph.get("metric_source").cloned().unwrap_or(Value::Null),
-        "cooltype_reference_status": glyph
-            .get("cooltype_reference_status")
-            .cloned()
-            .unwrap_or(Value::Null),
-        "font_postscript_name": glyph
-            .get("font_postscript_name")
-            .cloned()
-            .unwrap_or(Value::Null)
-    })
+    let mut out = serde_json::Map::new();
+    for field in [
+        "character",
+        "font_glyph_id",
+        "glyph_run_index",
+        "char_index",
+        "word_index",
+        "line_index",
+        "advance",
+        "advance_x",
+        "advance_y",
+        "bbox",
+        "cooltype_bbox_minmax",
+        "bbox_center",
+        "baseline",
+        "baseline_delta",
+        "metric_source",
+        "cooltype_reference_status",
+        "font_postscript_name",
+    ] {
+        copy_json_field(&mut out, glyph, field);
+    }
+    Value::Object(out)
 }
 
 fn project_text_selector_unit(unit: &Value) -> Value {
-    json!({
-        "index": unit.get("index").cloned().unwrap_or(Value::Null),
-        "selector_index": unit.get("selector_index").cloned().unwrap_or(Value::Null),
-        "selector_position_percent": unit
-            .get("selector_position_percent")
-            .cloned()
-            .unwrap_or(Value::Null),
-        "range_weight": unit.get("range_weight").cloned().unwrap_or(Value::Null),
-        "expression_weight": unit
-            .get("expression_weight")
-            .cloned()
-            .unwrap_or(Value::Null),
-        "final_weight": unit.get("final_weight").cloned().unwrap_or(Value::Null),
-        "expression": unit.get("expression").cloned().unwrap_or(Value::Null),
-        "glyph_passport": unit.get("glyph_passport").cloned().unwrap_or(Value::Null),
-        "animator_contribution": unit
-            .get("animator_contribution")
-            .cloned()
-            .unwrap_or(Value::Null)
-    })
+    let mut out = serde_json::Map::new();
+    for field in [
+        "index",
+        "selector_index",
+        "selector_position_percent",
+        "range_weight",
+        "expression_weight",
+        "final_weight",
+        "expression",
+        "glyph_passport",
+        "animator_contribution",
+    ] {
+        copy_json_field(&mut out, unit, field);
+    }
+    Value::Object(out)
+}
+
+fn copy_json_field(out: &mut serde_json::Map<String, Value>, src: &Value, field: &str) {
+    if let Some(value) = src.get(field) {
+        out.insert(field.to_string(), value.clone());
+    }
 }
 
 fn text_layout_key(record: &Value) -> String {
@@ -2542,5 +2548,42 @@ mod tests {
             text_passport_snapshot_summary(&snapshot)["selector_units"],
             json!(1)
         );
+    }
+
+    #[test]
+    fn jsonl_text_passport_reference_can_omit_unknown_fields() {
+        let reference = text_passport_snapshot_from_jsonl_records(&[json!({
+            "event": "text.layout",
+            "record": {
+                "composition": "TXT_030",
+                "layer_id": "text",
+                "layout": {
+                    "glyphs": [{
+                        "character": "G",
+                        "char_index": 0
+                    }]
+                }
+            }
+        })]);
+        let native = text_passport_snapshot_from_jsonl_records(&[json!({
+            "event": "text.layout",
+            "record": {
+                "composition": "TXT_030",
+                "layer_id": "text",
+                "layout": {
+                    "glyphs": [{
+                        "character": "G",
+                        "char_index": 0,
+                        "font_glyph_id": 42,
+                        "advance_x": 59.3,
+                        "metric_source": "fontdue"
+                    }]
+                }
+            }
+        })]);
+
+        let stats = compare_text_passport_snapshots(&reference, &native);
+
+        assert!(stats.is_ok(), "{:?}", stats.first_mismatch);
     }
 }

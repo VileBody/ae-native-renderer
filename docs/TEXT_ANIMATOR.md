@@ -118,6 +118,33 @@ advances, bboxes, selector weights, or animator matrices that it actually knows.
 Extra native fields are ignored. Missing reference files are reported as
 `missing_reference`; they do not fail the PNG conformance run.
 
+## Imported AE Text Telemetry
+
+`fixtures/ae_conformance_pack/ae_goldens/text_telemetry/` now contains compact
+JSONL references generated on the AE 85 node:
+
+```text
+ae_text_telemetry_85_20260505_021335
+TXT_010: 7 frames
+TXT_020: 7 frames
+TXT_030: 7 frames
+TXT_040: 8 frames
+```
+
+The current reference semantics are `sourceRectAtTime`-based. They are good for
+detecting layout drift and selector-unit mapping drift, but they do not expose
+true CoolType glyph ids or raster coverage yet.
+
+Latest smoke comparison:
+
+```text
+target/ae_agents/native_text_passport_step3_smoke/report.json
+```
+
+All four text cases now compare against refs with zero missing reference frames.
+The expected current result is `text_passport.ok=false` because native fontdue
+metrics still diverge from AE/Point-Light/Montserrat measurements.
+
 Do not interpolate matrices directly. Interpolate properties, then build matrix:
 
 ```text

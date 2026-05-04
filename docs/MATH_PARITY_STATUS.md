@@ -31,8 +31,8 @@ template_x status = weakest required module status, plus template-specific AE re
 Rules:
 
 - A module cannot skip from `implemented approximate` to `formula tuning`.
-- As of this document date, no module is yet `AE golden exists`,
-  `formula tuning`, or `parity locked`.
+- As of this document date, text layout has sourceRect-based AE telemetry refs.
+  No module is yet `formula tuning` or `parity locked`.
 - A final-frame PNG diff is useful, but not enough for complex operators.
 - Temporal, glyph, graph, procedural, and coordinate operators need internal
   checkpoints such as sample times, matrices, selector weights, UV fields, or
@@ -56,7 +56,7 @@ nearby AE math backlog. Template status is derived from this table.
 | `M02` | Footage source-time sampling and media frame selection | `implemented approximate` | all three | `source_start`, activity windows, sequential decode/cache, media plan logs. | Numbered-frame source fixtures, source-time telemetry, AE/reference frame-index goldens. |
 | `M03` | 2D transform matrix, anchor/position/scale/rotation sampling | `implemented approximate` | all three | Matrix convention, inverse sampling, bilinear sampler, ROI bounds, unit tests. | Operator passport, coordinate-field/UV diff fixtures, matrix telemetry, AE transform goldens. |
 | `M04` | Keyframes: hold/linear/cubic Bezier approximation | `instrumented/testable` | all three | Scalar/Vec2 keyframes, compact cubic ease, unit tests, Bezier conformance micro-scene scaffold. | Export AE ease PNGs, compare temporal-ease tangent mapping, tune solver/parameter mapping. |
-| `M05` | Text rasterization and glyph layout | `instrumented/testable` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; CoolType glyph metric targets selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows; layout sidecars now emit glyph-run index, advance x/y, bbox min/max, baseline delta slot, metric source, and CoolType reference status. | Add AE/CoolType glyph-row references, compare native layout rows against them, then tune shaping/composer/raster coverage. |
+| `M05` | Text rasterization and glyph layout | `AE golden exists` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; CoolType glyph metric targets selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows; layout sidecars now emit glyph-run index, advance x/y, bbox min/max, baseline delta slot, metric source, and CoolType reference status. AE sourceRect-based text telemetry refs are imported for `TXT_010`/`TXT_020`/`TXT_030`/`TXT_040`. | Use the text passport mismatches to tune shaping/composer/raster coverage; add deeper CoolType glyph-id/coverage rows when the AE scripting subset is not enough. |
 | `M06` | Text Range Selector reveal by words/characters/lines | `instrumented/testable` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, smoothness/randomize/wiggly approximations, glyph/word/line bbox units, selector-unit sidecars linked to glyph-run passports. | Add boundary fixtures and AE text reveal goldens; tune selector boundaries, order, smoothness, and whitespace treatment. |
 | `M07` | Character text animator position/scale/rotation/blur | `instrumented/testable` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles, per-unit glyph refs, final matrix, opacity alpha scale, and blur radius telemetry. | Add AE glyph animator goldens and tune per-glyph transform center, blur kernel, opacity composition, and selector weighting. |
 | `M08` | Expression selector bounce | `implemented approximate` | `impulse_2nd` | Recognized generated `per_character_bounce` selector with deterministic native evaluator path. | Expression selector amount telemetry, AE bounce curve samples, tune delay/frequency/decay semantics. |
@@ -133,6 +133,48 @@ The per-case diagnostic output is:
 ```text
 <out>/<case_id>/text_passport_comparison.json
 ```
+
+### Step 3 AE Text Telemetry Import
+
+AE sourceRect-based text telemetry refs were generated on the reserved AE node
+and imported into the pack:
+
+```text
+remote job: ae_text_telemetry_85_20260505_021335
+render id: 7c987d7be9884eba8a960ea1aa9e1573
+fixtures/ae_conformance_pack/ae_goldens/text_telemetry/
+fixtures/ae_conformance_pack/ae_goldens/metadata/text_telemetry_summary.json
+```
+
+The refs cover 29 frame files:
+
+```text
+TXT_010: 7 frames
+TXT_020: 7 frames
+TXT_030: 7 frames
+TXT_040: 8 frames
+```
+
+Smoke comparison output:
+
+```text
+target/ae_agents/native_text_passport_step3_smoke/report.json
+```
+
+Current text-passport status:
+
+| Case | Compared frames | Missing refs | First blocking mismatch |
+| --- | ---: | ---: | --- |
+| `TXT_010` | 7 | 0 | Montserrat word-reveal glyph advance drift, first delta `3.4220`. |
+| `TXT_020` | 7 | 0 | Montserrat character/line layout drift, first delta `0.0480`. |
+| `TXT_030` | 7 | 0 | Point-Light glyph animator layout drift, first delta `7.1543`. |
+| `TXT_040` | 8 | 0 | Point-Light bounce-selector layout drift, first delta `9.2813`. |
+
+This promotes text layout from "only instrumented" to "AE reference exists",
+but only for the AE scripting/sourceRect subset. Selector-unit grouping is now
+checked as a subset too. Selector weights, animator contribution values, and
+true CoolType glyph ids still need deeper AE/CoolType probes before they can
+move into formula tuning.
 
 ## Template Inventory
 

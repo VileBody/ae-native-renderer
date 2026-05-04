@@ -56,6 +56,25 @@ ae_goldens/png/<case_id>/<case_id>_[#####].png
 ae_goldens/preview/master_conformance_reel
 ```
 
+## Text Telemetry References
+
+For text/glyph parity work, run:
+
+```text
+jsx/export_text_telemetry.jsx
+```
+
+It writes AE-side JSONL references into:
+
+```text
+ae_goldens/text_telemetry/<case_id>/<case_id>_<frame>.jsonl
+```
+
+These files are compact JSONL, one JSON object per line, and are compared by
+`render-cli conformance-pack` through `text_passport_comparison.json`. They are
+reference subsets based on AE `sourceRectAtTime`, so they identify
+first-divergence points before deeper CoolType glyph rows are available.
+
 ## Notes
 
 - Keep PNG sequences as the source of truth. MP4 is only for human preview.
