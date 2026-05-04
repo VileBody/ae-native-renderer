@@ -56,9 +56,9 @@ nearby AE math backlog. Template status is derived from this table.
 | `M02` | Footage source-time sampling and media frame selection | `implemented approximate` | all three | `source_start`, activity windows, sequential decode/cache, media plan logs. | Numbered-frame source fixtures, source-time telemetry, AE/reference frame-index goldens. |
 | `M03` | 2D transform matrix, anchor/position/scale/rotation sampling | `implemented approximate` | all three | Matrix convention, inverse sampling, bilinear sampler, ROI bounds, unit tests. | Operator passport, coordinate-field/UV diff fixtures, matrix telemetry, AE transform goldens. |
 | `M04` | Keyframes: hold/linear/cubic Bezier approximation | `instrumented/testable` | all three | Scalar/Vec2 keyframes, compact cubic ease, unit tests, Bezier conformance micro-scene scaffold. | Export AE ease PNGs, compare temporal-ease tangent mapping, tune solver/parameter mapping. |
-| `M05` | Text rasterization and glyph layout | `implemented approximate` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback. | Glyph layout telemetry, HarfBuzz/CoreText decision, AE text-box/glyph goldens. |
-| `M06` | Text Range Selector reveal by words/characters/lines | `implemented approximate` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, smoothness/randomize/wiggly approximations, glyph/word/line bbox units. | Selector weight telemetry, boundary fixtures, AE text reveal goldens. |
-| `M07` | Character text animator position/scale/rotation/blur | `implemented approximate` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles. | Glyph matrices/opacity/blur telemetry, AE expression-selector goldens, exact selector transfer/order. |
+| `M05` | Text rasterization and glyph layout | `implemented approximate` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; CoolType glyph metric targets and passports now selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows. | Add CoolType glyph passport sidecars: glyph-run order, 12-byte row refs, advance x/y, bbox min/max, baseline deltas, metric source, and AE glyph-row comparisons. |
+| `M06` | Text Range Selector reveal by words/characters/lines | `implemented approximate` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, smoothness/randomize/wiggly approximations, glyph/word/line bbox units. | Link selector units to glyph-run records, then add boundary fixtures and AE text reveal goldens. |
+| `M07` | Character text animator position/scale/rotation/blur | `implemented approximate` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles. | Emit per-unit/glyph refs with final matrix, opacity alpha scale, and blur radius before AE expression-selector/glyph animator tuning. |
 | `M08` | Expression selector bounce | `implemented approximate` | `impulse_2nd` | Recognized generated `per_character_bounce` selector with deterministic native evaluator path. | Expression selector amount telemetry, AE bounce curve samples, tune delay/frequency/decay semantics. |
 | `M09` | Property expression subset: generated `edge_wobble` | `implemented approximate` | `scenes_3rd` | Named position-expression mode plus small scalar/Vec2 expression evaluator. | Per-property expression telemetry, AE samples for footage motion, tune waveform/envelope. |
 | `M10` | Drop Shadow | `instrumented/testable` | `template_4th`, `impulse_2nd` | Effect module, typed/numbered params, unit tests, effects conformance scaffold. | Per-effect AE PNGs, alpha/shadow-mask telemetry, tune blur/offset/composite/premult. |
@@ -102,7 +102,7 @@ Observed from the current imported scene snapshots in
    template can say which module blocks its next promotion.
 4. Add renderer telemetry checkpoints:
    - transform matrices, inverse matrices, UV/sample coordinates;
-   - glyph layout, selector weights, glyph matrices, glyph opacity/blur;
+   - CoolType-like glyph rows, selector weights, glyph matrices, glyph opacity/blur;
    - effect intermediate hashes such as masks, kernels, UV/displacement fields;
    - adjustment/precomp graph checkpoints;
    - motion-blur sample times, weights, per-sample matrices, accumulation hash.
