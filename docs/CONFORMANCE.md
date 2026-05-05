@@ -181,3 +181,29 @@ The biggest measurable movement is in `text_passport.max_abs_delta`, not final
 PNG mean. That distinction is intentional: Step 4 prioritizes turning modules
 into localized, tuneable math objects before changing broad final-pixel
 formulas.
+
+## Step 4.5 Tuning Readiness
+
+Step 4.5 freezes the current evidence before formula tuning. It reads the
+integrated Step 4 report and emits one tuning packet per math module with
+measured cases, missing pack cases, required sidecars, allowed knobs, forbidden
+cross-module edits, and the first gate for Step 5.
+
+Regenerate the packet board with:
+
+```bash
+python3 scripts/build_tuning_readiness.py
+```
+
+Outputs:
+
+```text
+fixtures/ae_conformance_pack/analysis/tuning_readiness_step4_5.json
+docs/phase_reports/STEP_4_5_TUNING_READINESS_20260505.md
+```
+
+Current Step 4.5 decision: `M19` is the first tuning target because
+alpha/premult/composite policy affects Drop Shadow, Glow, blur, text animator
+blur, collapse, and stack diffs. `M05` and `M15` are partial tuning-ready, while
+`M10`/`M11`/`M12`/`M13`/`M14`/`M16`/`M17`/`M18` must use their packet-specific
+sidecars and blockers before changing formulas.

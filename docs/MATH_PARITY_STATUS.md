@@ -287,6 +287,32 @@ This step does not change final effect math. Glow/Drop Shadow tuning remains
 blocked until M19 premult/straight behavior and Glow Based On enum probes are
 resolved.
 
+### Step 4.5 Tuning Readiness / Evidence Lock
+
+Step 4.5 is now tracked as a generated packet board:
+
+```text
+docs/phase_reports/STEP_4_5_TUNING_READINESS_20260505.md
+fixtures/ae_conformance_pack/analysis/tuning_readiness_step4_5.json
+```
+
+Regenerate it with:
+
+```bash
+python3 scripts/build_tuning_readiness.py
+```
+
+This step does not claim formula parity. It locks the current Step 4 evidence,
+measured cases, missing pack cases, allowed knobs, forbidden cross-module edits,
+and Step 5 gates per module. The current entry order is:
+
+1. `M19` first, because alpha/premult/composite policy affects most visual
+   tuning.
+2. `M05` text layout and `M15` Posterize Time as partial tuning-ready modules.
+3. `M10`/`M11` effects, `M12`/`M13`/`M14` warps/fields, `M16` adjustment stack,
+   `M17` collapse, and `M18` motion blur only through their packet-specific
+   sidecars and blockers.
+
 ## Template Inventory
 
 | Template | Observed math/features | Highest-risk parity areas |

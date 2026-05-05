@@ -1,0 +1,3389 @@
+{
+  "generated_on": "2026-05-05",
+  "packets": [
+    {
+      "allowed_knobs": [
+        "activity boundaries",
+        "z-order application",
+        "layer opacity scaling",
+        "normal source-over implementation"
+      ],
+      "blockers": [
+        "PRI_010 was not in the Step 4 integrated run; M19 premult/straight is still diagnostic-only"
+      ],
+      "case_summaries": [],
+      "forbidden": [
+        "effect-specific alpha hacks",
+        "text/effect formula changes"
+      ],
+      "lane": "global substrate",
+      "manifest_cases": [
+        "PRI_010"
+      ],
+      "measured_cases": [],
+      "missing_manifest_cases_from_step4_run": [
+        "PRI_010"
+      ],
+      "missing_required_sidecars_by_case": {},
+      "module": "M01",
+      "primary_gate": "PRI_010/CMP_010 prove layer opacity/source-over/background behavior before effect tuning depends on it",
+      "required_sidecars": [
+        "metrics"
+      ],
+      "state": "needs dedicated evidence",
+      "title": "Layer activity / compositing"
+    },
+    {
+      "allowed_knobs": [
+        "source time offset",
+        "frame-index rounding",
+        "activity-window boundary handling"
+      ],
+      "blockers": [
+        "needs numbered-frame source passport on non-trivial source_start cases"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 0.0,
+          "case": "TMP_010",
+          "frames": 6,
+          "max_abs_diff": 0,
+          "mean_abs_diff": 0.0,
+          "modules": [
+            "M02",
+            "M15"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.0,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TMP_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/temporal_telemetry.jsonl",
+              "records": 4
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              5,
+              10,
+              15,
+              30,
+              45
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "effect formula changes",
+        "global alpha/composite policy changes"
+      ],
+      "lane": "temporal substrate",
+      "manifest_cases": [
+        "TMP_010"
+      ],
+      "measured_cases": [
+        "TMP_010"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M02",
+      "primary_gate": "source_frame.index/time/subframe must match numbered-frame AE refs",
+      "required_sidecars": [
+        "temporal"
+      ],
+      "state": "diagnostic-ready",
+      "title": "Footage/source-time sampling"
+    },
+    {
+      "allowed_knobs": [
+        "anchor/position/scale/rotation order",
+        "inverse sampling convention",
+        "pixel center",
+        "edge/OOB policy"
+      ],
+      "blockers": [
+        "no dedicated M03 case is measured in the Step 4 integrated run; use EFF_040-style coordinate-field probes"
+      ],
+      "case_summaries": [],
+      "forbidden": [
+        "Geometry2-specific parameter remaps",
+        "collapse text raster hacks"
+      ],
+      "lane": "geometry substrate",
+      "manifest_cases": [],
+      "measured_cases": [],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M03",
+      "primary_gate": "coordinate-field transform passport proves matrix/pixel-center/OOB before Geometry2 or collapse tuning",
+      "required_sidecars": [
+        "metrics"
+      ],
+      "state": "needs dedicated evidence",
+      "title": "2D transform matrix / sampler"
+    },
+    {
+      "allowed_knobs": [
+        "Bezier influence/speed mapping",
+        "hold/linear/ease segment selection",
+        "scalar/vector coercion"
+      ],
+      "blockers": [
+        "AE tangent/influence telemetry is still missing; final pixels alone are too indirect"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 0.7011235555013021,
+          "case": "EFF_070",
+          "frames": 6,
+          "max_abs_diff": 123,
+          "mean_abs_diff": 1.5217561721801758,
+          "modules": [
+            "M04",
+            "M10",
+            "M11",
+            "M14"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 1.6587255265977647,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_070",
+              "files": 12
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              10,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.1931506565638951,
+          "case": "INT_020",
+          "frames": 7,
+          "max_abs_diff": 250,
+          "mean_abs_diff": 1.409923825945173,
+          "modules": [
+            "M04"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.4063531784784226,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/INT_020",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/temporal_telemetry.jsonl",
+              "records": 18
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              5,
+              10,
+              15,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "changing source-frame quantization",
+        "changing transform matrix convention"
+      ],
+      "lane": "temporal math",
+      "manifest_cases": [
+        "EFF_070",
+        "INT_010",
+        "INT_020"
+      ],
+      "measured_cases": [
+        "EFF_070",
+        "INT_020"
+      ],
+      "missing_manifest_cases_from_step4_run": [
+        "INT_010"
+      ],
+      "missing_required_sidecars_by_case": {},
+      "module": "M04",
+      "primary_gate": "INT_020 keyframe_sample records improve without worsening TMP/Motion cases",
+      "required_sidecars": [
+        "temporal"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Keyframes / Bezier ease"
+    },
+    {
+      "allowed_knobs": [
+        "font face mapping",
+        "advance/bbox/baseline math",
+        "multiline block placement",
+        "composer whitespace handling"
+      ],
+      "blockers": [
+        "CoolType raster coverage/glyph ids are not yet probed; Montserrat instance mapping remains open"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 15.789928436279297,
+          "case": "GPH_010",
+          "frames": 4,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 14.575295448303223,
+          "modules": [
+            "M17",
+            "M05",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 15.035110473632812,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/collapse_telemetry.jsonl",
+              "records": 12
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/GPH_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 4,
+              "diff": 4,
+              "native": 4
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/text_telemetry.jsonl",
+              "records": 8
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              15,
+              30,
+              45
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 9.758893694196429,
+          "case": "TXT_010",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 11.825355529785156,
+          "modules": [
+            "M05",
+            "M06"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 8.815824236188616,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/temporal_telemetry.jsonl",
+              "records": 7
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/text_telemetry.jsonl",
+              "records": 14
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 3.42200440168385,
+              "actual": 61.59599685668945,
+              "expected": 65.0180012583733,
+              "path": "layouts.TXT_010::TXT_010_word_reveal[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 24.996005922555867,
+            "missing_reference_frames": [],
+            "total_mismatches": 2548
+          }
+        },
+        {
+          "alpha_mean": 8.22315434047154,
+          "case": "TXT_020",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 9.70880685533796,
+          "modules": [
+            "M05",
+            "M06"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 7.296998160226004,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_020",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/temporal_telemetry.jsonl",
+              "records": 14
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/text_telemetry.jsonl",
+              "records": 28
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 0.04800051450724396,
+              "actual": 34.12800216674805,
+              "expected": 34.0800016522408,
+              "path": "layouts.TXT_020::TXT_020_character_reveal[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 17.864013671875,
+            "missing_reference_frames": [],
+            "total_mismatches": 4046
+          }
+        },
+        {
+          "alpha_mean": 8.155108860560826,
+          "case": "TXT_030",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 14.496059826442174,
+          "modules": [
+            "M05",
+            "M07"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 6.438563937232608,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_030",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/temporal_telemetry.jsonl",
+              "records": 7
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/text_telemetry.jsonl",
+              "records": 14
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 7.154296875,
+              "actual": 59.330078125,
+              "expected": 52.17578125,
+              "path": "layouts.TXT_030::TXT_030_glyph_motion[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 32.70849609375,
+            "missing_reference_frames": [],
+            "total_mismatches": 1092
+          }
+        }
+      ],
+      "forbidden": [
+        "tuning text pixels against full PNG before glyph/layout deltas improve"
+      ],
+      "lane": "text",
+      "manifest_cases": [
+        "GPH_010",
+        "TXT_010",
+        "TXT_020",
+        "TXT_030"
+      ],
+      "measured_cases": [
+        "GPH_010",
+        "TXT_010",
+        "TXT_020",
+        "TXT_030"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M05",
+      "primary_gate": "text_passport.max_abs_delta and total_mismatches decrease on TXT_010..TXT_040",
+      "required_sidecars": [
+        "text_telemetry",
+        "text_passport"
+      ],
+      "state": "partial tuning-ready",
+      "title": "Text glyph layout / sourceRect subset"
+    },
+    {
+      "allowed_knobs": [
+        "BasedOn grouping",
+        "Start/End boundary rounding",
+        "shape/smoothness/randomize/wiggly semantics"
+      ],
+      "blockers": [
+        "needs focused AE selector boundary refs after M05 layout facts are stable"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 9.758893694196429,
+          "case": "TXT_010",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 11.825355529785156,
+          "modules": [
+            "M05",
+            "M06"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 8.815824236188616,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/temporal_telemetry.jsonl",
+              "records": 7
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/text_telemetry.jsonl",
+              "records": 14
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 3.42200440168385,
+              "actual": 61.59599685668945,
+              "expected": 65.0180012583733,
+              "path": "layouts.TXT_010::TXT_010_word_reveal[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 24.996005922555867,
+            "missing_reference_frames": [],
+            "total_mismatches": 2548
+          }
+        },
+        {
+          "alpha_mean": 8.22315434047154,
+          "case": "TXT_020",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 9.70880685533796,
+          "modules": [
+            "M05",
+            "M06"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 7.296998160226004,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_020",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/temporal_telemetry.jsonl",
+              "records": 14
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/text_telemetry.jsonl",
+              "records": 28
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 0.04800051450724396,
+              "actual": 34.12800216674805,
+              "expected": 34.0800016522408,
+              "path": "layouts.TXT_020::TXT_020_character_reveal[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 17.864013671875,
+            "missing_reference_frames": [],
+            "total_mismatches": 4046
+          }
+        }
+      ],
+      "forbidden": [
+        "using glyph advance hacks to hide selector ordering bugs"
+      ],
+      "lane": "text selector",
+      "manifest_cases": [
+        "TXT_010",
+        "TXT_020"
+      ],
+      "measured_cases": [
+        "TXT_010",
+        "TXT_020"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M06",
+      "primary_gate": "selector-unit boundaries/weights move independently from glyph layout drift",
+      "required_sidecars": [
+        "text_telemetry",
+        "text_passport"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Range Selector reveal"
+    },
+    {
+      "allowed_knobs": [
+        "glyph transform origin",
+        "opacity contribution",
+        "blur radius/kernel approximation",
+        "selector weighting"
+      ],
+      "blockers": [
+        "text blur and opacity are substrate-dependent on M19; exact glyph metrics still depend on M05"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 8.155108860560826,
+          "case": "TXT_030",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 14.496059826442174,
+          "modules": [
+            "M05",
+            "M07"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 6.438563937232608,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_030",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/temporal_telemetry.jsonl",
+              "records": 7
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/text_telemetry.jsonl",
+              "records": 14
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 7.154296875,
+              "actual": 59.330078125,
+              "expected": 52.17578125,
+              "path": "layouts.TXT_030::TXT_030_glyph_motion[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 32.70849609375,
+            "missing_reference_frames": [],
+            "total_mismatches": 1092
+          }
+        }
+      ],
+      "forbidden": [
+        "global alpha/premult changes inside text animator code"
+      ],
+      "lane": "text animator",
+      "manifest_cases": [
+        "TXT_030"
+      ],
+      "measured_cases": [
+        "TXT_030"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M07",
+      "primary_gate": "per-glyph matrix/opacity/blur telemetry improves before final text blur pixels",
+      "required_sidecars": [
+        "text_telemetry",
+        "text_passport"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Glyph animator transform/blur"
+    },
+    {
+      "allowed_knobs": [
+        "delay",
+        "frequency",
+        "decay",
+        "per-character phase/order"
+      ],
+      "blockers": [
+        "needs AE selector amount samples; current refs mostly expose layout/sourceRect fields"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 3.871013641357422,
+          "case": "TXT_040",
+          "frames": 8,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 4.215683698654175,
+          "modules": [
+            "M08",
+            "M09"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 3.773967425028483,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_040",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 8,
+              "diff": 8,
+              "native": 8
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/temporal_telemetry.jsonl",
+              "records": 8
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/text_telemetry.jsonl",
+              "records": 16
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 8,
+            "first_mismatch": {
+              "abs_delta": 9.28125,
+              "actual": 40.875,
+              "expected": 31.59375,
+              "path": "layouts.TXT_040::TXT_040_bounce_selector[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 22.125,
+            "missing_reference_frames": [],
+            "total_mismatches": 1560
+          }
+        }
+      ],
+      "forbidden": [
+        "arbitrary JS evaluator expansion in this pass"
+      ],
+      "lane": "text expression selector",
+      "manifest_cases": [
+        "TXT_040"
+      ],
+      "measured_cases": [
+        "TXT_040"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M08",
+      "primary_gate": "bounce selector amount curve matches AE samples without perturbing static text layout",
+      "required_sidecars": [
+        "text_telemetry",
+        "text_passport"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Expression selector bounce"
+    },
+    {
+      "allowed_knobs": [
+        "named evaluator traits",
+        "scalar/vector coercion",
+        "thisLayer/thisComp access",
+        "wobble envelope parameters"
+      ],
+      "blockers": [
+        "needs property sample refs for generated expressions and expression-selector amount curves"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 1.341641902923584,
+          "case": "EXP_010",
+          "frames": 8,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 1.3197853565216064,
+          "modules": [
+            "M09"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 1.2887310981750488,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EXP_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/expression_telemetry.jsonl",
+              "records": 8
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 8,
+              "diff": 8,
+              "native": 8
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/temporal_telemetry.jsonl",
+              "records": 8
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              5,
+              10,
+              15,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 3.871013641357422,
+          "case": "TXT_040",
+          "frames": 8,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 4.215683698654175,
+          "modules": [
+            "M08",
+            "M09"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 3.773967425028483,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_040",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 8,
+              "diff": 8,
+              "native": 8
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/temporal_telemetry.jsonl",
+              "records": 8
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/text_telemetry.jsonl",
+              "records": 16
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 8,
+            "first_mismatch": {
+              "abs_delta": 9.28125,
+              "actual": 40.875,
+              "expected": 31.59375,
+              "path": "layouts.TXT_040::TXT_040_bounce_selector[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 22.125,
+            "missing_reference_frames": [],
+            "total_mismatches": 1560
+          }
+        }
+      ],
+      "forbidden": [
+        "unbounded ExtendScript execution",
+        "changing layer time globally"
+      ],
+      "lane": "expressions",
+      "manifest_cases": [
+        "EXP_010",
+        "TXT_040"
+      ],
+      "measured_cases": [
+        "EXP_010",
+        "TXT_040"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {
+        "TXT_040": [
+          "expression"
+        ]
+      },
+      "module": "M09",
+      "primary_gate": "EXP_010 expression telemetry and final motion improve without changing timeline sampling",
+      "required_sidecars": [
+        "expression"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Property expression subset"
+    },
+    {
+      "allowed_knobs": [
+        "shadow offset sign/truncation",
+        "softness-to-radius mapping",
+        "box blur passes",
+        "shadow mask construction"
+      ],
+      "blockers": [
+        "Drop Shadow final composite path and alpha policy are not locked"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 0.8911972045898438,
+          "case": "EFF_010",
+          "frames": 1,
+          "max_abs_diff": 104,
+          "mean_abs_diff": 0.3427581787109375,
+          "modules": [
+            "M10"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.11311594645182292,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_010",
+              "files": 1
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 1,
+              "diff": 1,
+              "native": 1
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/temporal_telemetry.jsonl",
+              "records": 1
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.0,
+          "case": "EFF_030",
+          "frames": 1,
+          "max_abs_diff": 0,
+          "mean_abs_diff": 0.0,
+          "modules": [
+            "M10"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.0,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_030",
+              "files": 1
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 1,
+              "diff": 1,
+              "native": 1
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/temporal_telemetry.jsonl",
+              "records": 1
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.7011235555013021,
+          "case": "EFF_070",
+          "frames": 6,
+          "max_abs_diff": 123,
+          "mean_abs_diff": 1.5217561721801758,
+          "modules": [
+            "M04",
+            "M10",
+            "M11",
+            "M14"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 1.6587255265977647,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_070",
+              "files": 12
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              10,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "raw RGBA-only tuning",
+        "global alpha policy edits inside Drop Shadow"
+      ],
+      "lane": "effects",
+      "manifest_cases": [
+        "EFF_010",
+        "EFF_030",
+        "EFF_070",
+        "STK_010",
+        "STK_020"
+      ],
+      "measured_cases": [
+        "EFF_010",
+        "EFF_030",
+        "EFF_070"
+      ],
+      "missing_manifest_cases_from_step4_run": [
+        "STK_010",
+        "STK_020"
+      ],
+      "missing_required_sidecars_by_case": {},
+      "module": "M10",
+      "primary_gate": "EFF_010/EFF_030/EFF_070 improve on rgb_under_alpha_policy with stable alpha stats",
+      "required_sidecars": [
+        "effects_debug"
+      ],
+      "state": "blocked on M19 + intermediate refs",
+      "title": "Drop Shadow / Box Blur dependency"
+    },
+    {
+      "allowed_knobs": [
+        "Glow Based On enum",
+        "threshold source",
+        "blur radius/intensity mapping",
+        "blend/composite route"
+      ],
+      "blockers": [
+        "Glow Based On enum and IR_GaussianBlur/composite route need direct evidence"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 1.7450180053710938,
+          "case": "EFF_020",
+          "frames": 1,
+          "max_abs_diff": 137,
+          "mean_abs_diff": 9.350918769836426,
+          "modules": [
+            "M11"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 11.176431020100912,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_020",
+              "files": 1
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 1,
+              "diff": 1,
+              "native": 1
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/temporal_telemetry.jsonl",
+              "records": 1
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.7011235555013021,
+          "case": "EFF_070",
+          "frames": 6,
+          "max_abs_diff": 123,
+          "mean_abs_diff": 1.5217561721801758,
+          "modules": [
+            "M04",
+            "M10",
+            "M11",
+            "M14"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 1.6587255265977647,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_070",
+              "files": 12
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              10,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "tuning intensity before BasedOn enum is resolved",
+        "raw RGBA-only tuning"
+      ],
+      "lane": "effects",
+      "manifest_cases": [
+        "EFF_020",
+        "EFF_070"
+      ],
+      "measured_cases": [
+        "EFF_020",
+        "EFF_070"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M11",
+      "primary_gate": "EFF_020/EFF_070 rgb_under_alpha_policy improves after BasedOn/source threshold is locked",
+      "required_sidecars": [
+        "effects_debug"
+      ],
+      "state": "blocked on M19 + enum/probe refs",
+      "title": "Glow"
+    },
+    {
+      "allowed_knobs": [
+        "AE property mapping",
+        "matrix order",
+        "sampler quality",
+        "edge/OOB policy"
+      ],
+      "blockers": [
+        "EFF_040 isolated coordinate-field case was not in the Step 4 integrated run"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 108.76559744940863,
+          "case": "STK_030",
+          "frames": 9,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 59.2162659962972,
+          "modules": [
+            "M12",
+            "M13",
+            "M14",
+            "M15",
+            "M16",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 40.05274299339012,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/adjustment_effects.jsonl",
+              "records": 36
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/STK_030",
+              "files": 27
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 9,
+              "diff": 9,
+              "native": 9
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/temporal_telemetry.jsonl",
+              "records": 27
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              1,
+              5,
+              10,
+              15,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "tuning Geometry2 from STK_030 final PNG only",
+        "changing M03 layer transform semantics"
+      ],
+      "lane": "warps",
+      "manifest_cases": [
+        "EFF_040",
+        "STK_030"
+      ],
+      "measured_cases": [
+        "STK_030"
+      ],
+      "missing_manifest_cases_from_step4_run": [
+        "EFF_040"
+      ],
+      "missing_required_sidecars_by_case": {},
+      "module": "M12",
+      "primary_gate": "coordinate-field UV/matrix sidecars match before STK_030 final pixels are tuned",
+      "required_sidecars": [
+        "effects_debug",
+        "adjustment"
+      ],
+      "state": "evidence-ready, needs isolated run",
+      "title": "Geometry2"
+    },
+    {
+      "allowed_knobs": [
+        "operation/channel enum",
+        "direction enum",
+        "fractional radius",
+        "Don't Shrink Edges behavior"
+      ],
+      "blockers": [
+        "fractional radius and Direction enum AE refs are still missing from current run"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 108.76559744940863,
+          "case": "STK_030",
+          "frames": 9,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 59.2162659962972,
+          "modules": [
+            "M12",
+            "M13",
+            "M14",
+            "M15",
+            "M16",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 40.05274299339012,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/adjustment_effects.jsonl",
+              "records": 36
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/STK_030",
+              "files": 27
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 9,
+              "diff": 9,
+              "native": 9
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/temporal_telemetry.jsonl",
+              "records": 27
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              1,
+              5,
+              10,
+              15,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "Turbulent/Geometry changes in a Minimax patch"
+      ],
+      "lane": "morphology",
+      "manifest_cases": [
+        "EFF_050",
+        "STK_020",
+        "STK_030"
+      ],
+      "measured_cases": [
+        "STK_030"
+      ],
+      "missing_manifest_cases_from_step4_run": [
+        "EFF_050",
+        "STK_020"
+      ],
+      "missing_required_sidecars_by_case": {},
+      "module": "M13",
+      "primary_gate": "EFF_050/STK_020/STK_030 direction/radius checkpoints improve before stack pixels",
+      "required_sidecars": [
+        "effects_debug",
+        "adjustment"
+      ],
+      "state": "evidence-ready, needs isolated refs",
+      "title": "Minimax"
+    },
+    {
+      "allowed_knobs": [
+        "FracAll/Frac1D state model",
+        "evolution/size/amount mapping",
+        "octaves/complexity",
+        "pinning/OOB"
+      ],
+      "blockers": [
+        "needs field-level AE refs or kernel-derived field maps; EFF_060 was not in integrated run"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 0.7011235555013021,
+          "case": "EFF_070",
+          "frames": 6,
+          "max_abs_diff": 123,
+          "mean_abs_diff": 1.5217561721801758,
+          "modules": [
+            "M04",
+            "M10",
+            "M11",
+            "M14"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 1.6587255265977647,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_070",
+              "files": 12
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              10,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 108.76559744940863,
+          "case": "STK_030",
+          "frames": 9,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 59.2162659962972,
+          "modules": [
+            "M12",
+            "M13",
+            "M14",
+            "M15",
+            "M16",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 40.05274299339012,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/adjustment_effects.jsonl",
+              "records": 36
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/STK_030",
+              "files": 27
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 9,
+              "diff": 9,
+              "native": 9
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/temporal_telemetry.jsonl",
+              "records": 27
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              1,
+              5,
+              10,
+              15,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "final PNG-only tuning",
+        "changing Posterize Time routing in Turbulent patch"
+      ],
+      "lane": "procedural field",
+      "manifest_cases": [
+        "EFF_060",
+        "EFF_070",
+        "STK_030"
+      ],
+      "measured_cases": [
+        "EFF_070",
+        "STK_030"
+      ],
+      "missing_manifest_cases_from_step4_run": [
+        "EFF_060"
+      ],
+      "missing_required_sidecars_by_case": {},
+      "module": "M14",
+      "primary_gate": "field_hash/sample grid moves toward AE coordinate-field refs before final pixels",
+      "required_sidecars": [
+        "effects_debug"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Turbulent Displace"
+    },
+    {
+      "allowed_knobs": [
+        "bucket boundary rounding",
+        "fixed16 fps conversion",
+        "layer/source/effect time routing"
+      ],
+      "blockers": [
+        "boundary epsilon and adjustment stack ordering still need AE micro refs"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 108.76559744940863,
+          "case": "STK_030",
+          "frames": 9,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 59.2162659962972,
+          "modules": [
+            "M12",
+            "M13",
+            "M14",
+            "M15",
+            "M16",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 40.05274299339012,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/adjustment_effects.jsonl",
+              "records": 36
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/STK_030",
+              "files": 27
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 9,
+              "diff": 9,
+              "native": 9
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/temporal_telemetry.jsonl",
+              "records": 27
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              1,
+              5,
+              10,
+              15,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.0,
+          "case": "TMP_010",
+          "frames": 6,
+          "max_abs_diff": 0,
+          "mean_abs_diff": 0.0,
+          "modules": [
+            "M02",
+            "M15"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.0,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TMP_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/temporal_telemetry.jsonl",
+              "records": 4
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              5,
+              10,
+              15,
+              30,
+              45
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.0,
+          "case": "TMP_020",
+          "frames": 12,
+          "max_abs_diff": 0,
+          "mean_abs_diff": 0.0,
+          "modules": [
+            "M15"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.0,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TMP_020",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 12,
+              "diff": 12,
+              "native": 12
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              10,
+              11,
+              20,
+              21,
+              30,
+              31
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "posterizing downstream effects that AE evaluates at live comp time"
+      ],
+      "lane": "temporal routing",
+      "manifest_cases": [
+        "STK_030",
+        "TMP_010",
+        "TMP_020"
+      ],
+      "measured_cases": [
+        "STK_030",
+        "TMP_010",
+        "TMP_020"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M15",
+      "primary_gate": "TMP_020 remains exact; STK_030 source/effect times show correct bucket/live split",
+      "required_sidecars": [
+        "temporal"
+      ],
+      "state": "partial tuning-ready",
+      "title": "Posterize Time"
+    },
+    {
+      "allowed_knobs": [
+        "lower-stack resampling point",
+        "effect application order",
+        "adjustment input snapshot boundaries"
+      ],
+      "blockers": [
+        "needs AE-side intermediate/checkpoint refs for STK_030"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 108.76559744940863,
+          "case": "STK_030",
+          "frames": 9,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 59.2162659962972,
+          "modules": [
+            "M12",
+            "M13",
+            "M14",
+            "M15",
+            "M16",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 40.05274299339012,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/adjustment_effects.jsonl",
+              "records": 36
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/STK_030",
+              "files": 27
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 9,
+              "diff": 9,
+              "native": 9
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/temporal_telemetry.jsonl",
+              "records": 27
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              1,
+              5,
+              10,
+              15,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "changing individual effect formulas while validating stack order"
+      ],
+      "lane": "render graph/effects",
+      "manifest_cases": [
+        "STK_030"
+      ],
+      "measured_cases": [
+        "STK_030"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M16",
+      "primary_gate": "per-effect input/output hashes localize first divergent adjustment effect in STK_030",
+      "required_sidecars": [
+        "effects_debug",
+        "adjustment"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Adjustment stack order"
+    },
+    {
+      "allowed_knobs": [
+        "matrix pushdown",
+        "collapse boundary selection",
+        "text/vector deferred rasterization"
+      ],
+      "blockers": [
+        "true AE deferred text/vector rasterization refs are still missing"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 15.789928436279297,
+          "case": "GPH_010",
+          "frames": 4,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 14.575295448303223,
+          "modules": [
+            "M17",
+            "M05",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 15.035110473632812,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/collapse_telemetry.jsonl",
+              "records": 12
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/GPH_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 4,
+              "diff": 4,
+              "native": 4
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/text_telemetry.jsonl",
+              "records": 8
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              15,
+              30,
+              45
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "raster sharpness hacks before deferred-raster contract is known"
+      ],
+      "lane": "graph/collapse",
+      "manifest_cases": [
+        "GPH_010"
+      ],
+      "measured_cases": [
+        "GPH_010"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M17",
+      "primary_gate": "GPH_010 matrix_report and deferred-raster checkpoints match collapsed/noncollapsed AE refs",
+      "required_sidecars": [
+        "collapse"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Collapse transformations / precomp graph"
+    },
+    {
+      "allowed_knobs": [
+        "sample endpoints",
+        "weight distribution",
+        "shutter phase/angle mapping",
+        "static-layer skip"
+      ],
+      "blockers": [
+        "AE shutter sample telemetry/weights are missing; premult accumulation depends on M19"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 0.1147778828938802,
+          "case": "TMP_030",
+          "frames": 6,
+          "max_abs_diff": 155,
+          "mean_abs_diff": 0.11278216044108073,
+          "modules": [
+            "M18"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.10530980428059895,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TMP_030",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/temporal_telemetry.jsonl",
+              "records": 102
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              5,
+              10,
+              15,
+              20,
+              25,
+              30
+            ],
+            "total_mismatches": 0
+          }
+        }
+      ],
+      "forbidden": [
+        "changing transform math while tuning motion accumulation"
+      ],
+      "lane": "temporal sampling",
+      "manifest_cases": [
+        "TMP_030"
+      ],
+      "measured_cases": [
+        "TMP_030"
+      ],
+      "missing_manifest_cases_from_step4_run": [],
+      "missing_required_sidecars_by_case": {},
+      "module": "M18",
+      "primary_gate": "TMP_030 shutter sample times/weights match AE before accumulation/composite tuning",
+      "required_sidecars": [
+        "temporal"
+      ],
+      "state": "evidence-ready, not tuning-ready",
+      "title": "Motion blur"
+    },
+    {
+      "allowed_knobs": [
+        "straight/premult conversion",
+        "background alpha normalization",
+        "source-over math",
+        "gamma/color-space decision",
+        "sampler edge policy"
+      ],
+      "blockers": [
+        "premult/straight contract is still diagnostic-only"
+      ],
+      "case_summaries": [
+        {
+          "alpha_mean": 0.0,
+          "case": "CMP_010",
+          "frames": 1,
+          "max_abs_diff": 188,
+          "mean_abs_diff": 4.396838188171387,
+          "modules": [
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 5.862450917561849,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/CMP_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/CMP_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/CMP_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/CMP_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 1,
+              "diff": 1,
+              "native": 1
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/CMP_010/temporal_telemetry.jsonl",
+              "records": 3
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/CMP_010/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.8911972045898438,
+          "case": "EFF_010",
+          "frames": 1,
+          "max_abs_diff": 104,
+          "mean_abs_diff": 0.3427581787109375,
+          "modules": [
+            "M10"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.11311594645182292,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_010",
+              "files": 1
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 1,
+              "diff": 1,
+              "native": 1
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/temporal_telemetry.jsonl",
+              "records": 1
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_010/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 1.7450180053710938,
+          "case": "EFF_020",
+          "frames": 1,
+          "max_abs_diff": 137,
+          "mean_abs_diff": 9.350918769836426,
+          "modules": [
+            "M11"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 11.176431020100912,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_020",
+              "files": 1
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 1,
+              "diff": 1,
+              "native": 1
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/temporal_telemetry.jsonl",
+              "records": 1
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_020/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.0,
+          "case": "EFF_030",
+          "frames": 1,
+          "max_abs_diff": 0,
+          "mean_abs_diff": 0.0,
+          "modules": [
+            "M10"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.0,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_030",
+              "files": 1
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 1,
+              "diff": 1,
+              "native": 1
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/temporal_telemetry.jsonl",
+              "records": 1
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.7011235555013021,
+          "case": "EFF_070",
+          "frames": 6,
+          "max_abs_diff": 123,
+          "mean_abs_diff": 1.5217561721801758,
+          "modules": [
+            "M04",
+            "M10",
+            "M11",
+            "M14"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 1.6587255265977647,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EFF_070",
+              "files": 12
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EFF_070/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              10,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 1.341641902923584,
+          "case": "EXP_010",
+          "frames": 8,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 1.3197853565216064,
+          "modules": [
+            "M09"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 1.2887310981750488,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/EXP_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/expression_telemetry.jsonl",
+              "records": 8
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 8,
+              "diff": 8,
+              "native": 8
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/temporal_telemetry.jsonl",
+              "records": 8
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/EXP_010/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              5,
+              10,
+              15,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 15.789928436279297,
+          "case": "GPH_010",
+          "frames": 4,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 14.575295448303223,
+          "modules": [
+            "M17",
+            "M05",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 15.035110473632812,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/collapse_telemetry.jsonl",
+              "records": 12
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/GPH_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 4,
+              "diff": 4,
+              "native": 4
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/GPH_010/text_telemetry.jsonl",
+              "records": 8
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              15,
+              30,
+              45
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.1931506565638951,
+          "case": "INT_020",
+          "frames": 7,
+          "max_abs_diff": 250,
+          "mean_abs_diff": 1.409923825945173,
+          "modules": [
+            "M04"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.4063531784784226,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/INT_020",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/temporal_telemetry.jsonl",
+              "records": 18
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/INT_020/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              5,
+              10,
+              15,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 108.76559744940863,
+          "case": "STK_030",
+          "frames": 9,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 59.2162659962972,
+          "modules": [
+            "M12",
+            "M13",
+            "M14",
+            "M15",
+            "M16",
+            "M19"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 40.05274299339012,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/adjustment_effects.jsonl",
+              "records": 36
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/STK_030",
+              "files": 27
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 9,
+              "diff": 9,
+              "native": 9
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/temporal_telemetry.jsonl",
+              "records": 27
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/STK_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              1,
+              5,
+              10,
+              15,
+              20,
+              30,
+              45,
+              59
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.0,
+          "case": "TMP_010",
+          "frames": 6,
+          "max_abs_diff": 0,
+          "mean_abs_diff": 0.0,
+          "modules": [
+            "M02",
+            "M15"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.0,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TMP_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/temporal_telemetry.jsonl",
+              "records": 4
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_010/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              5,
+              10,
+              15,
+              30,
+              45
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.0,
+          "case": "TMP_020",
+          "frames": 12,
+          "max_abs_diff": 0,
+          "mean_abs_diff": 0.0,
+          "modules": [
+            "M15"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.0,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TMP_020",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 12,
+              "diff": 12,
+              "native": 12
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/temporal_telemetry.jsonl",
+              "records": 12
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_020/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              0,
+              1,
+              2,
+              3,
+              4,
+              5,
+              10,
+              11,
+              20,
+              21,
+              30,
+              31
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 0.1147778828938802,
+          "case": "TMP_030",
+          "frames": 6,
+          "max_abs_diff": 155,
+          "mean_abs_diff": 0.11278216044108073,
+          "modules": [
+            "M18"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 0.10530980428059895,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TMP_030",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 6,
+              "diff": 6,
+              "native": 6
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/temporal_telemetry.jsonl",
+              "records": 102
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TMP_030/text_telemetry.jsonl",
+              "records": 0
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 0,
+            "first_mismatch": null,
+            "max_abs_delta": 0.0,
+            "missing_reference_frames": [
+              5,
+              10,
+              15,
+              20,
+              25,
+              30
+            ],
+            "total_mismatches": 0
+          }
+        },
+        {
+          "alpha_mean": 9.758893694196429,
+          "case": "TXT_010",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 11.825355529785156,
+          "modules": [
+            "M05",
+            "M06"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 8.815824236188616,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_010",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/temporal_telemetry.jsonl",
+              "records": 7
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_010/text_telemetry.jsonl",
+              "records": 14
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 3.42200440168385,
+              "actual": 61.59599685668945,
+              "expected": 65.0180012583733,
+              "path": "layouts.TXT_010::TXT_010_word_reveal[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 24.996005922555867,
+            "missing_reference_frames": [],
+            "total_mismatches": 2548
+          }
+        },
+        {
+          "alpha_mean": 8.22315434047154,
+          "case": "TXT_020",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 9.70880685533796,
+          "modules": [
+            "M05",
+            "M06"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 7.296998160226004,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_020",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/temporal_telemetry.jsonl",
+              "records": 14
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_020/text_telemetry.jsonl",
+              "records": 28
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 0.04800051450724396,
+              "actual": 34.12800216674805,
+              "expected": 34.0800016522408,
+              "path": "layouts.TXT_020::TXT_020_character_reveal[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 17.864013671875,
+            "missing_reference_frames": [],
+            "total_mismatches": 4046
+          }
+        },
+        {
+          "alpha_mean": 8.155108860560826,
+          "case": "TXT_030",
+          "frames": 7,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 14.496059826442174,
+          "modules": [
+            "M05",
+            "M07"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 6.438563937232608,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_030",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 7,
+              "diff": 7,
+              "native": 7
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/temporal_telemetry.jsonl",
+              "records": 7
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_030/text_telemetry.jsonl",
+              "records": 14
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 7,
+            "first_mismatch": {
+              "abs_delta": 7.154296875,
+              "actual": 59.330078125,
+              "expected": 52.17578125,
+              "path": "layouts.TXT_030::TXT_030_glyph_motion[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 32.70849609375,
+            "missing_reference_frames": [],
+            "total_mismatches": 1092
+          }
+        },
+        {
+          "alpha_mean": 3.871013641357422,
+          "case": "TXT_040",
+          "frames": 8,
+          "max_abs_diff": 255,
+          "mean_abs_diff": 4.215683698654175,
+          "modules": [
+            "M08",
+            "M09"
+          ],
+          "ok": true,
+          "rgb_under_alpha_policy": 3.773967425028483,
+          "sidecars": {
+            "adjustment": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/adjustment_effects.jsonl",
+              "records": 0
+            },
+            "collapse": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/collapse_telemetry.jsonl",
+              "records": 0
+            },
+            "effects_debug": {
+              "dir": "target/ae_agents/step4_math_after_current/effects_debug/TXT_040",
+              "files": 0
+            },
+            "expression": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/expression_telemetry.jsonl",
+              "records": 0
+            },
+            "metrics": true,
+            "pngs": {
+              "ae": 8,
+              "diff": 8,
+              "native": 8
+            },
+            "temporal": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/temporal_telemetry.jsonl",
+              "records": 8
+            },
+            "text_passport": true,
+            "text_telemetry": {
+              "path": "target/ae_agents/step4_math_after_current/TXT_040/text_telemetry.jsonl",
+              "records": 16
+            }
+          },
+          "status": "measured",
+          "text_passport": {
+            "compared_frames": 8,
+            "first_mismatch": {
+              "abs_delta": 9.28125,
+              "actual": 40.875,
+              "expected": 31.59375,
+              "path": "layouts.TXT_040::TXT_040_bounce_selector[0].glyphs[0].advance",
+              "tolerance": 0.001
+            },
+            "max_abs_delta": 22.125,
+            "missing_reference_frames": [],
+            "total_mismatches": 1560
+          }
+        }
+      ],
+      "forbidden": [
+        "module-specific formula hacks to compensate global substrate drift"
+      ],
+      "lane": "global substrate",
+      "manifest_cases": [
+        "CMP_010",
+        "GPH_010",
+        "PRI_010",
+        "STK_010",
+        "STK_020",
+        "STK_030"
+      ],
+      "measured_cases": [
+        "CMP_010",
+        "EFF_010",
+        "EFF_020",
+        "EFF_030",
+        "EFF_070",
+        "EXP_010",
+        "GPH_010",
+        "INT_020",
+        "STK_030",
+        "TMP_010",
+        "TMP_020",
+        "TMP_030",
+        "TXT_010",
+        "TXT_020",
+        "TXT_030",
+        "TXT_040"
+      ],
+      "missing_manifest_cases_from_step4_run": [
+        "PRI_010",
+        "STK_010",
+        "STK_020"
+      ],
+      "missing_required_sidecars_by_case": {},
+      "module": "M19",
+      "primary_gate": "alpha_policy_diagnostics stable; rgb_under_alpha_policy is used for effect tuning until premult is locked",
+      "required_sidecars": [
+        "metrics"
+      ],
+      "state": "first tuning target",
+      "title": "Color/alpha/sampling/gamma substrate"
+    }
+  ],
+  "purpose": "Lock module evidence, sidecars, baselines, and guardrails before AE formula tuning.",
+  "report_summary": {
+    "cases_rendered": 16,
+    "cases_requested": 16,
+    "elapsed_ms": 44927.454187,
+    "failures": 0
+  },
+  "schema": "ae-native-renderer.tuning-readiness.v1",
+  "source_pack": "fixtures/ae_conformance_pack/manifest.json",
+  "source_report": "target/ae_agents/step4_math_after_current/report.json",
+  "step": "4.5"
+}
