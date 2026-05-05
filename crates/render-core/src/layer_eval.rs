@@ -4739,7 +4739,7 @@ mod tests {
         );
         assert_eq!(
             geometry.trace["sampler_mode"],
-            "bilinear_transparent_out_of_bounds"
+            "bilinear_partial_footprint_transparent"
         );
         assert!(geometry.trace["samples"].as_array().unwrap().len() > 0);
 

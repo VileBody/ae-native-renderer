@@ -86,6 +86,46 @@ RENDER_EXPORTS = [
         "name": "?Composite@GF@@YAHAEBV?$shared_ptr@VDevice@GF@@@std@@PEBXH1HPEAXHUPixelFormat@dvamediatypes@@HHMW4IR_BlendMode@@_N5@Z",
         "kind": "gf_composite",
     },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "??0TransformOperation@GF@@QEAA@USampleQuality@@V?$vector@V?$MatrixT@N@geom@dvacore@@V?$allocator@V?$MatrixT@N@geom@dvacore@@@std@@@std@@_NVFrameGeometry@1@3V?$RectT@H@geom@dvacore@@V?$optional@VMaskGeometry@GF@@@4@N2@Z",
+        "kind": "gf_transform_operation_ctor",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?GetOpacityMultiplier@TransformOperation@GF@@QEBANXZ",
+        "kind": "gf_transform_operation_opacity_multiplier",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?Quality@TransformOperation@GF@@QEBA?BUSampleQuality@@XZ",
+        "kind": "gf_transform_operation_quality",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?TransformToMatrix@GF@@YA?AV?$MatrixT@N@geom@dvacore@@AEBUTransformation@1@VPixelAspectRatio@dvamediatypes@@@Z",
+        "kind": "gf_transform_to_matrix",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?TransformedBounds@GF@@YA?AV?$RectT@H@geom@dvacore@@V234@AEBV?$MatrixT@N@34@@Z",
+        "kind": "gf_transformed_bounds",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?TransformedBoundsUnion@GF@@YA?AV?$RectT@H@geom@dvacore@@V234@AEBV?$vector@V?$MatrixT@N@geom@dvacore@@V?$allocator@V?$MatrixT@N@geom@dvacore@@@std@@@std@@H_N@Z",
+        "kind": "gf_transformed_bounds_union",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?TransformsToMatrices@GF@@YA?AV?$vector@V?$MatrixT@N@geom@dvacore@@V?$allocator@V?$MatrixT@N@geom@dvacore@@@std@@@std@@AEBV?$vector@UTransformation@GF@@V?$allocator@UTransformation@GF@@@std@@@3@VPixelAspectRatio@dvamediatypes@@@Z",
+        "kind": "gf_transforms_to_matrices",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?TransformWithMotionBlur@GF@@YAHAEBV?$shared_ptr@VDevice@GF@@@std@@PEBXHHHPEAXHHHUPixelFormat@dvamediatypes@@AEBVTransformOperation@1@@Z",
+        "kind": "gf_transform_with_motion_blur",
+    },
     {"module": "ImageRenderer.dll", "name": "IR_BoxBlur", "kind": "ir_box_blur"},
     {"module": "ImageRenderer.dll", "name": "IR_GaussianBlur", "kind": "ir_gaussian_blur"},
     {"module": "ImageRenderer.dll", "name": "IR_Composite", "kind": "ir_composite"},
@@ -203,6 +243,9 @@ PLUGIN_ENTRY_EXPORTS = [
     {"module": "Box_Blur.aex", "name": "EffectMainExtra", "kind": "box_blur_effect_main_extra"},
     {"module": "Box_Blur.aex", "name": "EffectMainExtra2", "kind": "box_blur_effect_main_extra2"},
     {"module": "Glow.aex", "name": "EffectMain", "kind": "glow_effect_main"},
+    {"module": "Transform.aex", "name": "EffectMain", "kind": "transform_effect_main"},
+    {"module": "Transform.aex", "name": "EffectMainExtra", "kind": "transform_effect_main_extra"},
+    {"module": "Transform.aex", "name": "EffectMainExtra2", "kind": "transform_effect_main_extra2"},
 ]
 OFFSET_HOOKS: list[dict[str, str]] = []
 
@@ -231,7 +274,8 @@ const WATCH_MODULES = [
   "AfterFXLib.dll",
   "Drop_Shadow.aex",
   "Box_Blur.aex",
-  "Glow.aex"
+  "Glow.aex",
+  "Transform.aex"
 ];
 const GENERIC_HOOK_MODULES = {
   "GPUFoundation.DLL": true,
@@ -244,14 +288,16 @@ const GENERIC_HOOK_MODULES = {
   "MEE.dll": false,
   "Drop_Shadow.aex": true,
   "Box_Blur.aex": true,
-  "Glow.aex": true
+  "Glow.aex": true,
+  "Transform.aex": true
 };
 const HOOK_ALL_EXPORT_MODULES = {
   "Drop_Shadow.aex": true,
   "Box_Blur.aex": true,
-  "Glow.aex": true
+  "Glow.aex": true,
+  "Transform.aex": true
 };
-const GENERIC_EXPORT_RE = /(blur|box|gauss|alpha|premult|unpremult|compos|blend|shadow|glow|mask|effect|render|world|iterate|filter|kernel|convol|soft)/i;
+const GENERIC_EXPORT_RE = /(blur|box|gauss|alpha|premult|unpremult|compos|blend|shadow|glow|mask|effect|render|world|iterate|filter|kernel|convol|soft|transform|geometry|matrix|matrices|sample|quality|bounds|resampl|resize|pixel|opacity|motion)/i;
 const NOISY_CXX_EXPORT_RE = /^\?\?[0148]/;
 const boxOptionsFactories = BOX_OPTIONS_FACTORIES_PLACEHOLDER;
 const boxOptionsSetters = BOX_OPTIONS_SETTERS_PLACEHOLDER;

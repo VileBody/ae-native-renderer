@@ -9,6 +9,8 @@ Before running, generate primitive PNGs with:
 */
 
 (function buildGeometry2EdgeProbeProject() {
+    resetProjectAndCaches();
+
     app.beginUndoGroup("Build AE Geometry2 Edge Probe Pack");
 
     var SCRIPT_FILE = new File($.fileName);
@@ -35,10 +37,8 @@ Before running, generate primitive PNGs with:
         bg: [0, 0, 0]
     };
 
-    if (!app.project) {
-        app.newProject();
-    }
     app.project.bitsPerChannel = 8;
+    purgeCaches();
 
     var folders = {
         root: getOrCreateFolder("AE_GEOMETRY2_EDGE_PROBE_PACK"),
@@ -107,15 +107,28 @@ Before running, generate primitive PNGs with:
     enqueueCases(cases, OUT_DIR);
     writeCaseDump(cases, transforms, sampling, propertySnapshot, METADATA_DIR);
     LOG_FILE.close();
-
-    alert(
-        "AE Geometry2 edge probe pack created.\n\n" +
-        "Case comps queued: " + cases.length + "\n" +
-        "PNG output root:\n" + OUT_DIR.fsName + "\n\n" +
-        "Metadata:\n" + METADATA_DIR.fsName
-    );
+    purgeCaches();
 
     app.endUndoGroup();
+
+    function resetProjectAndCaches() {
+        purgeCaches();
+        if (app.project) {
+            try {
+                app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+            } catch (_closeErr) {
+            }
+        }
+        app.newProject();
+        purgeCaches();
+    }
+
+    function purgeCaches() {
+        try {
+            app.purge(PurgeTarget.ALL_CACHES);
+        } catch (_purgeErr) {
+        }
+    }
 
     function getTransforms() {
         return [

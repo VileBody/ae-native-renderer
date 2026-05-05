@@ -30,13 +30,21 @@ Scalar numbered params support direct numbers, wrapped `value`, and the existing
 
 `ADBE Box Blur2` currently uses a clipped sample window at layer bounds for edge pixels, reported in the effect debug trace as `clip_to_layer_bounds`. AE repeat-edge behavior still needs an isolated probe before changing this policy.
 
-`ADBE Geometry2` uses the recovered `GPUFoundation.dll` transform matrix order,
-with bilinear sampling and transparent out-of-bounds pixels. The conformance
-runner writes matrix, inverse, sample UV/RGBA, RGB/alpha split metrics, and
-RGB-over-background metrics so formula tuning can ignore known background-alpha
-noise. `fixtures/ae_conformance_pack/jsx/build_conformance_project.jsx` writes
+`ADBE Geometry2` uses the recovered `GPUFoundation.dll` transform matrix order.
+The 2026-05-06 isolated edge probe selected integer pixel centers and a
+partial-footprint transparent bilinear edge policy: bilinear taps outside the
+source image contribute transparent black, while taps inside the source still
+contribute normally. The conformance runner writes matrix, inverse, sample
+UV/RGBA, RGB/alpha split metrics, and RGB-over-background metrics so formula
+tuning can ignore known background-alpha noise.
+`fixtures/ae_conformance_pack/jsx/build_conformance_project.jsx` writes
 `ae_goldens/metadata/effect_property_dump.json`; the 2026-05-04 remote AE run
-confirmed the Geometry2 control indices above.
+confirmed the Geometry2 control indices above. Frida traces on the no-GPU AE85
+node show the relevant path as CPU `Transform.aex+0x5f30` plus
+`GPUFoundation.dll` matrix/bounds helpers, not the GPU motion/quality export
+path. The AE scripting `0012` Sampling property is therefore treated as hidden
+host/render-quality state until a deeper CPU sampler hook identifies the exact
+branch.
 
 `ADBE Minimax` implements the enum surface recovered from the AEX strings and
 CPU callbacks. The native pass model is one-dimensional horizontal/vertical

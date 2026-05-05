@@ -1,5 +1,5 @@
 use crate::{param_f32_at, Effect};
-use raster_cpu::{BilinearSampler, Canvas, Sampler};
+use raster_cpu::Canvas;
 use serde_json::Value;
 
 #[derive(Debug, Default)]
@@ -222,11 +222,11 @@ pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geomet
         .map(|[x, y]| {
             let source_uv = mapping.source_uv(x as f32, y as f32);
             let sample_xy = rounded_sample(input, source_uv);
-            let out_of_bounds = bilinear_out_of_bounds(input, source_uv);
+            let out_of_bounds = geometry2_out_of_bounds(input, source_uv);
             let sample_rgba = if out_of_bounds {
                 None
             } else {
-                Some(sample_bilinear(input, source_uv))
+                Some(sample_geometry2_bilinear(input, source_uv))
             };
             Geometry2Sample {
                 output_xy: [x, y],
@@ -247,7 +247,7 @@ pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geomet
         inverse_matrix: mapping.inverse_matrix,
         samples,
         sampler_mode: GEOMETRY2_SAMPLER_MODE,
-        edge_policy: "transparent_out_of_bounds",
+        edge_policy: "partial_footprint_transparent_out_of_bounds",
         out_of_bounds_count,
     }
 }
@@ -328,10 +328,10 @@ fn transform_canvas(input: &Canvas, transform: Geometry2Params) -> Canvas {
     for y in 0..input.height {
         for x in 0..input.width {
             let source_uv = mapping.source_uv(x as f32, y as f32);
-            if bilinear_out_of_bounds(input, source_uv) {
+            if geometry2_out_of_bounds(input, source_uv) {
                 continue;
             }
-            output.set_pixel(x, y, sample_bilinear(input, source_uv));
+            output.set_pixel(x, y, sample_geometry2_bilinear(input, source_uv));
         }
     }
 
@@ -507,17 +507,39 @@ fn rounded_sample(input: &Canvas, source_uv: (f32, f32)) -> Option<[u32; 2]> {
     Some([sx as u32, sy as u32])
 }
 
-fn sample_bilinear(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
-    BilinearSampler.sample(input, source_uv.0, source_uv.1)
+fn sample_geometry2_bilinear(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
+    if input.width == 0 || input.height == 0 {
+        return [0, 0, 0, 0];
+    }
+    let x0 = source_uv.0.floor() as i32;
+    let y0 = source_uv.1.floor() as i32;
+    let tx = source_uv.0 - x0 as f32;
+    let ty = source_uv.1 - y0 as f32;
+    let mut out = [0_u8; 4];
+    for channel in 0..4 {
+        let mut accum = 0.0_f32;
+        for (dy, wy) in [(0_i32, 1.0 - ty), (1_i32, ty)] {
+            for (dx, wx) in [(0_i32, 1.0 - tx), (1_i32, tx)] {
+                let sx = x0 + dx;
+                let sy = y0 + dy;
+                if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
+                    continue;
+                }
+                accum += input.pixel(sx as u32, sy as u32)[channel] as f32 * wx * wy;
+            }
+        }
+        out[channel] = accum.round().clamp(0.0, 255.0) as u8;
+    }
+    out
 }
 
-fn bilinear_out_of_bounds(input: &Canvas, source_uv: (f32, f32)) -> bool {
+fn geometry2_out_of_bounds(input: &Canvas, source_uv: (f32, f32)) -> bool {
     input.width == 0
         || input.height == 0
-        || source_uv.0 < 0.0
-        || source_uv.1 < 0.0
-        || source_uv.0 > (input.width - 1) as f32
-        || source_uv.1 > (input.height - 1) as f32
+        || source_uv.0 <= -1.0
+        || source_uv.1 <= -1.0
+        || source_uv.0 >= input.width as f32
+        || source_uv.1 >= input.height as f32
 }
 
 fn count_oob(input: &Canvas, mapping: Geometry2Mapping) -> u32 {
@@ -525,7 +547,7 @@ fn count_oob(input: &Canvas, mapping: Geometry2Mapping) -> u32 {
     for y in 0..input.height {
         for x in 0..input.width {
             let source_uv = mapping.source_uv(x as f32, y as f32);
-            if bilinear_out_of_bounds(input, source_uv) {
+            if geometry2_out_of_bounds(input, source_uv) {
                 count += 1;
             }
         }
@@ -599,7 +621,7 @@ fn nearly_eq(left: f32, right: f32) -> bool {
     (left - right).abs() < 0.001
 }
 
-const GEOMETRY2_SAMPLER_MODE: &str = "bilinear_transparent_out_of_bounds";
+const GEOMETRY2_SAMPLER_MODE: &str = "bilinear_partial_footprint_transparent";
 
 #[cfg(test)]
 mod tests {
@@ -811,7 +833,10 @@ mod tests {
             [[1.0, 0.0, -1.0], [-0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         );
         assert_eq!(debug.sampler_mode, GEOMETRY2_SAMPLER_MODE);
-        assert_eq!(debug.edge_policy, "transparent_out_of_bounds");
+        assert_eq!(
+            debug.edge_policy,
+            "partial_footprint_transparent_out_of_bounds"
+        );
         assert_eq!(debug.samples.len(), 9);
         assert_eq!(debug.out_of_bounds_count, 3);
 
@@ -890,12 +915,27 @@ mod tests {
     }
 
     #[test]
-    fn geometry_uses_bilinear_sampling_for_subpixel_uv() {
+    fn geometry_uses_bilinear_partial_footprint_transparent_sampling_for_subpixel_uv() {
         let mut input = Canvas::transparent(2, 1);
         input.set_pixel(0, 0, [0, 0, 0, 255]);
         input.set_pixel(1, 0, [100, 20, 0, 255]);
 
-        assert_eq!(sample_bilinear(&input, (0.5, 0.0)), [50, 10, 0, 255]);
+        assert_eq!(
+            sample_geometry2_bilinear(&input, (0.5, 0.0)),
+            [50, 10, 0, 255]
+        );
+        assert_eq!(
+            sample_geometry2_bilinear(&input, (-0.5, 0.0)),
+            [0, 0, 0, 128]
+        );
+        assert_eq!(
+            sample_geometry2_bilinear(&input, (1.5, 0.0)),
+            [50, 10, 0, 128]
+        );
+        assert!(geometry2_out_of_bounds(&input, (-1.0, 0.0)));
+        assert!(!geometry2_out_of_bounds(&input, (-0.5, 0.0)));
+        assert!(!geometry2_out_of_bounds(&input, (1.5, 0.0)));
+        assert!(geometry2_out_of_bounds(&input, (2.0, 0.0)));
     }
 
     #[test]
