@@ -40,6 +40,8 @@ or audit without reopening the same binary.
   example `AE_REVERSE_GEOMETRY2_GHIDRA.md`.
   The current blocker-module predecode run is
   `docs/phase_reports/GHIDRA_EXTRACTION_BLOCKER_MODULES_ROUND2_20260505.md`.
+  The current analysis summary for those bundles is
+  `docs/phase_reports/GHIDRA_ANALYSIS_ROUND2_ORCHESTRATOR_SUMMARY_20260505.md`.
   The current artifact intake checklist is
   `docs/phase_reports/ARTIFACT_INTAKE_20260505.md`.
 - `fixtures/conformance/`: small native scenes and manifest entries for
