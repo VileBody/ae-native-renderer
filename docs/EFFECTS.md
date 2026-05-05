@@ -40,10 +40,12 @@ confirmed the Geometry2 control indices above.
 
 `ADBE Minimax` implements the enum surface recovered from the AEX strings and
 CPU callbacks. The native pass model is one-dimensional horizontal/vertical
-extrema composed according to Direction. Exact AE fractional-radius quantization
-and `Don't Shrink Edges` sentinel/edge behavior remain probe blockers; the flag
-is parsed and reported by `minimax_debug_trace`, but not used for formula
-tuning yet.
+extrema composed according to Direction. The 2026-05-06 discriminator probe
+confirmed AE-style positive radius rounding (`0.5 -> 1`), direction/channel
+lane behavior, and `Don't Shrink Edges` polarity. With `0005 = 0`, the Minimax
+window samples transparent black outside image bounds; with `0005 = 1`, the
+window clips to image bounds. `minimax_debug_trace` reports the resolved edge
+policy for stack telemetry.
 
 `ADBE Turbulent Displace` is still rendered by the deterministic native
 approximation, but its field telemetry now includes an AE-wrapper contract block
@@ -81,7 +83,7 @@ coordinate-field probes, not final PNG pixels.
 1. `ADBE Box Blur2` — separable blur.
 2. `ADBE Drop Shadow` — alpha copy, color, blur, offset, under composite.
 3. `ADBE Glo2` — threshold, blur, composite.
-4. `ADBE Minimax` — AE enum/channel/direction surface with unresolved edge/fractional-radius probes.
+4. `ADBE Minimax` — AE enum/channel/direction/radius edge surface with remaining GPU/CPU and deep alpha probes.
 5. `ADBE Posterize Time` — temporal frame quantization above canvas effects.
 6. `ADBE Geometry2` — transform-like adjustment effect.
 7. `ADBE Turbulent Displace` — deterministic sine/noise displacement approximation with AE control slots and AE-wrapper telemetry for the recovered two-kernel contract.

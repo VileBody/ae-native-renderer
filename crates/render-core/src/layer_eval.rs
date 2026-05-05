@@ -1593,7 +1593,7 @@ fn effect_debug_trace_json(
                     "unselected_channels": "preserved_from_stage_input",
                     "edge_policy": trace.params.edge_policy,
                     "dont_shrink_edges_parsed": trace.params.dont_shrink_edges,
-                    "dont_shrink_edges_applied": false,
+                    "dont_shrink_edges_applied": true,
                     "premult_unpremultiply_applied": false,
                     "diagnostic_only": true
                 },

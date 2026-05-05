@@ -85,3 +85,31 @@ Required fields for native parity work:
 Compare radius `0` cases to `MINIMAX_PRE` to confirm identity behavior, then
 compare the radius `12` operation/channel matrix to determine whether AE's enum
 values match the current native assumptions for operation and channel selection.
+
+## Discriminator Probe
+
+`jsx/build_minimax_discriminator_project.jsx` is the smaller follow-up probe for
+formula work. It builds 128x128 cases under `MMD_*` without UI alerts:
+
+- fractional radius thresholds around `.5`;
+- direction `0004 = 1/2/3`;
+- channel lanes `0003 = 1..6`;
+- operation order `0001 = 1..4`;
+- `Don't Shrink Edges` polarity for `0005 = 0/1`.
+
+Render through the remote pack runner:
+
+```text
+python3 scripts/ae_remote_pack.py fixtures/ae_probe_pack/minimax \
+  --entry-script jsx/build_minimax_discriminator_project.jsx \
+  --node http://85.239.48.31:8000 \
+  --job-id minimax_discriminator_YYYYMMDD
+```
+
+Then measure the extracted outputs:
+
+```text
+python3 fixtures/ae_probe_pack/minimax/scripts/measure_minimax_discriminator.py \
+  target/ae_remote/minimax_discriminator_YYYYMMDD/extracted \
+  --output target/ae_remote/minimax_discriminator_YYYYMMDD/minimax_discriminator_measurements.json
+```

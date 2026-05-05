@@ -6,6 +6,7 @@ use raster_cpu::Canvas;
 use serde_json::Value;
 
 const EDGE_POLICY_CLIP_TO_IMAGE_BOUNDS: &str = "clip_to_image_bounds";
+const EDGE_POLICY_TRANSPARENT_BLACK_OUTSIDE_BOUNDS: &str = "transparent_black_outside_bounds";
 
 #[derive(Debug, Default)]
 pub struct Minimax;
@@ -22,7 +23,7 @@ impl Effect for Minimax {
         params: &Value,
     ) -> anyhow::Result<Canvas> {
         let params = MinimaxParams::from_json(params, _ctx.time);
-        let radius = params.radius.round().clamp(0.0, 32.0) as u32;
+        let radius = kernel_radius(params.radius);
         if radius == 0 || input.width == 0 || input.height == 0 {
             return Ok(input.clone());
         }
@@ -100,7 +101,7 @@ pub struct MinimaxDebugTrace {
 
 pub fn minimax_debug_trace(input: &Canvas, params: &Value, time: f64) -> MinimaxDebugTrace {
     let params = MinimaxParams::from_json(params, time);
-    let radius = params.radius.round().clamp(0.0, 32.0) as u32;
+    let radius = kernel_radius(params.radius);
     let canvases = minimax_debug_canvases(input, radius, params);
 
     MinimaxDebugTrace {
@@ -112,7 +113,7 @@ pub fn minimax_debug_trace(input: &Canvas, params: &Value, time: f64) -> Minimax
             kernel_radius: radius,
             dont_shrink_edges: params.dont_shrink_edges,
             stage_count: operation_stage_count(params.operation),
-            edge_policy: EDGE_POLICY_CLIP_TO_IMAGE_BOUNDS,
+            edge_policy: edge_policy_label(params.dont_shrink_edges),
         },
         hashes: MinimaxIntermediateHashes {
             input_rgba: canvas_debug_hash(input),
@@ -306,6 +307,18 @@ fn direction_label(direction: Direction) -> &'static str {
     }
 }
 
+fn edge_policy_label(dont_shrink_edges: bool) -> &'static str {
+    if dont_shrink_edges {
+        EDGE_POLICY_CLIP_TO_IMAGE_BOUNDS
+    } else {
+        EDGE_POLICY_TRANSPARENT_BLACK_OUTSIDE_BOUNDS
+    }
+}
+
+fn kernel_radius(radius: f32) -> u32 {
+    radius.round().clamp(0.0, 32.0) as u32
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Axis {
     Horizontal,
@@ -326,6 +339,7 @@ fn minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas 
             Extremum::Minimum,
             params.channels,
             params.direction,
+            params.dont_shrink_edges,
         ),
         Operation::Maximum => apply_extremum_operation(
             input,
@@ -333,6 +347,7 @@ fn minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas 
             Extremum::Maximum,
             params.channels,
             params.direction,
+            params.dont_shrink_edges,
         ),
         Operation::MinimumThenMaximum => {
             let eroded = apply_extremum_operation(
@@ -341,6 +356,7 @@ fn minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas 
                 Extremum::Minimum,
                 params.channels,
                 params.direction,
+                params.dont_shrink_edges,
             );
             apply_extremum_operation(
                 &eroded,
@@ -348,6 +364,7 @@ fn minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas 
                 Extremum::Maximum,
                 params.channels,
                 params.direction,
+                params.dont_shrink_edges,
             )
         }
         Operation::MaximumThenMinimum => {
@@ -357,6 +374,7 @@ fn minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas 
                 Extremum::Maximum,
                 params.channels,
                 params.direction,
+                params.dont_shrink_edges,
             );
             apply_extremum_operation(
                 &expanded,
@@ -364,6 +382,7 @@ fn minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas 
                 Extremum::Minimum,
                 params.channels,
                 params.direction,
+                params.dont_shrink_edges,
             )
         }
     }
@@ -416,8 +435,14 @@ fn single_stage_debug(
     extremum: Extremum,
     params: MinimaxParams,
 ) -> MinimaxDebugCanvases {
-    let stage =
-        apply_extremum_operation_debug(input, radius, extremum, params.channels, params.direction);
+    let stage = apply_extremum_operation_debug(
+        input,
+        radius,
+        extremum,
+        params.channels,
+        params.direction,
+        params.dont_shrink_edges,
+    );
     MinimaxDebugCanvases {
         first_pass: stage.first_pass,
         first_stage: stage.output.clone(),
@@ -439,6 +464,7 @@ fn two_stage_debug(
         first_extremum,
         params.channels,
         params.direction,
+        params.dont_shrink_edges,
     );
     let second_stage = apply_extremum_operation_debug(
         &first_stage.output,
@@ -446,6 +472,7 @@ fn two_stage_debug(
         second_extremum,
         params.channels,
         params.direction,
+        params.dont_shrink_edges,
     );
     MinimaxDebugCanvases {
         first_pass: first_stage.first_pass,
@@ -461,14 +488,43 @@ fn apply_extremum_operation(
     extremum: Extremum,
     channels: Channels,
     direction: Direction,
+    dont_shrink_edges: bool,
 ) -> Canvas {
     match direction {
         Direction::HorizontalAndVertical => {
-            let horizontal = minimax_pass(input, radius, extremum, channels, Axis::Horizontal);
-            minimax_pass(&horizontal, radius, extremum, channels, Axis::Vertical)
+            let horizontal = minimax_pass(
+                input,
+                radius,
+                extremum,
+                channels,
+                Axis::Horizontal,
+                dont_shrink_edges,
+            );
+            minimax_pass(
+                &horizontal,
+                radius,
+                extremum,
+                channels,
+                Axis::Vertical,
+                dont_shrink_edges,
+            )
         }
-        Direction::Horizontal => minimax_pass(input, radius, extremum, channels, Axis::Horizontal),
-        Direction::Vertical => minimax_pass(input, radius, extremum, channels, Axis::Vertical),
+        Direction::Horizontal => minimax_pass(
+            input,
+            radius,
+            extremum,
+            channels,
+            Axis::Horizontal,
+            dont_shrink_edges,
+        ),
+        Direction::Vertical => minimax_pass(
+            input,
+            radius,
+            extremum,
+            channels,
+            Axis::Vertical,
+            dont_shrink_edges,
+        ),
     }
 }
 
@@ -478,25 +534,54 @@ fn apply_extremum_operation_debug(
     extremum: Extremum,
     channels: Channels,
     direction: Direction,
+    dont_shrink_edges: bool,
 ) -> ExtremumStageDebug {
     match direction {
         Direction::HorizontalAndVertical => {
-            let horizontal = minimax_pass(input, radius, extremum, channels, Axis::Horizontal);
-            let output = minimax_pass(&horizontal, radius, extremum, channels, Axis::Vertical);
+            let horizontal = minimax_pass(
+                input,
+                radius,
+                extremum,
+                channels,
+                Axis::Horizontal,
+                dont_shrink_edges,
+            );
+            let output = minimax_pass(
+                &horizontal,
+                radius,
+                extremum,
+                channels,
+                Axis::Vertical,
+                dont_shrink_edges,
+            );
             ExtremumStageDebug {
                 first_pass: horizontal,
                 output,
             }
         }
         Direction::Horizontal => {
-            let output = minimax_pass(input, radius, extremum, channels, Axis::Horizontal);
+            let output = minimax_pass(
+                input,
+                radius,
+                extremum,
+                channels,
+                Axis::Horizontal,
+                dont_shrink_edges,
+            );
             ExtremumStageDebug {
                 first_pass: output.clone(),
                 output,
             }
         }
         Direction::Vertical => {
-            let output = minimax_pass(input, radius, extremum, channels, Axis::Vertical);
+            let output = minimax_pass(
+                input,
+                radius,
+                extremum,
+                channels,
+                Axis::Vertical,
+                dont_shrink_edges,
+            );
             ExtremumStageDebug {
                 first_pass: output.clone(),
                 output,
@@ -511,6 +596,7 @@ fn minimax_pass(
     extremum: Extremum,
     channels: Channels,
     axis: Axis,
+    dont_shrink_edges: bool,
 ) -> Canvas {
     let mut output = Canvas::transparent(input.width, input.height);
     for y in 0..input.height {
@@ -518,7 +604,16 @@ fn minimax_pass(
             output.set_pixel(
                 x,
                 y,
-                extremum_pixel(input, x, y, radius, extremum, channels, axis),
+                extremum_pixel(
+                    input,
+                    x,
+                    y,
+                    radius,
+                    extremum,
+                    channels,
+                    axis,
+                    dont_shrink_edges,
+                ),
             );
         }
     }
@@ -533,30 +628,36 @@ fn extremum_pixel(
     extremum: Extremum,
     channels: Channels,
     axis: Axis,
+    dont_shrink_edges: bool,
 ) -> [u8; 4] {
     let mut output = input.pixel(x, y);
     let mut values = match extremum {
         Extremum::Maximum => [0_u8; 4],
         Extremum::Minimum => [255_u8; 4],
     };
-    let (min_x, max_x, min_y, max_y) = match axis {
-        Axis::Horizontal => (
-            x.saturating_sub(radius),
-            (x + radius).min(input.width - 1),
-            y,
-            y,
-        ),
-        Axis::Vertical => (
-            x,
-            x,
-            y.saturating_sub(radius),
-            (y + radius).min(input.height - 1),
-        ),
+    let radius = radius as i32;
+    let x = x as i32;
+    let y = y as i32;
+    let (mut min_x, mut max_x, mut min_y, mut max_y) = match axis {
+        Axis::Horizontal => (x - radius, x + radius, y, y),
+        Axis::Vertical => (x, x, y - radius, y + radius),
     };
+
+    if dont_shrink_edges {
+        min_x = min_x.clamp(0, input.width.saturating_sub(1) as i32);
+        max_x = max_x.clamp(0, input.width.saturating_sub(1) as i32);
+        min_y = min_y.clamp(0, input.height.saturating_sub(1) as i32);
+        max_y = max_y.clamp(0, input.height.saturating_sub(1) as i32);
+    }
 
     for sy in min_y..=max_y {
         for sx in min_x..=max_x {
-            let pixel = input.pixel(sx, sy);
+            let pixel = if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32
+            {
+                [0, 0, 0, 0]
+            } else {
+                input.pixel(sx as u32, sy as u32)
+            };
             for channel in 0..4 {
                 values[channel] = match extremum {
                     Extremum::Maximum => values[channel].max(pixel[channel]),
@@ -644,7 +745,7 @@ mod tests {
 
         let output = render(
             &input,
-            json!({ "radius": 1, "operation": "minimum", "channels": "rgb" }),
+            json!({ "radius": 1, "operation": "minimum", "channels": "rgb", "dont_shrink_edges": true }),
         );
 
         assert_eq!(output.pixel(0, 0), [10, 20, 30, 255]);
@@ -765,10 +866,35 @@ mod tests {
 
         let mut hole = Canvas::new(3, 1, [0, 0, 0, 255]);
         hole.set_pixel(1, 0, [0, 0, 0, 0]);
-        let closed = render(&hole, json!({ "0001": 4, "0002": 1, "0003": 6, "0004": 2 }));
+        let closed = render(
+            &hole,
+            json!({ "0001": 4, "0002": 1, "0003": 6, "0004": 2, "0005": 1 }),
+        );
         assert_eq!(closed.pixel(0, 0)[3], 255);
         assert_eq!(closed.pixel(1, 0)[3], 255);
         assert_eq!(closed.pixel(2, 0)[3], 255);
+    }
+
+    #[test]
+    fn minimum_uses_transparent_black_outside_bounds_unless_dont_shrink_edges_is_set() {
+        let input = Canvas::new(5, 1, [255, 255, 255, 255]);
+
+        let shrink_edges = render(
+            &input,
+            json!({ "0001": 1, "0002": 1, "0003": 2, "0004": 2, "0005": 0 }),
+        );
+        assert_eq!(shrink_edges.pixel(0, 0), [0, 0, 0, 0]);
+        assert_eq!(shrink_edges.pixel(1, 0), [255, 255, 255, 255]);
+        assert_eq!(shrink_edges.pixel(3, 0), [255, 255, 255, 255]);
+        assert_eq!(shrink_edges.pixel(4, 0), [0, 0, 0, 0]);
+
+        let preserve_edges = render(
+            &input,
+            json!({ "0001": 1, "0002": 1, "0003": 2, "0004": 2, "0005": 1 }),
+        );
+        for x in 0..5 {
+            assert_eq!(preserve_edges.pixel(x, 0), [255, 255, 255, 255]);
+        }
     }
 
     #[test]
@@ -789,7 +915,7 @@ mod tests {
     }
 
     #[test]
-    fn fractional_radius_rounds_in_current_native_model() {
+    fn fractional_radius_matches_ae_round_half_up_probe() {
         let input = Canvas::transparent(3, 1);
 
         let below_half = minimax_debug_trace(&input, &json!({ "0002": 0.49 }), 0.0);
@@ -880,7 +1006,7 @@ mod tests {
 
         let trace = minimax_debug_trace(
             &hole,
-            &json!({ "0001": 4, "0002": 1, "0003": 6, "0004": 2 }),
+            &json!({ "0001": 4, "0002": 1, "0003": 6, "0004": 2, "0005": 1 }),
             0.0,
         );
 
