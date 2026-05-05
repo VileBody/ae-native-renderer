@@ -57,6 +57,16 @@ BOX_OPTIONS_SETTERS = [
     "?SetSrcAlphaType@BoxBlurOptions@GF@@QEAAXW4AlphaType@2@@Z",
 ]
 RENDER_EXPORTS = [
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "??0Blur_1DImgOpInfo@GF@@QEAA@W4AlphaType@1@HH0HH@Z",
+        "kind": "gf_blur_1d_imgop_ctor",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "??0BoxBlur_1DImgOpInfo@GF@@QEAA@MHHW4AlphaType@1@HHH0HHH_N11@Z",
+        "kind": "gf_box_blur_1d_imgop_ctor_full",
+    },
     {"module": "GPUFoundation.DLL", "name": FAST_BOX_BLUR, "kind": "gf_fast_box_blur"},
     {
         "module": "GPUFoundation.DLL",
@@ -104,7 +114,15 @@ const WATCH_MODULES = [
 ];
 const GENERIC_HOOK_MODULES = {
   "GPUFoundation.DLL": true,
-  "ImageRenderer.dll": true
+  "ImageRenderer.dll": true,
+  "Drop_Shadow.aex": true,
+  "Box_Blur.aex": true,
+  "Glow.aex": true
+};
+const HOOK_ALL_EXPORT_MODULES = {
+  "Drop_Shadow.aex": true,
+  "Box_Blur.aex": true,
+  "Glow.aex": true
 };
 const GENERIC_EXPORT_RE = /(blur|box|gauss|alpha|premult|unpremult|compos|blend|shadow|glow|mask)/i;
 const boxOptionsFactories = BOX_OPTIONS_FACTORIES_PLACEHOLDER;
@@ -483,7 +501,10 @@ function installGenericExportHook(moduleName, module, exp) {
   if (genericHookCount >= maxGenericHooks) {
     return;
   }
-  if (exp.type !== "function" || !GENERIC_EXPORT_RE.test(exp.name)) {
+  if (exp.type !== "function") {
+    return;
+  }
+  if (!HOOK_ALL_EXPORT_MODULES[moduleName] && !GENERIC_EXPORT_RE.test(exp.name)) {
     return;
   }
   const key = moduleName + "!" + exp.name + "!generic";
@@ -574,11 +595,6 @@ def main() -> int:
     ap.add_argument("--offset-hook", action="append", default=[])
     args = ap.parse_args()
 
-    device = frida.get_local_device()
-    procs = [p for p in device.enumerate_processes() if p.name.lower() == "afterfx.exe"]
-    if not procs:
-      raise RuntimeError("AfterFX.exe is not running")
-
     script_text = JS.replace("MAX_EVENTS_PLACEHOLDER", str(args.max_events))
     script_text = script_text.replace("BROAD_COVERAGE_PLACEHOLDER", json.dumps(args.broad_coverage))
     script_text = script_text.replace("MAX_GENERIC_HOOKS_PLACEHOLDER", str(args.generic_hook_limit))
@@ -605,6 +621,7 @@ def main() -> int:
             f.flush()
 
         attached = {}
+        device = frida.get_local_device()
 
         def should_attach(proc):
             name = proc.name.lower()
