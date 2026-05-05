@@ -41,11 +41,76 @@ import frida
 STD_OPTIONS = "?StandardOptions@BoxBlurOptions@GF@@SA?AU12@_N00HMM@Z"
 FAST_BOX_BLUR = "?FastBoxBlur@GF@@YAHAEBV?$shared_ptr@VDevice@GF@@@std@@PEBXHHHHHPEAXHHHHHUPixelFormat@dvamediatypes@@AEBUBoxBlurOptions@1@@Z"
 SET_ALPHA_ONLY = "?SetBlurAlphaChannelOnly@BoxBlurOptions@GF@@QEAAXXZ"
+BOX_OPTIONS_FACTORIES = [
+    "?StandardOptions@BoxBlurOptions@GF@@SA?AU12@HHMM@Z",
+    "?StandardOptions@BoxBlurOptions@GF@@SA?AU12@_N00HMM@Z",
+    "?StandardOptionsExt@BoxBlurOptions@GF@@SA?AU12@HHMM_N00@Z",
+    "?StandardOptionsExt@BoxBlurOptions@GF@@SA?AU12@_N00HMM000@Z",
+]
+BOX_OPTIONS_SETTERS = [
+    "?SetBlurAlphaChannelOnly@BoxBlurOptions@GF@@QEAAXXZ",
+    "?SetBlurFlags@BoxBlurOptions@GF@@QEAAXH@Z",
+    "?SetBlurRadiusHoriz@BoxBlurOptions@GF@@QEAAXM@Z",
+    "?SetBlurRadiusVert@BoxBlurOptions@GF@@QEAAXM@Z",
+    "?SetDestAlphaType@BoxBlurOptions@GF@@QEAAXW4AlphaType@2@@Z",
+    "?SetIterations@BoxBlurOptions@GF@@QEAAXH@Z",
+    "?SetSrcAlphaType@BoxBlurOptions@GF@@QEAAXW4AlphaType@2@@Z",
+]
+RENDER_EXPORTS = [
+    {"module": "GPUFoundation.DLL", "name": FAST_BOX_BLUR, "kind": "gf_fast_box_blur"},
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?GaussianBlur@GF@@YAHAEBV?$shared_ptr@VDevice@GF@@@std@@PEBXHHHPEAXHHHUPixelFormat@dvamediatypes@@MM_NW4IR_BlurDirection@@4@Z",
+        "kind": "gf_gaussian_blur",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?SingleChannelBlur@GF@@YAHAEBV?$shared_ptr@VDevice@GF@@@std@@PEAXHUPixelFormat@dvamediatypes@@HHMM_N1@Z",
+        "kind": "gf_single_channel_blur",
+    },
+    {
+        "module": "GPUFoundation.DLL",
+        "name": "?Composite@GF@@YAHAEBV?$shared_ptr@VDevice@GF@@@std@@PEBXH1HPEAXHUPixelFormat@dvamediatypes@@HHMW4IR_BlendMode@@_N5@Z",
+        "kind": "gf_composite",
+    },
+    {"module": "ImageRenderer.dll", "name": "IR_BoxBlur", "kind": "ir_box_blur"},
+    {"module": "ImageRenderer.dll", "name": "IR_GaussianBlur", "kind": "ir_gaussian_blur"},
+    {"module": "ImageRenderer.dll", "name": "IR_Composite", "kind": "ir_composite"},
+    {"module": "ImageRenderer.dll", "name": "IR_CompositeWithBlendMode", "kind": "ir_composite_with_blend_mode"},
+]
+OFFSET_HOOKS: list[dict[str, str]] = []
 
 JS = r"""
 const maxEvents = MAX_EVENTS_PLACEHOLDER;
+const broadCoverage = BROAD_COVERAGE_PLACEHOLDER;
+const maxGenericHooks = MAX_GENERIC_HOOKS_PLACEHOLDER;
 const processInfo = PROCESS_INFO_PLACEHOLDER;
 let eventCount = 0;
+let genericHookCount = 0;
+const installedHooks = {};
+const missingNotified = {};
+const genericCallCounts = {};
+const moduleSnapshots = {};
+
+const WATCH_MODULES = [
+  "GPUFoundation.DLL",
+  "ImageRenderer.dll",
+  "RendererCPU.dll",
+  "RendererGPU.dll",
+  "AfterFXLib.dll",
+  "Drop_Shadow.aex",
+  "Box_Blur.aex",
+  "Glow.aex"
+];
+const GENERIC_HOOK_MODULES = {
+  "GPUFoundation.DLL": true,
+  "ImageRenderer.dll": true
+};
+const GENERIC_EXPORT_RE = /(blur|box|gauss|alpha|premult|unpremult|compos|blend|shadow|glow|mask)/i;
+const boxOptionsFactories = BOX_OPTIONS_FACTORIES_PLACEHOLDER;
+const boxOptionsSetters = BOX_OPTIONS_SETTERS_PLACEHOLDER;
+const renderExports = RENDER_EXPORTS_PLACEHOLDER;
+const offsetHooks = OFFSET_HOOKS_PLACEHOLDER;
 
 function hexptr(p) {
   if (p === null || p === undefined) {
@@ -66,6 +131,10 @@ function safeReadFloat(p) {
   try { return ptr(p).readFloat(); } catch (e) { return null; }
 }
 
+function safeReadPointer(p) {
+  try { return ptr(p).readPointer().toString(); } catch (e) { return null; }
+}
+
 function dumpBoxBlurOptions(p) {
   const q = ptr(p);
   return {
@@ -80,6 +149,14 @@ function dumpBoxBlurOptions(p) {
     force_v2_vertical: (safeReadU32(q.add(0x18)) >>> 8) & 0xff,
     using_16_bit_compute: (safeReadU32(q.add(0x18)) >>> 16) & 0xff
   };
+}
+
+function meta(kind, payload) {
+  send(Object.assign({
+    kind: kind,
+    timestamp_ms: Date.now(),
+    process: processInfo
+  }, payload));
 }
 
 function moduleOffset(addr) {
@@ -120,9 +197,16 @@ function emit(kind, payload) {
 }
 
 function hookByExport(moduleName, exportName, kind, install) {
+  const key = moduleName + "!" + exportName + "!" + kind;
+  if (installedHooks[key]) {
+    return;
+  }
   const module = Process.findModuleByName(moduleName);
   if (module === null) {
-    send({kind: "hook_missing_module", module: moduleName, export_name: exportName});
+    if (!missingNotified[key]) {
+      missingNotified[key] = true;
+      meta("hook_missing_module", {module: moduleName, export_name: exportName});
+    }
     return;
   }
   const exp = module.enumerateExports().find(function (candidate) {
@@ -130,88 +214,353 @@ function hookByExport(moduleName, exportName, kind, install) {
   });
   const address = exp === undefined ? null : exp.address;
   if (address === null) {
-    send({kind: "hook_missing", module: moduleName, export_name: exportName});
+    if (!missingNotified[key]) {
+      missingNotified[key] = true;
+      meta("hook_missing", {module: moduleName, export_name: exportName});
+    }
     return;
   }
-  install(address);
-  send({kind: "hook_installed", hook: kind, module: moduleName, export_name: exportName, address: address.toString()});
+  try {
+    install(address);
+    installedHooks[key] = true;
+    meta("hook_installed", {hook: kind, module: moduleName, export_name: exportName, address: address.toString()});
+  } catch (e) {
+    installedHooks[key] = true;
+    meta("hook_install_error", {hook: kind, module: moduleName, export_name: exportName, error: String(e)});
+  }
 }
 
-hookByExport("GPUFoundation.DLL", STD_OPTIONS_PLACEHOLDER, "standard_options", function (address) {
-  Interceptor.attach(address, {
-    onEnter: function (args) {
-      this.capture = true;
-      this.retbuf = ptr(args[0]);
-      emit("standard_options_enter", {
-        has_drop_shadow_frame: hasDropShadowFrame(this.context),
-        retbuf: this.retbuf.toString(),
-        bool_a: ptr(args[1]).toInt32() & 0xff,
-        bool_b: ptr(args[2]).toInt32() & 0xff,
-        bool_c: ptr(args[3]).toInt32() & 0xff,
-        iterations_or_alpha: this.context.rsp.add(0x28).readS32(),
-        radius_h_arg: this.context.rsp.add(0x30).readFloat(),
-        radius_v_arg: this.context.rsp.add(0x38).readFloat(),
-        backtrace: backtrace(this.context)
-      });
-    },
-    onLeave: function () {
-      if (!this.capture) {
-        return;
+function installKnownHooks() {
+  hookByExport("GPUFoundation.DLL", STD_OPTIONS_PLACEHOLDER, "standard_options", function (address) {
+    Interceptor.attach(address, {
+      onEnter: function (args) {
+        this.capture = true;
+        this.retbuf = ptr(args[0]);
+        emit("standard_options_enter", {
+          has_drop_shadow_frame: hasDropShadowFrame(this.context),
+          retbuf: this.retbuf.toString(),
+          bool_a: ptr(args[1]).toInt32() & 0xff,
+          bool_b: ptr(args[2]).toInt32() & 0xff,
+          bool_c: ptr(args[3]).toInt32() & 0xff,
+          iterations_or_alpha: this.context.rsp.add(0x28).readS32(),
+          radius_h_arg: this.context.rsp.add(0x30).readFloat(),
+          radius_v_arg: this.context.rsp.add(0x38).readFloat(),
+          backtrace: backtrace(this.context)
+        });
+      },
+      onLeave: function () {
+        if (!this.capture) {
+          return;
+        }
+        emit("standard_options_leave", {
+          retbuf: this.retbuf.toString(),
+          options: dumpBoxBlurOptions(this.retbuf)
+        });
       }
-      emit("standard_options_leave", {
-        retbuf: this.retbuf.toString(),
-        options: dumpBoxBlurOptions(this.retbuf)
-      });
-    }
+    });
   });
-});
 
-hookByExport("GPUFoundation.DLL", SET_ALPHA_ONLY_PLACEHOLDER, "set_alpha_only", function (address) {
-  Interceptor.attach(address, {
-    onEnter: function (args) {
-      this.capture = true;
-      this.options = ptr(args[0]);
-      emit("set_alpha_only_enter", {
-        has_drop_shadow_frame: hasDropShadowFrame(this.context),
-        options: dumpBoxBlurOptions(this.options),
-        backtrace: backtrace(this.context)
-      });
-    },
-    onLeave: function () {
-      if (!this.capture) {
-        return;
+  hookByExport("GPUFoundation.DLL", SET_ALPHA_ONLY_PLACEHOLDER, "set_alpha_only", function (address) {
+    Interceptor.attach(address, {
+      onEnter: function (args) {
+        this.capture = true;
+        this.options = ptr(args[0]);
+        emit("set_alpha_only_enter", {
+          has_drop_shadow_frame: hasDropShadowFrame(this.context),
+          options: dumpBoxBlurOptions(this.options),
+          backtrace: backtrace(this.context)
+        });
+      },
+      onLeave: function () {
+        if (!this.capture) {
+          return;
+        }
+        emit("set_alpha_only_leave", {
+          options: dumpBoxBlurOptions(this.options)
+        });
       }
-      emit("set_alpha_only_leave", {
-        options: dumpBoxBlurOptions(this.options)
-      });
-    }
+    });
   });
-});
 
-hookByExport("GPUFoundation.DLL", FAST_BOX_BLUR_PLACEHOLDER, "fast_box_blur", function (address) {
-  Interceptor.attach(address, {
-    onEnter: function (args) {
-      const rsp = this.context.rsp;
-      const optionsPtr = rsp.add(0x78).readPointer();
-      emit("fast_box_blur_enter", {
-        has_drop_shadow_frame: hasDropShadowFrame(this.context),
-        p3: ptr(args[2]).toInt32(),
-        p4: ptr(args[3]).toInt32(),
-        p5: rsp.add(0x28).readS32(),
-        p6: rsp.add(0x30).readS32(),
-        p7: rsp.add(0x38).readS32(),
-        p9: rsp.add(0x48).readS32(),
-        p10: rsp.add(0x50).readS32(),
-        p11: rsp.add(0x58).readS32(),
-        p12: rsp.add(0x60).readS32(),
-        p13: rsp.add(0x68).readS32(),
-        pixel_format_or_p14: rsp.add(0x70).readU32(),
-        options: dumpBoxBlurOptions(optionsPtr),
-        backtrace: backtrace(this.context)
+  hookByExport("GPUFoundation.DLL", FAST_BOX_BLUR_PLACEHOLDER, "fast_box_blur", function (address) {
+    Interceptor.attach(address, {
+      onEnter: function (args) {
+        const rsp = this.context.rsp;
+        const optionsPtr = rsp.add(0x78).readPointer();
+        emit("fast_box_blur_enter", {
+          has_drop_shadow_frame: hasDropShadowFrame(this.context),
+          p3: ptr(args[2]).toInt32(),
+          p4: ptr(args[3]).toInt32(),
+          p5: rsp.add(0x28).readS32(),
+          p6: rsp.add(0x30).readS32(),
+          p7: rsp.add(0x38).readS32(),
+          p9: rsp.add(0x48).readS32(),
+          p10: rsp.add(0x50).readS32(),
+          p11: rsp.add(0x58).readS32(),
+          p12: rsp.add(0x60).readS32(),
+          p13: rsp.add(0x68).readS32(),
+          pixel_format_or_p14: rsp.add(0x70).readU32(),
+          options: dumpBoxBlurOptions(optionsPtr),
+          backtrace: backtrace(this.context)
+        });
+      }
+    });
+  });
+}
+
+function installBoxOptionHooks() {
+  boxOptionsFactories.forEach(function (exportName) {
+    hookByExport("GPUFoundation.DLL", exportName, "box_options_factory", function (address) {
+      Interceptor.attach(address, {
+        onEnter: function () {
+          this.retbuf = ptr(this.context.rcx);
+          emit("box_options_factory_enter", {
+            export_name: exportName,
+            retbuf: this.retbuf.toString(),
+            has_drop_shadow_frame: hasDropShadowFrame(this.context),
+            regs: regSnapshot(this.context),
+            stack: stackSnapshot(this.context),
+            backtrace: backtrace(this.context)
+          });
+        },
+        onLeave: function () {
+          emit("box_options_factory_leave", {
+            export_name: exportName,
+            retbuf: this.retbuf.toString(),
+            options: dumpBoxBlurOptions(this.retbuf)
+          });
+        }
+      });
+    });
+  });
+
+  boxOptionsSetters.forEach(function (exportName) {
+    hookByExport("GPUFoundation.DLL", exportName, "box_options_setter", function (address) {
+      Interceptor.attach(address, {
+        onEnter: function () {
+          this.options = ptr(this.context.rcx);
+          emit("box_options_setter_enter", {
+            export_name: exportName,
+            options_before: dumpBoxBlurOptions(this.options),
+            has_drop_shadow_frame: hasDropShadowFrame(this.context),
+            regs: regSnapshot(this.context),
+            stack: stackSnapshot(this.context),
+            backtrace: backtrace(this.context)
+          });
+        },
+        onLeave: function () {
+          emit("box_options_setter_leave", {
+            export_name: exportName,
+            options_after: dumpBoxBlurOptions(this.options)
+          });
+        }
+      });
+    });
+  });
+}
+
+function installRenderExportHooks() {
+  renderExports.forEach(function (target) {
+    hookByExport(target.module, target.name, "render_export:" + target.kind, function (address) {
+      Interceptor.attach(address, {
+        onEnter: function () {
+          emit("render_export_enter", {
+            render_kind: target.kind,
+            module: target.module,
+            export_name: target.name,
+            address: address.toString(),
+            has_drop_shadow_frame: hasDropShadowFrame(this.context),
+            regs: regSnapshot(this.context),
+            stack: stackSnapshot(this.context),
+            backtrace: backtrace(this.context)
+          });
+        }
+      });
+    });
+  });
+}
+
+function installOffsetHooks() {
+  if (!broadCoverage || offsetHooks.length === 0) {
+    return;
+  }
+  offsetHooks.forEach(function (target) {
+    const key = target.module + "!" + target.offset + "!offset:" + target.kind;
+    if (installedHooks[key]) {
+      return;
+    }
+    const module = Process.findModuleByName(target.module);
+    if (module === null) {
+      return;
+    }
+    const address = module.base.add(ptr(target.offset));
+    try {
+      Interceptor.attach(address, {
+        onEnter: function () {
+          emit("offset_hook_enter", {
+            offset_kind: target.kind,
+            module: target.module,
+            offset: target.offset,
+            address: address.toString(),
+            regs: regSnapshot(this.context),
+            stack: stackSnapshot(this.context),
+            backtrace: backtrace(this.context)
+          });
+        }
+      });
+      installedHooks[key] = true;
+      meta("offset_hook_installed", {
+        offset_kind: target.kind,
+        module: target.module,
+        offset: target.offset,
+        address: address.toString()
+      });
+    } catch (e) {
+      installedHooks[key] = true;
+      meta("offset_hook_error", {
+        offset_kind: target.kind,
+        module: target.module,
+        offset: target.offset,
+        address: address.toString(),
+        error: String(e)
       });
     }
   });
-});
+}
+
+function stackSnapshot(ctx) {
+  const offsets = [0x20, 0x28, 0x30, 0x38, 0x40, 0x48, 0x50, 0x58, 0x60, 0x68, 0x70, 0x78, 0x80, 0x88];
+  return offsets.map(function (off) {
+    const p = ctx.rsp.add(off);
+    return {
+      offset: off,
+      ptr: safeReadPointer(p),
+      s32: safeReadS32(p),
+      u32: safeReadU32(p),
+      f32: safeReadFloat(p)
+    };
+  });
+}
+
+function regSnapshot(ctx) {
+  return {
+    rcx: ptr(ctx.rcx).toString(),
+    rdx: ptr(ctx.rdx).toString(),
+    r8: ptr(ctx.r8).toString(),
+    r9: ptr(ctx.r9).toString(),
+    rsp: ptr(ctx.rsp).toString()
+  };
+}
+
+function moduleSnapshot(moduleName, module, exports) {
+  const key = moduleName + "@" + module.base.toString();
+  if (moduleSnapshots[key]) {
+    return;
+  }
+  moduleSnapshots[key] = true;
+  const allMatching = exports
+    .filter(function (e) { return e.type === "function" && GENERIC_EXPORT_RE.test(e.name); });
+  const matching = allMatching
+    .slice(0, 120)
+    .map(function (e) { return {name: e.name, offset: ptr(e.address).sub(module.base).toString()}; });
+  const exportSamples = exports
+    .filter(function (e) { return e.type === "function"; })
+    .slice(0, 40)
+    .map(function (e) { return {name: e.name, offset: ptr(e.address).sub(module.base).toString()}; });
+  meta("module_snapshot", {
+    module: moduleName,
+    base: module.base.toString(),
+    size: module.size,
+    path: module.path,
+    export_count: exports.length,
+    matching_export_count: allMatching.length,
+    matching_exports: matching,
+    export_samples: exportSamples
+  });
+}
+
+function installGenericExportHook(moduleName, module, exp) {
+  if (genericHookCount >= maxGenericHooks) {
+    return;
+  }
+  if (exp.type !== "function" || !GENERIC_EXPORT_RE.test(exp.name)) {
+    return;
+  }
+  const key = moduleName + "!" + exp.name + "!generic";
+  if (installedHooks[key]) {
+    return;
+  }
+  installedHooks[key] = true;
+  genericHookCount += 1;
+  try {
+    Interceptor.attach(exp.address, {
+      onEnter: function () {
+        const callKey = key;
+        const seen = genericCallCounts[callKey] || 0;
+        if (seen >= 3) {
+          return;
+        }
+        genericCallCounts[callKey] = seen + 1;
+        emit("generic_export_enter", {
+          module: moduleName,
+          export_name: exp.name,
+          address: exp.address.toString(),
+          offset: ptr(exp.address).sub(module.base).toString(),
+          call_index: seen + 1,
+          has_drop_shadow_frame: hasDropShadowFrame(this.context),
+          regs: regSnapshot(this.context),
+          stack: stackSnapshot(this.context),
+          backtrace: backtrace(this.context).slice(0, 16)
+        });
+      }
+    });
+    meta("generic_hook_installed", {
+      module: moduleName,
+      export_name: exp.name,
+      address: exp.address.toString(),
+      offset: ptr(exp.address).sub(module.base).toString(),
+      generic_hook_count: genericHookCount
+    });
+  } catch (e) {
+    meta("generic_hook_error", {
+      module: moduleName,
+      export_name: exp.name,
+      address: exp.address.toString(),
+      error: String(e)
+    });
+  }
+}
+
+function installBroadHooks() {
+  if (!broadCoverage) {
+    return;
+  }
+  WATCH_MODULES.forEach(function (moduleName) {
+    const module = Process.findModuleByName(moduleName);
+    if (module === null) {
+      return;
+    }
+    const exports = module.enumerateExports();
+    moduleSnapshot(moduleName, module, exports);
+    if (!GENERIC_HOOK_MODULES[moduleName]) {
+      return;
+    }
+    exports.forEach(function (exp) {
+      installGenericExportHook(moduleName, module, exp);
+    });
+  });
+}
+
+function installAllHooks() {
+  installKnownHooks();
+  installBoxOptionHooks();
+  installRenderExportHooks();
+  installOffsetHooks();
+  installBroadHooks();
+}
+
+installAllHooks();
+setInterval(installAllHooks, 500);
 """
 
 
@@ -220,6 +569,9 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--duration", type=float, default=90.0)
     ap.add_argument("--max-events", type=int, default=80)
+    ap.add_argument("--broad-coverage", action="store_true")
+    ap.add_argument("--generic-hook-limit", type=int, default=160)
+    ap.add_argument("--offset-hook", action="append", default=[])
     args = ap.parse_args()
 
     device = frida.get_local_device()
@@ -228,9 +580,21 @@ def main() -> int:
       raise RuntimeError("AfterFX.exe is not running")
 
     script_text = JS.replace("MAX_EVENTS_PLACEHOLDER", str(args.max_events))
+    script_text = script_text.replace("BROAD_COVERAGE_PLACEHOLDER", json.dumps(args.broad_coverage))
+    script_text = script_text.replace("MAX_GENERIC_HOOKS_PLACEHOLDER", str(args.generic_hook_limit))
     script_text = script_text.replace("STD_OPTIONS_PLACEHOLDER", json.dumps(STD_OPTIONS))
     script_text = script_text.replace("FAST_BOX_BLUR_PLACEHOLDER", json.dumps(FAST_BOX_BLUR))
     script_text = script_text.replace("SET_ALPHA_ONLY_PLACEHOLDER", json.dumps(SET_ALPHA_ONLY))
+    script_text = script_text.replace("BOX_OPTIONS_FACTORIES_PLACEHOLDER", json.dumps(BOX_OPTIONS_FACTORIES))
+    script_text = script_text.replace("BOX_OPTIONS_SETTERS_PLACEHOLDER", json.dumps(BOX_OPTIONS_SETTERS))
+    script_text = script_text.replace("RENDER_EXPORTS_PLACEHOLDER", json.dumps(RENDER_EXPORTS))
+    offset_hooks = []
+    for item in args.offset_hook:
+        module, _, rest = item.partition(":")
+        offset, _, kind = rest.partition(":")
+        if module and offset.lower().startswith("0x"):
+            offset_hooks.append({"module": module, "offset": offset, "kind": kind or (module + "_" + offset)})
+    script_text = script_text.replace("OFFSET_HOOKS_PLACEHOLDER", json.dumps(offset_hooks))
 
     with open(args.out, "a", encoding="utf-8") as f:
         f.write(json.dumps({"kind": "trace_start", "duration": args.duration}) + "\n")
@@ -420,6 +784,51 @@ def ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
 
+def ps_array(values: list[str]) -> str:
+    return "@(" + ", ".join(ps_quote(value) for value in values) + ")"
+
+
+def remote_trace_args(
+    *,
+    remote_script: str,
+    remote_log: str,
+    duration: int,
+    max_events: int,
+    broad_coverage: bool,
+    generic_hook_limit: int,
+    offset_hooks: list[dict[str, str]],
+) -> list[str]:
+    args = [
+        "-u",
+        remote_script,
+        "--out",
+        remote_log,
+        "--duration",
+        str(duration),
+        "--max-events",
+        str(max_events),
+        "--generic-hook-limit",
+        str(generic_hook_limit),
+    ]
+    if broad_coverage:
+        args.append("--broad-coverage")
+    for hook in offset_hooks:
+        args.extend(["--offset-hook", f"{hook['module']}:{hook['offset']}:{hook['kind']}"])
+    return args
+
+
+def parse_offset_hook(value: str) -> dict[str, str]:
+    parts = value.split(":", 2)
+    if len(parts) < 2:
+        raise argparse.ArgumentTypeError("offset hook must be MODULE:0xOFFSET[:kind]")
+    module = parts[0].strip()
+    offset = parts[1].strip()
+    kind = parts[2].strip() if len(parts) > 2 else f"{module}_{offset}"
+    if not module or not offset.lower().startswith("0x"):
+        raise argparse.ArgumentTypeError("offset hook must be MODULE:0xOFFSET[:kind]")
+    return {"module": module, "offset": offset, "kind": kind}
+
+
 def upload_text(session: winrm.Session, remote_path: str, text: str) -> None:
     encoded = base64.b64encode(text.encode("utf-8")).decode("ascii")
     remote_b64 = remote_path + ".b64"
@@ -528,9 +937,23 @@ def start_remote_trace(
     remote_log: str,
     duration: int,
     max_events: int,
+    broad_coverage: bool,
+    generic_hook_limit: int,
+    offset_hooks: list[dict[str, str]],
 ) -> int:
     stdout_log = remote_log + ".stdout.txt"
     stderr_log = remote_log + ".stderr.txt"
+    args_list = ps_array(
+        remote_trace_args(
+            remote_script=remote_script,
+            remote_log=remote_log,
+            duration=duration,
+            max_events=max_events,
+            broad_coverage=broad_coverage,
+            generic_hook_limit=generic_hook_limit,
+            offset_hooks=offset_hooks,
+        )
+    )
     ps = "\n".join(
         [
             "$old = Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe', 'python3.exe') -and $_.CommandLine -like '*ae_trace_drop_shadow_remote.py*' }",
@@ -538,12 +961,7 @@ def start_remote_trace(
             f"if (Test-Path {ps_quote(remote_log)}) {{ Remove-Item -Path {ps_quote(remote_log)} -Force }}",
             f"if (Test-Path {ps_quote(stdout_log)}) {{ Remove-Item -Path {ps_quote(stdout_log)} -Force }}",
             f"if (Test-Path {ps_quote(stderr_log)}) {{ Remove-Item -Path {ps_quote(stderr_log)} -Force }}",
-            "$argsList = @(",
-            f"  '-u', {ps_quote(remote_script)},",
-            f"  '--out', {ps_quote(remote_log)},",
-            f"  '--duration', '{duration}',",
-            f"  '--max-events', '{max_events}'",
-            ")",
+            f"$argsList = {args_list}",
             f"$p = Start-Process -FilePath {ps_quote(remote_python)} -ArgumentList $argsList -WindowStyle Hidden -PassThru "
             f"-RedirectStandardOutput {ps_quote(stdout_log)} -RedirectStandardError {ps_quote(stderr_log)}",
             "$p.Id",
@@ -559,6 +977,9 @@ def start_remote_trace_foreground_ssh(
     remote_log: str,
     duration: int,
     max_events: int,
+    broad_coverage: bool,
+    generic_hook_limit: int,
+    offset_hooks: list[dict[str, str]],
 ) -> subprocess.Popen[str]:
     stdout_log = remote_log + ".stdout.txt"
     stderr_log = remote_log + ".stderr.txt"
@@ -572,10 +993,21 @@ def start_remote_trace_foreground_ssh(
         ]
     )
     run_ps_ssh(host, cleanup, check=False)
+    trace_args = " ".join(
+        ps_quote(arg)
+        for arg in remote_trace_args(
+            remote_script=remote_script,
+            remote_log=remote_log,
+            duration=duration,
+            max_events=max_events,
+            broad_coverage=broad_coverage,
+            generic_hook_limit=generic_hook_limit,
+            offset_hooks=offset_hooks,
+        )
+    )
     script = "\n".join(
         [
-            f"& {ps_quote(remote_python)} -u {ps_quote(remote_script)} "
-            f"--out {ps_quote(remote_log)} --duration {duration} --max-events {max_events} "
+            f"& {ps_quote(remote_python)} {trace_args} "
             f"> {ps_quote(stdout_log)} 2> {ps_quote(stderr_log)}",
             "exit $LASTEXITCODE",
         ]
@@ -738,6 +1170,23 @@ def run_case(case_id: str, job_id: str, node: str) -> None:
     )
 
 
+def capture_failure_screenshot_ssh(host: str, out_dir: Path, tag: str) -> None:
+    screenshot_dir = out_dir / "screenshots"
+    subprocess.run(
+        [
+            sys.executable,
+            "scripts/ae85_screenshot.py",
+            "--ssh-host",
+            host,
+            "--tag",
+            tag,
+            "--out-dir",
+            str(screenshot_dir),
+        ],
+        check=False,
+    )
+
+
 def parse_trace(text: str) -> list[dict[str, object]]:
     events = []
     for line in text.splitlines():
@@ -760,12 +1209,29 @@ def summarize_case(case_id: str, events: list[dict[str, object]]) -> dict[str, o
     leave = [e for e in events if e.get("kind") == "standard_options_leave"]
     fast = [e for e in events if e.get("kind") == "fast_box_blur_enter"]
     alpha = [e for e in events if e.get("kind") == "set_alpha_only_leave"]
+    box_factory = [e for e in events if e.get("kind") == "box_options_factory_leave"]
+    box_setter = [e for e in events if e.get("kind") == "box_options_setter_leave"]
+    render_exports = [e for e in events if e.get("kind") == "render_export_enter"]
+    offset_hooks = [e for e in events if e.get("kind") == "offset_hook_enter"]
+    generic = [e for e in events if e.get("kind") == "generic_export_enter"]
+    generic_hooks = [e for e in events if e.get("kind") == "generic_hook_installed"]
+    modules = [e for e in events if e.get("kind") == "module_snapshot"]
     return {
         "case_id": case_id,
         "standard_options_enter": std[:4],
         "standard_options_leave": leave[:4],
         "set_alpha_only_leave": alpha[:4],
         "fast_box_blur_enter": fast[:4],
+        "box_options_factory_leave": box_factory[:8],
+        "box_options_setter_leave": box_setter[:8],
+        "render_export_enter": render_exports[:12],
+        "render_export_count": len(render_exports),
+        "offset_hook_enter": offset_hooks[:12],
+        "offset_hook_count": len(offset_hooks),
+        "generic_export_enter": generic[:12],
+        "generic_export_count": len(generic),
+        "generic_hook_count": len(generic_hooks),
+        "module_snapshot": modules[:8],
         "event_count": len(events),
     }
 
@@ -785,6 +1251,15 @@ def main() -> int:
     ap.add_argument("--case", action="append", default=[])
     ap.add_argument("--duration", type=int, default=90)
     ap.add_argument("--max-events", type=int, default=80)
+    ap.add_argument("--broad-coverage", action="store_true", help="Hook blur/composite-like exports in candidate AE modules")
+    ap.add_argument("--generic-hook-limit", type=int, default=160, help="Maximum broad generic export hooks per process")
+    ap.add_argument(
+        "--offset-hook",
+        action="append",
+        type=parse_offset_hook,
+        default=[],
+        help="Dangerous opt-in hook, format MODULE:0xOFFSET[:kind]; use one known function start at a time",
+    )
     ap.add_argument("--live-tail", action="store_true", help="Stream remote Frida JSONL while the render is running")
     ap.add_argument("--out-dir", default="")
     args = ap.parse_args()
@@ -825,6 +1300,9 @@ def main() -> int:
                 remote_log,
                 args.duration,
                 args.max_events,
+                args.broad_coverage,
+                args.generic_hook_limit,
+                args.offset_hook,
             )
         else:
             trace_proc = start_remote_trace_foreground_ssh(
@@ -834,12 +1312,19 @@ def main() -> int:
                 remote_log,
                 args.duration,
                 args.max_events,
+                args.broad_coverage,
+                args.generic_hook_limit,
+                args.offset_hook,
             )
         tail_proc = start_remote_tail_ssh(args.ssh_host, remote_log) if args.live_tail and args.transport == "ssh" else None
         time.sleep(3.0)
         job_id = f"drop_shadow_soft_trace_{case_id}_{stamp}"
         try:
             run_case(case_id, job_id, args.node)
+        except Exception:
+            if args.transport == "ssh":
+                capture_failure_screenshot_ssh(args.ssh_host, out_dir, f"{job_id}_failure")
+            raise
         finally:
             if args.transport == "winrm":
                 assert session is not None
