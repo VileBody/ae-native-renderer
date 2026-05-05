@@ -51,15 +51,15 @@ pub const RGB_ALPHA_METRIC_POLICY: RgbAlphaMetricPolicy = RgbAlphaMetricPolicy {
     background_alpha_normalization:
         "ignore alpha only where native and AE pixels both match their detected background RGB",
     premult_handling:
-        "no unpremultiply is applied; premult/straight differences are exposed diagnostically",
+        "locked RGBA8 export contract: straight pixels at native boundaries; normal source-over premultiplies internally and unpremultiplies before RGBA8 quantization",
     flags: RgbAlphaMetricFlags {
         raw_rgb_ignores_alpha: true,
         alpha_reported_separately: true,
         rgb_under_alpha_policy_uses_source_over: true,
         rgb_under_alpha_policy_uses_reference_background: true,
         premult_unpremultiply_applied: false,
-        premult_contract_locked: false,
-        diagnostic_only: true,
+        premult_contract_locked: true,
+        diagnostic_only: false,
     },
 };
 
@@ -87,8 +87,8 @@ pub const M19_ALPHA_COMPOSITE_GATE_POLICY: M19AlphaCompositeGatePolicy =
         compatibility_metric: "rgba",
         background_metric: "background_alpha_normalized",
         raw_rgba_tuning_status: "compatibility_only_not_effect_tuning",
-        premult_status: "diagnostic_only_premult_contract_unlocked",
-        reverse_readiness_scope: "PRI_010/CMP_010/STK_010/STK_020 must be measured before M19-dependent effect tuning claims reverse implemented readiness",
+        premult_status: "locked_rgba8_normal_source_over_contract",
+        reverse_readiness_scope: "M19 is reverse implemented for RGBA8 normal layer source-over, transparent background RGB, layer opacity as source alpha gain, and PNG/TIFF golden comparison metrics; effect-local premultiply wrappers remain owned by their effect modules.",
     };
 
 pub fn is_m19_alpha_composite_gate_case(case_id: &str) -> bool {
@@ -471,7 +471,8 @@ mod tests {
                 .rgb_under_alpha_policy_uses_reference_background
         );
         assert!(!RGB_ALPHA_METRIC_POLICY.flags.premult_unpremultiply_applied);
-        assert!(!RGB_ALPHA_METRIC_POLICY.flags.premult_contract_locked);
+        assert!(RGB_ALPHA_METRIC_POLICY.flags.premult_contract_locked);
+        assert!(!RGB_ALPHA_METRIC_POLICY.flags.diagnostic_only);
     }
 
     #[test]
@@ -487,6 +488,10 @@ mod tests {
         assert_eq!(
             M19_ALPHA_COMPOSITE_GATE_POLICY.raw_rgba_tuning_status,
             "compatibility_only_not_effect_tuning"
+        );
+        assert_eq!(
+            M19_ALPHA_COMPOSITE_GATE_POLICY.premult_status,
+            "locked_rgba8_normal_source_over_contract"
         );
         assert!(is_m19_alpha_composite_gate_case("CMP_010"));
         assert_eq!(

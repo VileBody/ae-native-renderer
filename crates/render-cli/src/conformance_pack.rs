@@ -667,7 +667,7 @@ fn alpha_policy_diagnostics_json(
             "background_alpha_normalized",
             "alpha"
         ],
-        "guardrail": "Do not tune alpha-sensitive effects from raw RGBA alone while the premult/straight substrate is diagnostic-only."
+        "guardrail": "M19 locks the RGBA8 normal-composite boundary only. Tune alpha-sensitive effects from visible RGB/alpha/background metrics plus effect-local telemetry; raw RGBA stays compatibility-only."
     })
 }
 
@@ -689,7 +689,7 @@ fn m19_alpha_composite_gate_case_json(case: &PackCase) -> Value {
         "premult_contract_locked": testkit::RGB_ALPHA_METRIC_POLICY.flags.premult_contract_locked,
         "diagnostic_only": testkit::RGB_ALPHA_METRIC_POLICY.flags.diagnostic_only,
         "reverse_readiness_status": if participates {
-            "gate_case_measured_diagnostic_only"
+            "gate_case_measured_m19_core_locked"
         } else {
             "not_a_required_m19_alpha_composite_gate_case"
         },
@@ -744,13 +744,14 @@ fn m19_alpha_composite_gate_report_json(case_reports: &[Value]) -> Value {
         "premult_contract_locked": testkit::RGB_ALPHA_METRIC_POLICY.flags.premult_contract_locked,
         "diagnostic_only": testkit::RGB_ALPHA_METRIC_POLICY.flags.diagnostic_only,
         "reverse_readiness_status": if required_cases_ok {
-            "alpha_composite_gate_complete_diagnostic_only"
+            "alpha_composite_core_reverse_implemented"
         } else {
             "blocked_until_required_cases_are_measured_and_ok"
         },
-        "remaining_blockers": [
-            "premult/straight contract is still diagnostic-only",
-            "raw rgba remains compatibility-only for alpha-sensitive tuning"
+        "scope_limits": [
+            "M19 does not claim full AE internals for arbitrary blend modes, 16/32 bpc, color-managed output, or CPU/GPU divergence.",
+            "Effect input/output premultiply wrappers are module-local contracts for M10/M11/M13/etc., not global M19 blockers.",
+            "CMP_010 can still expose sampling or asset-placement diffs; those are not proof that the normal source-over formula is unlocked."
         ],
         "guardrail": "M19-dependent Step 5 patches must cite this gate and tune visible math against rgb_straight_source_over_ae_background plus alpha/background diagnostics, not raw rgba alone."
     })
@@ -3816,6 +3817,8 @@ mod tests {
             json!("rgb_straight_source_over_ae_background")
         );
         assert_eq!(diagnostics["premult_unpremultiply_applied"], json!(false));
+        assert_eq!(diagnostics["premult_contract_locked"], json!(true));
+        assert_eq!(diagnostics["diagnostic_only"], json!(false));
         assert_eq!(
             diagnostics["mean_abs_diff"]["raw_rgba_minus_background_alpha_normalized"],
             json!(2.5)
@@ -3854,7 +3857,7 @@ mod tests {
     }
 
     #[test]
-    fn m19_alpha_composite_gate_report_marks_required_cases_complete_but_diagnostic() {
+    fn m19_alpha_composite_gate_report_marks_required_cases_complete_and_locked() {
         let reports = testkit::M19_ALPHA_COMPOSITE_GATE_CASES
             .iter()
             .map(|case| {
@@ -3870,12 +3873,13 @@ mod tests {
 
         assert_eq!(gate["complete"], json!(true));
         assert_eq!(gate["required_cases_ok"], json!(true));
-        assert_eq!(gate["premult_contract_locked"], json!(false));
-        assert_eq!(gate["diagnostic_only"], json!(true));
+        assert_eq!(gate["premult_contract_locked"], json!(true));
+        assert_eq!(gate["diagnostic_only"], json!(false));
         assert_eq!(
             gate["reverse_readiness_status"],
-            json!("alpha_composite_gate_complete_diagnostic_only")
+            json!("alpha_composite_core_reverse_implemented")
         );
+        assert!(gate["scope_limits"].as_array().unwrap().len() >= 2);
     }
 
     #[test]

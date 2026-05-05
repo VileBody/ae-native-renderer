@@ -61,12 +61,12 @@ m19_alpha_composite_gate.schema = m19.alpha_composite_gate.v1
 required_cases = PRI_010, CMP_010, STK_010, STK_020
 primary_visible_metric = rgb_straight_source_over_ae_background
 raw_rgba_tuning_allowed = false
-premult_contract_locked = false
+premult_contract_locked = true
 ```
 
-In the focused run all required cases were measured and `required_cases_ok=true`,
-but the gate remains diagnostic-only until the premult/straight contract is
-locked.
+In the focused run all required cases were measured and `required_cases_ok=true`.
+Follow-up M19 closure locks this as the RGBA8 normal-composite contract; see
+`docs/reverse_engineering/M19_REVERSE_LOCK.md`.
 
 ### Temporal Contract Reports
 

@@ -93,8 +93,8 @@ target/ae_conformance_native/<CASE>/metrics.json
 `metrics.json` keeps the original raw RGBA fields (`max_abs_diff`,
 `mean_abs_diff`, `rmse_abs_diff`, `changed_pixels`, `total_pixels`) at both
 summary and per-frame level for compatibility. It also records
-`metric_contract.schema = "m19.rgb_alpha_metric_policy.v1"` with explicit
-straight/premult diagnostic flags, then structured diagnostic metrics:
+`metric_contract.schema = "m19.rgb_alpha_metric_policy.v1"` with the locked
+RGBA8 normal-composite contract, then structured metrics:
 
 - `rgba`: the same raw RGBA metric set.
 - `rgb`: RGB-only comparison, useful when transparent-background alpha policy
@@ -105,8 +105,8 @@ straight/premult diagnostic flags, then structured diagnostic metrics:
 - `foreground_rgb`: RGB comparison over the union foreground mask.
 - `rgb_under_alpha_policy`: RGB comparison after straight RGBA8 source-over
   projection onto the AE/reference background RGB. This is the preferred M19
-  diagnostic when invisible RGB or premult-looking partial-alpha pixels dominate
-  raw metrics.
+  visible metric when invisible RGB or premult-looking partial-alpha pixels
+  dominate raw metrics.
 - `rgb_over_native_background` and `rgb_over_ae_background`: explicit projection
   variants for background-sensitivity checks.
 - `background_corner`: per-frame native/AE corner RGBA plus
@@ -114,11 +114,12 @@ straight/premult diagnostic flags, then structured diagnostic metrics:
 
 Use `rgb`, `alpha`, `background_alpha_normalized`, and
 `rgb_under_alpha_policy` together before formula tuning. `metric_contract.flags`
-records that no unpremultiply is applied and that the premult/straight contract
-is diagnostic, not locked. Without thresholds, case status is `measured`; that
-means frames and diffs were produced, not that AE parity has been achieved. Add
-`--threshold-mean`, `--threshold-max`, and optionally `--fail-on-diff` when a
-module is ready to become an enforced gate.
+records that no metric-side unpremultiply is applied and that the RGBA8
+normal-composite contract is locked. Raw `rgba` remains compatibility-only.
+Without thresholds, case status is `measured`; that means frames and diffs were
+produced, not that full AE parity has been achieved. Add `--threshold-mean`,
+`--threshold-max`, and optionally `--fail-on-diff` when a module is ready to
+become an enforced gate.
 
 The shared guardrails for alpha/premult, gamma/color, edge sampling, time,
 quality/bpc, CPU/GPU path, and parameter mapping live in
@@ -207,6 +208,11 @@ alpha/premult/composite policy affects Drop Shadow, Glow, blur, text animator
 blur, collapse, and stack diffs. `M05` and `M15` are partial tuning-ready, while
 `M10`/`M11`/`M12`/`M13`/`M14`/`M16`/`M17`/`M18` must use their packet-specific
 sidecars and blockers before changing formulas.
+
+Current M19 decision: the RGBA8 normal-composite substrate is reverse
+implemented and documented in `docs/reverse_engineering/M19_REVERSE_LOCK.md`.
+Effect-local premultiply wrappers, color-managed output, and non-normal blend
+modes are separate module contracts.
 
 ## Step 5 Reverse Evidence Gates
 

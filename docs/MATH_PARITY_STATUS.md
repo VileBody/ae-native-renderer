@@ -61,7 +61,7 @@ nearby AE math backlog. Template status is derived from this table.
 | `M07` | Character text animator position/scale/rotation/blur | `instrumented/testable` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles, per-unit glyph refs, final matrix, opacity alpha scale, and blur radius telemetry. | Add AE glyph animator goldens and tune per-glyph transform center, blur kernel, opacity composition, and selector weighting. |
 | `M08` | Expression selector bounce | `implemented approximate` | `impulse_2nd` | Recognized generated `per_character_bounce` selector with deterministic native evaluator path. | Expression selector amount telemetry, AE bounce curve samples, tune delay/frequency/decay semantics. |
 | `M09` | Property expression subset: generated `edge_wobble` | `implemented approximate` | `scenes_3rd` | Named position-expression mode plus small scalar/Vec2 expression evaluator. | Per-property expression telemetry, AE samples for footage motion, tune waveform/envelope. |
-| `M10` | Drop Shadow | `instrumented/testable` | `template_4th`, `impulse_2nd` | Effect module, typed/numbered params, unit tests, effects conformance scaffold, straight-RGBA alpha-policy sidecar, and source/raw/blurred/final alpha stats. | Use shadow-mask/intermediate telemetry before tuning blur/offset/composite; final-pixel tuning remains blocked by M19 premult substrate. |
+| `M10` | Drop Shadow | `instrumented/testable` | `template_4th`, `impulse_2nd` | Effect module, typed/numbered params, unit tests, effects conformance scaffold, straight-RGBA alpha-policy sidecar, and source/raw/blurred/final alpha stats. | Use shadow-mask/intermediate telemetry before tuning blur/offset/composite; any premultiply behavior is now an effect-local contract, not a global M19 blocker. |
 | `M11` | Glow | `instrumented/testable` | `template_4th` | Effect module, typed/numbered params, unit tests, effects conformance scaffold, time-aware params, straight-RGBA alpha-policy sidecar, and threshold/blurred/scaled/final alpha stats. | Resolve Glow Based On enum and blur/composite route with AE probes before threshold/radius/intensity formula tuning. |
 | `M12` | Geometry2 | `implemented approximate` | `scenes_3rd` | Adjustment effect module with transform-like params, time-varying scalar support, matrix/sample debug data, and adjustment-stack debug sidecars. | Compare stack Geometry2 matrix/UV telemetry against AE refs; then tune sampler/edge-mode only with coordinate-field evidence. |
 | `M13` | Minimax | `implemented approximate` | `scenes_3rd` | Effect module with AE operation/channel/direction enum surface, time-aware radius, primitive unit tests, and stack debug hashes including direction and Don't Shrink Edges. | Fractional-radius probes, Direction impulse/ramp goldens, Don't Shrink Edges behavior, GPU/CPU path parity. |
@@ -70,7 +70,7 @@ nearby AE math backlog. Template status is derived from this table.
 | `M16` | Adjustment layer pipeline and effect-stack order | `instrumented/testable` | `scenes_3rd` | Adjustment layers apply known effects to accumulated canvas; per-effect input/output hashes, bucket/live param times, and Geometry2/Minimax/Turbulent debug checkpoints are logged for adjustment stacks. | Compare STK_030 sidecars to AE adjustment-stack goldens before changing global ordering. |
 | `M17` | Collapse transformations / text precomp graph | `instrumented/testable` | payload structure for `template_4th`, `impulse_2nd`; future nested cases | Nested graph validation, cycle detection, text/solid-only collapse, parent matrix composition, scale-aware collapsed text rasterization, collapse micro-scene scaffold. | AE collapsed/rasterized pair goldens, vector/text deferred-raster telemetry, wider nested-case coverage. |
 | `M18` | Motion blur | `instrumented/testable` | not observed in current imported target scenes; AE backlog | Composition/layer switches, shutter angle/phase/samples, subframe sampling, motion-blur micro-scene scaffold, per-sample shutter fraction/offset/source-frame telemetry, and weight summaries. | AE shutter/sample goldens, premult accumulation audit, and static-layer skip once shutter sample facts are known. |
-| `M19` | Color, alpha, sampling, gamma assumptions | `instrumented/testable` | all three | Straight RGBA8 canvas, normal composite, deterministic PNG output, split RGB/alpha/background-normalized metrics, `rgb_straight_source_over_ae_background` alias, and diagnostic-only alpha-policy reports. | Premult/straight audit, alpha-ramp fixtures, gamma/color-space decision, AE compositing goldens. |
+| `M19` | Color/alpha composite substrate | `reverse implemented (RGBA8 normal composite)` | all three | Locked straight RGBA8 native boundary, reversed normal source-over formula, opacity-as-source-alpha-gain, transparent background RGB preservation, deterministic PNG output, split RGB/alpha/background-normalized metrics, and `rgb_straight_source_over_ae_background` primary visible metric. | Keep raw `rgba` compatibility-only; handle effect-local premultiply wrappers, non-normal blend modes, 16/32 bpc, and color-managed output in separate module contracts. |
 | `M20` | Masks, mattes, blend modes | `not implemented` | not observed as required for current snapshots | Capability reporting/fallback policy only where detected. | Implement only when payload inventory shows usage; then add operator fixtures and AE goldens. |
 | `M21` | 3D, camera, spatial paths, roving keyframes, arbitrary ExtendScript | `not implemented` | not required for current snapshots | Explicit later scope. | Separate roadmap phase; do not block current three-template parity unless payloads start using them. |
 
@@ -270,7 +270,7 @@ The before/after visual metrics for `EXP_010`, `GPH_010`, `CMP_010`,
 
 ### Step 4 Effects / Alpha Diagnostics
 
-Worker C added diagnostic-only checkpoints for M10/M11/M19:
+Worker C added diagnostic-only checkpoints for M10/M11 and the M19 lead-up:
 
 - Box Blur, Drop Shadow, and Glow effect sidecars now state the local
   `straight_rgba8` alpha policy and report alpha coverage/sum/min/max for
@@ -283,9 +283,9 @@ Worker C added diagnostic-only checkpoints for M10/M11/M19:
   `target/ae_agents/worker_c_step4_effects_alpha_after/report.json`
   (`EFF_010`, `EFF_020`, `EFF_030`, `EFF_070`) completed with `ok=true`.
 
-This step does not change final effect math. Glow/Drop Shadow tuning remains
-blocked until M19 premult/straight behavior and Glow Based On enum probes are
-resolved.
+This step does not change final effect math. Glow/Drop Shadow tuning now uses
+the locked M19 RGBA8 normal-composite contract, while Glow Based On enum probes
+and effect-local premultiply/composite routes remain module-specific blockers.
 
 ### Step 4.5 Tuning Readiness / Evidence Lock
 
@@ -306,12 +306,13 @@ This step does not claim formula parity. It locks the current Step 4 evidence,
 measured cases, missing pack cases, allowed knobs, forbidden cross-module edits,
 and Step 5 gates per module. The current entry order is:
 
-1. `M19` first, because alpha/premult/composite policy affects most visual
-   tuning.
-2. `M05` text layout and `M15` Posterize Time as partial tuning-ready modules.
-3. `M10`/`M11` effects, `M12`/`M13`/`M14` warps/fields, `M16` adjustment stack,
+1. `M05` text layout and `M15` Posterize Time as partial tuning-ready modules.
+2. `M10`/`M11` effects, `M12`/`M13`/`M14` warps/fields, `M16` adjustment stack,
    `M17` collapse, and `M18` motion blur only through their packet-specific
    sidecars and blockers.
+3. `M19` is no longer the global first blocker for RGBA8 normal composite;
+   reopen it only for a new output contract such as 16/32 bpc, color management,
+   non-normal blend modes, or renderer-path divergence.
 
 ### Step 5 Reverse Evidence Gates
 
@@ -327,7 +328,9 @@ target/ae_agents/step5_reverse_evidence/warps_fields_evidence_check.json
 Current gate results:
 
 - `M19`: required alpha/composite cases `PRI_010`, `CMP_010`, `STK_010`, and
-  `STK_020` measured successfully, but premult/straight remains diagnostic-only.
+  `STK_020` measured successfully; the RGBA8 normal-composite contract is now
+  reverse implemented and documented in
+  `docs/reverse_engineering/M19_REVERSE_LOCK.md`.
 - `M15`/`M16`/`M18`: temporal contract reports pass for `TMP_010`, `TMP_020`,
   `TMP_030`, and `STK_030`.
 - `M12`/`M14`: isolated warps/fields evidence check passes for `EFF_040`,

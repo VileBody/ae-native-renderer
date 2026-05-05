@@ -32,7 +32,8 @@ or audit without reopening the same binary.
   exploration. Commit only if the team decides a script is reusable and free of
   proprietary material.
 - `docs/reverse_engineering/`: stable workflow docs and cross-links.
-  Start M19/color-alpha work from `MATH_CONTRACTS_GUARDRAILS.md`.
+  Start M19/color-alpha work from `M19_REVERSE_LOCK.md`, then use
+  `MATH_CONTRACTS_GUARDRAILS.md` for cross-module guardrails.
 - `docs/phase_reports/`: dated findings and module-specific reverse notes, for
   example `AE_REVERSE_GEOMETRY2_GHIDRA.md`.
   The current artifact intake checklist is

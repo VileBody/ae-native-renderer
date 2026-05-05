@@ -2,6 +2,10 @@
 
 Generated: 2026-05-05.
 
+Superseded note: M19's RGBA8 normal-composite contract was later closed in
+`docs/reverse_engineering/M19_REVERSE_LOCK.md`. The blocker rows below preserve
+the original Step 4.5 generated state.
+
 Step 4.5 is the bridge between broad instrumentation and real formula tuning.
 It freezes the current conformance evidence, names the allowed knobs per module,
 and records which substrate facts must not be guessed from final PNGs.
@@ -26,7 +30,7 @@ Source artifacts:
 
 | Module | State | Measured cases | Missing pack cases | Primary gate | Blocker |
 | --- | --- | --- | --- | --- | --- |
-| `M01` Layer activity / compositing | needs dedicated evidence | - | `PRI_010` | PRI_010/CMP_010 prove layer opacity/source-over/background behavior before effect tuning depends on it | PRI_010 was not in the Step 4 integrated run; M19 premult/straight is still diagnostic-only |
+| `M01` Layer activity / compositing | needs dedicated evidence | - | `PRI_010` | PRI_010/CMP_010 prove layer opacity/source-over/background behavior before effect tuning depends on it | Superseded: M19 RGBA8 normal composite is now locked; M01 still needs dedicated layer-activity evidence. |
 | `M02` Footage/source-time sampling | diagnostic-ready | `TMP_010` | - | source_frame.index/time/subframe must match numbered-frame AE refs | needs numbered-frame source passport on non-trivial source_start cases |
 | `M03` 2D transform matrix / sampler | needs dedicated evidence | - | - | coordinate-field transform passport proves matrix/pixel-center/OOB before Geometry2 or collapse tuning | no dedicated M03 case is measured in the Step 4 integrated run; use EFF_040-style coordinate-field probes |
 | `M04` Keyframes / Bezier ease | evidence-ready, not tuning-ready | `EFF_070`<br>`INT_020` | `INT_010` | INT_020 keyframe_sample records improve without worsening TMP/Motion cases | AE tangent/influence telemetry is still missing; final pixels alone are too indirect |
@@ -44,7 +48,7 @@ Source artifacts:
 | `M16` Adjustment stack order | evidence-ready, not tuning-ready | `STK_030` | - | per-effect input/output hashes localize first divergent adjustment effect in STK_030 | needs AE-side intermediate/checkpoint refs for STK_030 |
 | `M17` Collapse transformations / precomp graph | evidence-ready, not tuning-ready | `GPH_010` | - | GPH_010 matrix_report and deferred-raster checkpoints match collapsed/noncollapsed AE refs | true AE deferred text/vector rasterization refs are still missing |
 | `M18` Motion blur | evidence-ready, not tuning-ready | `TMP_030` | - | TMP_030 shutter sample times/weights match AE before accumulation/composite tuning | AE shutter sample telemetry/weights are missing; premult accumulation depends on M19 |
-| `M19` Color/alpha/sampling/gamma substrate | first tuning target | `CMP_010`<br>`EFF_010`<br>`EFF_020`<br>`EFF_030`<br>`EFF_070`<br>`EXP_010`<br>`GPH_010`<br>`INT_020`<br>`STK_030`<br>`TMP_010`<br>`TMP_020`<br>`TMP_030`<br>`TXT_010`<br>`TXT_020`<br>`TXT_030`<br>`TXT_040` | `PRI_010`<br>`STK_010`<br>`STK_020` | alpha_policy_diagnostics stable; rgb_under_alpha_policy is used for effect tuning until premult is locked | premult/straight contract is still diagnostic-only |
+| `M19` Color/alpha/sampling/gamma substrate | superseded by M19 reverse lock | `CMP_010`<br>`EFF_010`<br>`EFF_020`<br>`EFF_030`<br>`EFF_070`<br>`EXP_010`<br>`GPH_010`<br>`INT_020`<br>`STK_030`<br>`TMP_010`<br>`TMP_020`<br>`TMP_030`<br>`TXT_010`<br>`TXT_020`<br>`TXT_030`<br>`TXT_040` | `PRI_010`<br>`STK_010`<br>`STK_020` | `rgb_under_alpha_policy` is now the locked RGBA8 normal-composite visible metric. | See `docs/reverse_engineering/M19_REVERSE_LOCK.md`; effect-local premultiply wrappers remain module-specific. |
 
 ## Tuning Packets
 
@@ -55,7 +59,7 @@ Source artifacts:
 - Primary gate: PRI_010/CMP_010 prove layer opacity/source-over/background behavior before effect tuning depends on it
 - Allowed knobs: activity boundaries, z-order application, layer opacity scaling, normal source-over implementation
 - Forbidden in this module: effect-specific alpha hacks, text/effect formula changes
-- Blockers: PRI_010 was not in the Step 4 integrated run; M19 premult/straight is still diagnostic-only
+- Blockers: Superseded: M19 RGBA8 normal composite is now locked; M01 still needs dedicated layer-activity evidence.
 
 | Case | Frames | RGBA mean | RGB-under-alpha mean | Alpha mean | Max | Text mismatches | Text max delta | Evidence |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |
@@ -296,11 +300,11 @@ Source artifacts:
 ### `M19` Color/alpha/sampling/gamma substrate
 
 - Lane: global substrate
-- State: first tuning target
-- Primary gate: alpha_policy_diagnostics stable; rgb_under_alpha_policy is used for effect tuning until premult is locked
+- State: superseded by M19 reverse lock
+- Primary gate: `rgb_under_alpha_policy` is now the locked RGBA8 normal-composite visible metric
 - Allowed knobs: straight/premult conversion, background alpha normalization, source-over math, gamma/color-space decision, sampler edge policy
 - Forbidden in this module: module-specific formula hacks to compensate global substrate drift
-- Blockers: premult/straight contract is still diagnostic-only
+- Blockers: none for RGBA8 normal source-over; effect-local premultiply wrappers, color management, bpc, and non-normal blend modes are separate contracts
 
 | Case | Frames | RGBA mean | RGB-under-alpha mean | Alpha mean | Max | Text mismatches | Text max delta | Evidence |
 | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | --- |

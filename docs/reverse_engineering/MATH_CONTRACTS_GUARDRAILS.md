@@ -1,23 +1,25 @@
 # Math Contracts / Guardrails
 
-Status date: 2026-05-04
+Status date: 2026-05-05
 
-This is the shared M19 contract for native conformance work. It records what is
-safe to use as a diagnostic convention, what is proved by AE evidence, and what
-must remain a `BLOCKER` until a focused probe or reverse note resolves it.
+This is the shared M19 contract for native conformance work. It records the
+locked RGBA8 normal-composite substrate, what remains compatibility-only, and
+what belongs to module-local effect contracts.
 
 Evidence roots:
 
 - `target/reverse/predecoded/20260504_222748_full_predecode_round2`
 - `docs/reverse_engineering/alpha_composite_background_findings.md`
+- `docs/reverse_engineering/M19_REVERSE_LOCK.md`
 - `docs/phase_reports/AGENT_A_SUBSTRATE_MATH_OBJECTS_20260504.md`
 - `docs/CONFORMANCE.md`
 
 ## Metric Contract
 
 The conformance runner writes raw compatibility metrics and an M19 split metric
-set. Treat the split set as diagnostic evidence, not as proof that AE internally
-stores pixels in the same format.
+set. The metric policy is locked for the current RGBA8 normal-composite output
+contract; it is not a claim that every AE internal surface uses the same storage
+format.
 
 `testkit::RGB_ALPHA_METRIC_POLICY` is the JSON contract emitted by
 `render-cli conformance-pack`:
@@ -35,7 +37,7 @@ stores pixels in the same format.
   zero and exposes premult-looking RGB at partial alpha.
 - `rgb_straight_source_over_ae_background`: explicit alias for
   `rgb_under_alpha_policy`; added so effect/alpha reports name the current
-  straight-RGBA diagnostic assumption directly.
+  straight-RGBA output contract directly.
 - `rgb_over_native_background` and `rgb_over_ae_background`: explicit projection
   variants for background-sensitivity checks.
 
@@ -46,8 +48,8 @@ Current flags:
 - `rgb_under_alpha_policy_uses_source_over=true`
 - `rgb_under_alpha_policy_uses_reference_background=true`
 - `premult_unpremultiply_applied=false`
-- `premult_contract_locked=false`
-- `diagnostic_only=true`
+- `premult_contract_locked=true`
+- `diagnostic_only=false`
 
 Guardrail: do not tune an effect formula from `rgba` alone when `alpha` or
 `background_corner.rgb_matches_alpha_differs` is high. Use `rgb`,
@@ -60,9 +62,10 @@ Confirmed:
 
 - AE normal source-over in the decoded composite shaders follows the standard
   premultiply, source-over, unpremultiply shape.
-- Native `raster_cpu::composite_normal` is a straight RGBA8 source-over
-  approximation and now preserves destination hidden RGB for zero-alpha source
-  pixels.
+- Native `raster_cpu::composite_normal_pixel` is the locked straight RGBA8
+  normal source-over primitive. It computes in `f32`, premultiplies internally,
+  unpremultiplies before RGBA8 quantization, applies layer opacity as source
+  alpha gain, and preserves destination hidden RGB for zero-alpha source pixels.
 - AE conformance PNGs preserve background RGB under alpha zero, for example
   `[5, 5, 6, 0]`.
 - `GPUFoundation.dll` exposes `GF::Unpremultiply`, `GF::AlphaGain`,
@@ -70,18 +73,18 @@ Confirmed:
 - `GF::Composite` takes a pixel format, an `IR_BlendMode`, opacity, and two
   bool-like flags forwarded into the kernel arguments.
 
-Unknown / BLOCKER:
+Out of M19 scope:
 
-- Exact renderer-boundary contract: straight import, premult import, packed alpha,
-  or format-tagged conversion before and after effects.
 - Exact meaning of the `GF::Composite` bool flags and the full normal-blend enum
   mapping for every AE layer mode.
 - Whether blur/effect kernels premultiply before spreading RGB under partial
   alpha.
+- 16/32 bpc, color-managed output, CPU/GPU divergence, and arbitrary blend modes.
 
-Policy: keep native straight RGBA8 as an implementation approximation only. Any
-alpha-sensitive formula tuning must record the M19 metrics above or a
-module-local pre/post-alpha probe.
+Policy: keep native effect boundaries as straight RGBA8 unless the effect module
+locks a local premultiply/unpremultiply wrapper. Any alpha-sensitive formula
+tuning must record the M19 metrics above plus module-local pre/post-alpha
+telemetry.
 
 Step 4 effects/alpha update: Box Blur, Drop Shadow, and Glow sidecars now report
 diagnostic-only `alpha_policy` and per-intermediate alpha stats. These are probes,
@@ -210,4 +213,6 @@ inputs are mapped or explicitly labeled `approximation`.
 - `parity locked`: split metrics, alpha policy, bpc/quality, CPU/GPU path, and
   effect-specific telemetry agree within declared thresholds.
 
-M19 remains `instrumented/testable`, not `parity locked`.
+M19 is `reverse implemented (RGBA8 normal composite)`. Full-template parity still
+depends on module-local effect formulas, sampling, color-management, and bpc
+contracts.
