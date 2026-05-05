@@ -207,3 +207,26 @@ alpha/premult/composite policy affects Drop Shadow, Glow, blur, text animator
 blur, collapse, and stack diffs. `M05` and `M15` are partial tuning-ready, while
 `M10`/`M11`/`M12`/`M13`/`M14`/`M16`/`M17`/`M18` must use their packet-specific
 sidecars and blockers before changing formulas.
+
+## Step 5 Reverse Evidence Gates
+
+Step 5 adds machine-readable evidence gates before formula patches:
+
+- `m19_alpha_composite_gate` in `report.json`;
+- per-case `temporal_contract.json`;
+- `warps_fields_debug` sidecar paths for isolated `EFF_040` / `EFF_060`;
+- text-passport diagnostics for font instances, CoolType scope, selector /
+  expression gaps, and collapse gaps.
+
+Focused evidence run:
+
+```text
+target/ae_agents/step5_reverse_evidence/report.json
+target/ae_agents/step5_reverse_evidence/warps_fields_evidence_check.json
+```
+
+Detailed report:
+
+```text
+docs/phase_reports/STEP5_REVERSE_IMPLEMENTATION_READINESS_20260505.md
+```

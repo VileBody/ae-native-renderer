@@ -1,9 +1,11 @@
 use crate::{
-    box_blur::canvas_debug_hash, param_bool_any, param_f32_at_any, param_value, Effect,
-    EffectContext,
+    box_blur::{canvas_alpha_stats, canvas_debug_hash, CanvasAlphaStats},
+    param_bool_any, param_f32_at_any, param_value, Effect, EffectContext,
 };
 use raster_cpu::Canvas;
 use serde_json::Value;
+
+const EDGE_POLICY_CLIP_TO_IMAGE_BOUNDS: &str = "clip_to_image_bounds";
 
 #[derive(Debug, Default)]
 pub struct Minimax;
@@ -67,28 +69,39 @@ pub struct MinimaxDebugParams {
     pub radius: f32,
     pub kernel_radius: u32,
     pub dont_shrink_edges: bool,
+    pub stage_count: u8,
+    pub edge_policy: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct MinimaxIntermediateHashes {
     pub input_rgba: u64,
+    pub first_pass_rgba: u64,
+    pub first_stage_rgba: u64,
+    pub second_stage_rgba: u64,
     pub output_rgba: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MinimaxIntermediateAlphaStats {
+    pub input: CanvasAlphaStats,
+    pub first_pass: CanvasAlphaStats,
+    pub first_stage: CanvasAlphaStats,
+    pub second_stage: CanvasAlphaStats,
+    pub output: CanvasAlphaStats,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct MinimaxDebugTrace {
     pub params: MinimaxDebugParams,
     pub hashes: MinimaxIntermediateHashes,
+    pub alpha: MinimaxIntermediateAlphaStats,
 }
 
 pub fn minimax_debug_trace(input: &Canvas, params: &Value, time: f64) -> MinimaxDebugTrace {
     let params = MinimaxParams::from_json(params, time);
     let radius = params.radius.round().clamp(0.0, 32.0) as u32;
-    let output = if radius == 0 || input.width == 0 || input.height == 0 {
-        input.clone()
-    } else {
-        minimax_canvas(input, radius, params)
-    };
+    let canvases = minimax_debug_canvases(input, radius, params);
 
     MinimaxDebugTrace {
         params: MinimaxDebugParams {
@@ -98,10 +111,22 @@ pub fn minimax_debug_trace(input: &Canvas, params: &Value, time: f64) -> Minimax
             radius: params.radius,
             kernel_radius: radius,
             dont_shrink_edges: params.dont_shrink_edges,
+            stage_count: operation_stage_count(params.operation),
+            edge_policy: EDGE_POLICY_CLIP_TO_IMAGE_BOUNDS,
         },
         hashes: MinimaxIntermediateHashes {
             input_rgba: canvas_debug_hash(input),
-            output_rgba: canvas_debug_hash(&output),
+            first_pass_rgba: canvas_debug_hash(&canvases.first_pass),
+            first_stage_rgba: canvas_debug_hash(&canvases.first_stage),
+            second_stage_rgba: canvas_debug_hash(&canvases.second_stage),
+            output_rgba: canvas_debug_hash(&canvases.output),
+        },
+        alpha: MinimaxIntermediateAlphaStats {
+            input: canvas_alpha_stats(input),
+            first_pass: canvas_alpha_stats(&canvases.first_pass),
+            first_stage: canvas_alpha_stats(&canvases.first_stage),
+            second_stage: canvas_alpha_stats(&canvases.second_stage),
+            output: canvas_alpha_stats(&canvases.output),
         },
     }
 }
@@ -159,6 +184,13 @@ fn operation_label(operation: Operation) -> &'static str {
         Operation::Minimum => "minimum",
         Operation::MinimumThenMaximum => "minimum_then_maximum",
         Operation::MaximumThenMinimum => "maximum_then_minimum",
+    }
+}
+
+fn operation_stage_count(operation: Operation) -> u8 {
+    match operation {
+        Operation::Minimum | Operation::Maximum => 1,
+        Operation::MinimumThenMaximum | Operation::MaximumThenMinimum => 2,
     }
 }
 
@@ -337,6 +369,92 @@ fn minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas 
     }
 }
 
+#[derive(Debug, Clone)]
+struct MinimaxDebugCanvases {
+    first_pass: Canvas,
+    first_stage: Canvas,
+    second_stage: Canvas,
+    output: Canvas,
+}
+
+#[derive(Debug, Clone)]
+struct ExtremumStageDebug {
+    first_pass: Canvas,
+    output: Canvas,
+}
+
+fn minimax_debug_canvases(
+    input: &Canvas,
+    radius: u32,
+    params: MinimaxParams,
+) -> MinimaxDebugCanvases {
+    if radius == 0 || input.width == 0 || input.height == 0 {
+        let output = input.clone();
+        return MinimaxDebugCanvases {
+            first_pass: output.clone(),
+            first_stage: output.clone(),
+            second_stage: output.clone(),
+            output,
+        };
+    }
+
+    match params.operation {
+        Operation::Minimum => single_stage_debug(input, radius, Extremum::Minimum, params),
+        Operation::Maximum => single_stage_debug(input, radius, Extremum::Maximum, params),
+        Operation::MinimumThenMaximum => {
+            two_stage_debug(input, radius, Extremum::Minimum, Extremum::Maximum, params)
+        }
+        Operation::MaximumThenMinimum => {
+            two_stage_debug(input, radius, Extremum::Maximum, Extremum::Minimum, params)
+        }
+    }
+}
+
+fn single_stage_debug(
+    input: &Canvas,
+    radius: u32,
+    extremum: Extremum,
+    params: MinimaxParams,
+) -> MinimaxDebugCanvases {
+    let stage =
+        apply_extremum_operation_debug(input, radius, extremum, params.channels, params.direction);
+    MinimaxDebugCanvases {
+        first_pass: stage.first_pass,
+        first_stage: stage.output.clone(),
+        second_stage: stage.output.clone(),
+        output: stage.output,
+    }
+}
+
+fn two_stage_debug(
+    input: &Canvas,
+    radius: u32,
+    first_extremum: Extremum,
+    second_extremum: Extremum,
+    params: MinimaxParams,
+) -> MinimaxDebugCanvases {
+    let first_stage = apply_extremum_operation_debug(
+        input,
+        radius,
+        first_extremum,
+        params.channels,
+        params.direction,
+    );
+    let second_stage = apply_extremum_operation_debug(
+        &first_stage.output,
+        radius,
+        second_extremum,
+        params.channels,
+        params.direction,
+    );
+    MinimaxDebugCanvases {
+        first_pass: first_stage.first_pass,
+        first_stage: first_stage.output,
+        second_stage: second_stage.output.clone(),
+        output: second_stage.output,
+    }
+}
+
 fn apply_extremum_operation(
     input: &Canvas,
     radius: u32,
@@ -351,6 +469,39 @@ fn apply_extremum_operation(
         }
         Direction::Horizontal => minimax_pass(input, radius, extremum, channels, Axis::Horizontal),
         Direction::Vertical => minimax_pass(input, radius, extremum, channels, Axis::Vertical),
+    }
+}
+
+fn apply_extremum_operation_debug(
+    input: &Canvas,
+    radius: u32,
+    extremum: Extremum,
+    channels: Channels,
+    direction: Direction,
+) -> ExtremumStageDebug {
+    match direction {
+        Direction::HorizontalAndVertical => {
+            let horizontal = minimax_pass(input, radius, extremum, channels, Axis::Horizontal);
+            let output = minimax_pass(&horizontal, radius, extremum, channels, Axis::Vertical);
+            ExtremumStageDebug {
+                first_pass: horizontal,
+                output,
+            }
+        }
+        Direction::Horizontal => {
+            let output = minimax_pass(input, radius, extremum, channels, Axis::Horizontal);
+            ExtremumStageDebug {
+                first_pass: output.clone(),
+                output,
+            }
+        }
+        Direction::Vertical => {
+            let output = minimax_pass(input, radius, extremum, channels, Axis::Vertical);
+            ExtremumStageDebug {
+                first_pass: output.clone(),
+                output,
+            }
+        }
     }
 }
 
@@ -614,10 +765,7 @@ mod tests {
 
         let mut hole = Canvas::new(3, 1, [0, 0, 0, 255]);
         hole.set_pixel(1, 0, [0, 0, 0, 0]);
-        let closed = render(
-            &hole,
-            json!({ "0001": 4, "0002": 1, "0003": 6, "0004": 2 }),
-        );
+        let closed = render(&hole, json!({ "0001": 4, "0002": 1, "0003": 6, "0004": 2 }));
         assert_eq!(closed.pixel(0, 0)[3], 255);
         assert_eq!(closed.pixel(1, 0)[3], 255);
         assert_eq!(closed.pixel(2, 0)[3], 255);
@@ -687,10 +835,59 @@ mod tests {
         assert_eq!(trace.params.radius, 1.6);
         assert_eq!(trace.params.kernel_radius, 2);
         assert!(trace.params.dont_shrink_edges);
+        assert_eq!(trace.params.stage_count, 1);
+        assert_eq!(trace.params.edge_policy, EDGE_POLICY_CLIP_TO_IMAGE_BOUNDS);
         assert_eq!(trace.hashes.input_rgba, canvas_debug_hash(&input));
         assert_eq!(
             trace.hashes.output_rgba,
             canvas_debug_hash(&expected_output)
         );
+        assert_eq!(
+            trace.hashes.first_stage_rgba,
+            canvas_debug_hash(&expected_output)
+        );
+        assert_eq!(
+            trace.hashes.second_stage_rgba,
+            canvas_debug_hash(&expected_output)
+        );
+        assert_eq!(trace.alpha.input.nonzero_pixels, 1);
+        assert_eq!(trace.alpha.output.nonzero_pixels, 3);
+    }
+
+    #[test]
+    fn debug_trace_exposes_first_pass_for_two_axis_morphology() {
+        let mut input = Canvas::transparent(3, 3);
+        input.set_pixel(1, 1, [20, 40, 60, 255]);
+
+        let trace = minimax_debug_trace(
+            &input,
+            &json!({ "0001": 2, "0002": 1, "0003": 6, "0004": 1 }),
+            0.0,
+        );
+
+        assert_eq!(trace.params.stage_count, 1);
+        assert_eq!(trace.alpha.input.nonzero_pixels, 1);
+        assert_eq!(trace.alpha.first_pass.nonzero_pixels, 3);
+        assert_eq!(trace.alpha.first_stage.nonzero_pixels, 9);
+        assert_eq!(trace.alpha.output.nonzero_pixels, 9);
+        assert_ne!(trace.hashes.first_pass_rgba, trace.hashes.first_stage_rgba);
+    }
+
+    #[test]
+    fn debug_trace_reports_compound_stage_count_and_second_stage() {
+        let mut hole = Canvas::new(3, 1, [0, 0, 0, 255]);
+        hole.set_pixel(1, 0, [0, 0, 0, 0]);
+
+        let trace = minimax_debug_trace(
+            &hole,
+            &json!({ "0001": 4, "0002": 1, "0003": 6, "0004": 2 }),
+            0.0,
+        );
+
+        assert_eq!(trace.params.operation, "maximum_then_minimum");
+        assert_eq!(trace.params.stage_count, 2);
+        assert_eq!(trace.alpha.first_stage.nonzero_pixels, 3);
+        assert_eq!(trace.alpha.second_stage.nonzero_pixels, 3);
+        assert_eq!(trace.alpha.output.nonzero_pixels, 3);
     }
 }

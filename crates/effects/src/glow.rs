@@ -63,6 +63,10 @@ pub(crate) enum GlowBasedOn {
 
 impl GlowBasedOn {
     fn from_params(params: &Value) -> Self {
+        Self::resolve(params).based_on
+    }
+
+    fn resolve(params: &Value) -> GlowBasedOnResolution {
         for name in ["based_on", "basedOn", "Glow Based On", "0001"] {
             let Some(value) = param_value(params, name) else {
                 continue;
@@ -70,32 +74,60 @@ impl GlowBasedOn {
             if let Some(text) = value.as_str() {
                 let text = text.to_ascii_lowercase();
                 if text.contains("alpha") {
-                    return Self::AlphaChannel;
+                    return GlowBasedOnResolution {
+                        based_on: Self::AlphaChannel,
+                        param_source: name,
+                        raw_number: None,
+                    };
                 }
                 if text.contains("color")
                     || text.contains("rgb")
                     || text.contains("luma")
                     || text.contains("luminance")
                 {
-                    return Self::ColorChannels;
+                    return GlowBasedOnResolution {
+                        based_on: Self::ColorChannels,
+                        param_source: name,
+                        raw_number: None,
+                    };
                 }
                 if text.contains("both") || text.contains("combined") {
-                    return Self::Combined;
+                    return GlowBasedOnResolution {
+                        based_on: Self::Combined,
+                        param_source: name,
+                        raw_number: None,
+                    };
                 }
             }
             if let Some(number) = value
                 .as_i64()
                 .or_else(|| value.as_f64().map(|value| value.round() as i64))
             {
-                return match number {
+                let based_on = match number {
                     1 => Self::ColorChannels,
                     2 => Self::AlphaChannel,
                     _ => Self::Combined,
                 };
+                return GlowBasedOnResolution {
+                    based_on,
+                    param_source: name,
+                    raw_number: Some(number),
+                };
             }
         }
-        Self::Combined
+        GlowBasedOnResolution {
+            based_on: Self::Combined,
+            param_source: "default_absent",
+            raw_number: None,
+        }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct GlowBasedOnResolution {
+    based_on: GlowBasedOn,
+    param_source: &'static str,
+    raw_number: Option<i64>,
 }
 
 fn based_on_label(based_on: GlowBasedOn) -> &'static str {
@@ -109,6 +141,8 @@ fn based_on_label(based_on: GlowBasedOn) -> &'static str {
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlowDebugParams {
     pub based_on: &'static str,
+    pub based_on_param_source: &'static str,
+    pub based_on_raw_number: Option<i64>,
     pub threshold: f32,
     pub radius: f32,
     pub intensity: f32,
@@ -141,6 +175,7 @@ pub struct GlowDebugTrace {
 }
 
 pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugTrace {
+    let based_on_resolution = GlowBasedOn::resolve(params);
     let params = GlowParams::from_json(params, time);
     let threshold = params.threshold.clamp(0.0, 255.0);
     let kernel_radius = blur_radius(params.radius / 2.0);
@@ -156,6 +191,8 @@ pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugT
     GlowDebugTrace {
         params: GlowDebugParams {
             based_on: based_on_label(params.based_on),
+            based_on_param_source: based_on_resolution.param_source,
+            based_on_raw_number: based_on_resolution.raw_number,
             threshold: params.threshold,
             radius: params.radius,
             intensity: params.intensity,
@@ -311,6 +348,10 @@ mod tests {
         assert_eq!(combined.params.based_on, "combined");
         assert_eq!(color.params.based_on, "color_channels");
         assert_eq!(alpha.params.based_on, "alpha_channel");
+        assert_eq!(combined.params.based_on_param_source, "0001");
+        assert_eq!(color.params.based_on_param_source, "0001");
+        assert_eq!(color.params.based_on_raw_number, Some(1));
+        assert_eq!(alpha.params.based_on_raw_number, Some(2));
         assert_eq!(
             combined.hashes.threshold_source_rgba,
             canvas_debug_hash(&combined_source)
@@ -448,5 +489,16 @@ mod tests {
             trace.alpha.blurred_glow.nonzero_pixels >= trace.alpha.threshold_source.nonzero_pixels
         );
         assert!(trace.alpha.final_output.nonzero_pixels >= trace.alpha.input.nonzero_pixels);
+    }
+
+    #[test]
+    fn debug_trace_marks_absent_based_on_as_default_source() {
+        let input = Canvas::transparent(1, 1);
+
+        let trace = glow_debug_trace(&input, &json!({ "0002": 120, "0003": 0 }), 0.0);
+
+        assert_eq!(trace.params.based_on, "combined");
+        assert_eq!(trace.params.based_on_param_source, "default_absent");
+        assert_eq!(trace.params.based_on_raw_number, None);
     }
 }

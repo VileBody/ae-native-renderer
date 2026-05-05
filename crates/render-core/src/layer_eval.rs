@@ -1468,6 +1468,8 @@ fn effect_debug_trace_json(
                     "blur_input": "straight_rgba8_all_channels",
                     "blur_kernel": "separable_box_average",
                     "edge_policy": trace.params.edge_policy,
+                    "gf_src_alpha_option": "standard_options_unresolved_m19",
+                    "gf_dest_alpha_option": "standard_options_unresolved_m19",
                     "premult_unpremultiply_applied": false,
                     "diagnostic_only": true
                 },
@@ -1504,8 +1506,10 @@ fn effect_debug_trace_json(
                     "canvas_storage": "straight_rgba8",
                     "source_alpha": "input_alpha_channel",
                     "shadow_mask": "offset_alpha_scaled_by_opacity_and_color_alpha",
+                    "shadow_blur_alpha_option": "gf_set_blur_alpha_channel_only_confirmed",
                     "softness": "alpha_channel_only_box_blur_then_recolor",
                     "composite": "straight_rgba8_normal_source_over",
+                    "final_composite_policy": "native_approximation_pending_m19",
                     "premult_unpremultiply_applied": false,
                     "diagnostic_only": true
                 },
@@ -1529,6 +1533,9 @@ fn effect_debug_trace_json(
             let trace = effects::glow::glow_debug_trace(input, params, time);
             Some(json!({
                 "params": {
+                    "based_on": trace.params.based_on,
+                    "based_on_param_source": trace.params.based_on_param_source,
+                    "based_on_raw_number": trace.params.based_on_raw_number,
                     "threshold": trace.params.threshold,
                     "radius": trace.params.radius,
                     "intensity": trace.params.intensity,
@@ -1537,10 +1544,13 @@ fn effect_debug_trace_json(
                 "alpha_policy": {
                     "canvas_storage": "straight_rgba8",
                     "threshold_source": trace.params.based_on,
+                    "based_on_param_source": trace.params.based_on_param_source,
+                    "based_on_raw_number": trace.params.based_on_raw_number,
                     "blur_input": "thresholded_straight_rgba8",
                     "blur_kernel": "separable_box_average",
                     "intensity_scale": "straight_rgba8_channels",
                     "composite": "straight_rgba8_normal_source_over",
+                    "composite_policy": "native_approximation_pending_ir_composite_and_m19",
                     "premult_unpremultiply_applied": false,
                     "diagnostic_only": true
                 },
@@ -1571,11 +1581,33 @@ fn effect_debug_trace_json(
                     "direction": trace.params.direction,
                     "radius": trace.params.radius,
                     "kernel_radius": trace.params.kernel_radius,
-                    "dont_shrink_edges": trace.params.dont_shrink_edges
+                    "dont_shrink_edges": trace.params.dont_shrink_edges,
+                    "stage_count": trace.params.stage_count,
+                    "edge_policy": trace.params.edge_policy
+                },
+                "alpha_policy": {
+                    "canvas_storage": "straight_rgba8",
+                    "selected_channels": trace.params.channels,
+                    "unselected_channels": "preserved_from_stage_input",
+                    "edge_policy": trace.params.edge_policy,
+                    "dont_shrink_edges_parsed": trace.params.dont_shrink_edges,
+                    "dont_shrink_edges_applied": false,
+                    "premult_unpremultiply_applied": false,
+                    "diagnostic_only": true
                 },
                 "hashes": {
                     "input_rgba": debug_hash_hex(trace.hashes.input_rgba),
+                    "first_pass_rgba": debug_hash_hex(trace.hashes.first_pass_rgba),
+                    "first_stage_rgba": debug_hash_hex(trace.hashes.first_stage_rgba),
+                    "second_stage_rgba": debug_hash_hex(trace.hashes.second_stage_rgba),
                     "output_rgba": debug_hash_hex(trace.hashes.output_rgba)
+                },
+                "alpha_stats": {
+                    "input": alpha_stats_json(trace.alpha.input),
+                    "first_pass": alpha_stats_json(trace.alpha.first_pass),
+                    "first_stage": alpha_stats_json(trace.alpha.first_stage),
+                    "second_stage": alpha_stats_json(trace.alpha.second_stage),
+                    "output": alpha_stats_json(trace.alpha.output)
                 }
             }))
         }
@@ -1584,6 +1616,7 @@ fn effect_debug_trace_json(
             Some(json!({
                 "schema": "ae-native-renderer.geometry2-debug.v1",
                 "raw_params": debug.raw_params,
+                "property_mapping": geometry2_property_mapping_json(&debug.property_mapping),
                 "resolved": {
                     "anchor": debug.resolved.anchor,
                     "position": debug.resolved.position,
@@ -1644,6 +1677,19 @@ fn effect_debug_trace_json(
                     "complexity_octaves": debug.ae_wrapper.complexity_octaves,
                     "complexity_fraction": debug.ae_wrapper.complexity_fraction
                 },
+                "field_state": {
+                    "model": debug.field_state.model,
+                    "coordinate_space": debug.field_state.coordinate_space,
+                    "dispatch_path": debug.field_state.dispatch_path,
+                    "complexity_octaves": debug.field_state.complexity_octaves,
+                    "complexity_fraction": debug.field_state.complexity_fraction,
+                    "evolution_degrees": debug.field_state.evolution_degrees,
+                    "phase_radians": debug.field_state.phase_radians,
+                    "amplitude": debug.field_state.amplitude,
+                    "source_uv_convention": debug.field_state.source_uv_convention,
+                    "hash_coverage": debug.field_state.hash_coverage,
+                    "tuning_guardrail": debug.field_state.tuning_guardrail
+                },
                 "samples": debug.samples.iter().map(|sample| json!({
                     "output_xy": sample.output_xy,
                     "noise": sample.noise,
@@ -1661,6 +1707,30 @@ fn effect_debug_trace_json(
         }
         _ => None,
     }
+}
+
+fn geometry2_property_mapping_json(mapping: &effects::geometry::Geometry2PropertyMapping) -> Value {
+    json!({
+        "0003": geometry2_property_mapping_entry_json(&mapping.payload_0003),
+        "0004": geometry2_property_mapping_entry_json(&mapping.payload_0004),
+        "0005": geometry2_property_mapping_entry_json(&mapping.payload_0005),
+        "0008": geometry2_property_mapping_entry_json(&mapping.payload_0008),
+        "0009": geometry2_property_mapping_entry_json(&mapping.payload_0009)
+    })
+}
+
+fn geometry2_property_mapping_entry_json(
+    entry: &effects::geometry::Geometry2PropertyMappingEntry,
+) -> Value {
+    json!({
+        "payload_key": entry.payload_key,
+        "match_name": entry.match_name,
+        "ui_label": entry.ui_label,
+        "native_role": entry.native_role,
+        "present": entry.present,
+        "raw_value": entry.raw_value.clone(),
+        "note": entry.note
+    })
 }
 
 fn debug_hash_hex(hash: u64) -> String {
@@ -3802,6 +3872,10 @@ mod tests {
             blur["alpha_policy"]["canvas_storage"],
             json!("straight_rgba8")
         );
+        assert_eq!(
+            blur["alpha_policy"]["gf_src_alpha_option"],
+            json!("standard_options_unresolved_m19")
+        );
         assert_eq!(blur["params"]["iterations_applied"], json!(2));
         assert_eq!(blur["alpha_stats"]["input"]["nonzero_pixels"], json!(1));
         assert!(
@@ -3823,6 +3897,10 @@ mod tests {
             json!("alpha_channel_only_box_blur_then_recolor")
         );
         assert_eq!(
+            shadow["alpha_policy"]["shadow_blur_alpha_option"],
+            json!("gf_set_blur_alpha_channel_only_confirmed")
+        );
+        assert_eq!(
             shadow["alpha_stats"]["source_alpha"]["nonzero_pixels"],
             json!(1)
         );
@@ -3834,6 +3912,8 @@ mod tests {
             0.0,
         )
         .unwrap();
+        assert_eq!(glow["params"]["based_on"], json!("alpha_channel"));
+        assert_eq!(glow["params"]["based_on_param_source"], json!("0001"));
         assert_eq!(
             glow["alpha_policy"]["threshold_source"],
             json!("alpha_channel")
@@ -3842,6 +3922,24 @@ mod tests {
             glow["alpha_stats"]["threshold_source"]["nonzero_pixels"],
             json!(1)
         );
+
+        let minimax = effect_debug_trace_json(
+            "ADBE Minimax",
+            &input,
+            &json!({ "0001": 2, "0002": 1, "0003": 6, "0004": 1 }),
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(minimax["params"]["stage_count"], json!(1));
+        assert_eq!(minimax["alpha_policy"]["selected_channels"], json!("alpha"));
+        assert_eq!(
+            minimax["alpha_stats"]["first_pass"]["nonzero_pixels"],
+            json!(3)
+        );
+        assert!(minimax["hashes"]["first_pass_rgba"]
+            .as_str()
+            .unwrap()
+            .starts_with("0x"));
     }
 
     #[test]
@@ -4626,6 +4724,18 @@ mod tests {
         assert_eq!(geometry.trace["resolved"]["scale"], json!([110.0, 110.0]));
         assert_eq!(geometry.trace["resolved"]["rotation"], json!(92.0));
         assert_eq!(
+            geometry.trace["property_mapping"]["0003"]["native_role"],
+            json!("uniform_scale_fallback")
+        );
+        assert_eq!(
+            geometry.trace["property_mapping"]["0004"]["native_role"],
+            json!("scale_height")
+        );
+        assert_eq!(
+            geometry.trace["property_mapping"]["0008"]["native_role"],
+            json!("rotation_degrees")
+        );
+        assert_eq!(
             geometry.trace["sampler_mode"],
             "bilinear_transparent_out_of_bounds"
         );
@@ -4663,6 +4773,14 @@ mod tests {
         assert_eq!(
             turbulent.trace["ae_wrapper"]["kernel_path"],
             "TurbulentDisplaceFracAllKernel"
+        );
+        assert_eq!(
+            turbulent.trace["field_state"]["tuning_guardrail"],
+            "do_not_tune_from_final_png_only"
+        );
+        assert_eq!(
+            turbulent.trace["field_state"]["dispatch_path"],
+            turbulent.trace["ae_wrapper"]["kernel_path"]
         );
         assert!(turbulent.trace["field_hash"].as_str().unwrap().len() == 16);
         assert!(turbulent.trace["samples"].as_array().unwrap().len() > 0);

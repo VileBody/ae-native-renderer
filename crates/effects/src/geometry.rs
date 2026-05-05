@@ -37,6 +37,7 @@ pub(crate) struct Geometry2Params {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Geometry2DebugData {
     pub raw_params: Value,
+    pub property_mapping: Geometry2PropertyMapping,
     pub resolved: Geometry2ResolvedParams,
     pub forward_matrix: [[f32; 3]; 3],
     pub inverse_matrix: [[f32; 3]; 3],
@@ -44,6 +45,26 @@ pub struct Geometry2DebugData {
     pub sampler_mode: &'static str,
     pub edge_policy: &'static str,
     pub out_of_bounds_count: u32,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Geometry2PropertyMapping {
+    pub payload_0003: Geometry2PropertyMappingEntry,
+    pub payload_0004: Geometry2PropertyMappingEntry,
+    pub payload_0005: Geometry2PropertyMappingEntry,
+    pub payload_0008: Geometry2PropertyMappingEntry,
+    pub payload_0009: Geometry2PropertyMappingEntry,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Geometry2PropertyMappingEntry {
+    pub payload_key: &'static str,
+    pub match_name: &'static str,
+    pub ui_label: &'static str,
+    pub native_role: &'static str,
+    pub present: bool,
+    pub raw_value: Option<Value>,
+    pub note: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -220,6 +241,7 @@ pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geomet
 
     Geometry2DebugData {
         raw_params: params.clone(),
+        property_mapping: geometry2_property_mapping(params),
         resolved: transform.resolved(),
         forward_matrix: mapping.forward_matrix,
         inverse_matrix: mapping.inverse_matrix,
@@ -227,6 +249,71 @@ pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geomet
         sampler_mode: GEOMETRY2_SAMPLER_MODE,
         edge_policy: "transparent_out_of_bounds",
         out_of_bounds_count,
+    }
+}
+
+fn geometry2_property_mapping(params: &Value) -> Geometry2PropertyMapping {
+    Geometry2PropertyMapping {
+        payload_0003: geometry2_property_mapping_entry(
+            params,
+            "0003",
+            "ADBE Geometry2-0011",
+            "Uniform Scale",
+            "uniform_scale_fallback",
+            "Payload key 0003 is the uniform scale checkbox/value namespace; axis controls take priority when present.",
+        ),
+        payload_0004: geometry2_property_mapping_entry(
+            params,
+            "0004",
+            "ADBE Geometry2-0003",
+            "Scale Height",
+            "scale_height",
+            "Payload key 0004 is Scale Height, not Scale Width.",
+        ),
+        payload_0005: geometry2_property_mapping_entry(
+            params,
+            "0005",
+            "ADBE Geometry2-0004",
+            "Scale Width",
+            "scale_width",
+            "Payload key 0005 is Scale Width.",
+        ),
+        payload_0008: geometry2_property_mapping_entry(
+            params,
+            "0008",
+            "ADBE Geometry2-0007",
+            "Rotation",
+            "rotation_degrees",
+            "Payload key 0008 is Rotation; matchName ADBE Geometry2-0008 is the separate opacity slot.",
+        ),
+        payload_0009: geometry2_property_mapping_entry(
+            params,
+            "0009",
+            "ADBE Geometry2-0008",
+            "Opacity",
+            "opacity_not_applied_by_current_native_geometry2",
+            "Recorded so payload 0008 is not confused with matchName ADBE Geometry2-0008 opacity.",
+        ),
+    }
+}
+
+fn geometry2_property_mapping_entry(
+    params: &Value,
+    payload_key: &'static str,
+    match_name: &'static str,
+    ui_label: &'static str,
+    native_role: &'static str,
+    note: &'static str,
+) -> Geometry2PropertyMappingEntry {
+    let raw_value = params.get(payload_key).cloned();
+    Geometry2PropertyMappingEntry {
+        payload_key,
+        match_name,
+        ui_label,
+        native_role,
+        present: raw_value.is_some(),
+        raw_value,
+        note,
     }
 }
 
@@ -698,6 +785,11 @@ mod tests {
         let debug = geometry2_debug_data(&input, &params, 0.0);
 
         assert_eq!(debug.raw_params, params);
+        assert!(!debug.property_mapping.payload_0003.present);
+        assert_eq!(
+            debug.property_mapping.payload_0008.native_role,
+            "rotation_degrees"
+        );
         assert_eq!(
             debug.resolved,
             Geometry2ResolvedParams {
@@ -742,6 +834,59 @@ mod tests {
         assert_eq!(center.sample_xy, Some([0, 1]));
         assert_eq!(center.sample_rgba, Some([0, 0, 0, 0]));
         assert!(!center.out_of_bounds);
+    }
+
+    #[test]
+    fn debug_data_reports_high_risk_numbered_property_mapping() {
+        let input = Canvas::transparent(512, 512);
+        let params = json!({
+            "0003": 82,
+            "0004": 120,
+            "0008": 72,
+            "rotation": 17
+        });
+
+        let debug = geometry2_debug_data(&input, &params, 0.0);
+
+        assert_eq!(debug.property_mapping.payload_0003.payload_key, "0003");
+        assert_eq!(
+            debug.property_mapping.payload_0003.match_name,
+            "ADBE Geometry2-0011"
+        );
+        assert_eq!(
+            debug.property_mapping.payload_0003.native_role,
+            "uniform_scale_fallback"
+        );
+        assert_eq!(
+            debug.property_mapping.payload_0003.raw_value,
+            Some(json!(82))
+        );
+        assert_eq!(
+            debug.property_mapping.payload_0004.match_name,
+            "ADBE Geometry2-0003"
+        );
+        assert_eq!(
+            debug.property_mapping.payload_0004.native_role,
+            "scale_height"
+        );
+        assert_eq!(
+            debug.property_mapping.payload_0008.match_name,
+            "ADBE Geometry2-0007"
+        );
+        assert_eq!(
+            debug.property_mapping.payload_0008.native_role,
+            "rotation_degrees"
+        );
+        assert!(debug
+            .property_mapping
+            .payload_0009
+            .note
+            .contains("not confused"));
+        assert_eq!(
+            debug.property_mapping.payload_0009.match_name,
+            "ADBE Geometry2-0008"
+        );
+        assert!(!debug.property_mapping.payload_0009.present);
     }
 
     #[test]

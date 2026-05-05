@@ -44,6 +44,7 @@ pub struct TurbulentDisplaceFieldTelemetry {
     pub raw_params: Value,
     pub resolved: TurbulentDisplaceResolvedParams,
     pub ae_wrapper: TurbulentDisplaceAeWrapperTelemetry,
+    pub field_state: TurbulentDisplaceFieldStateTelemetry,
     pub samples: Vec<TurbulentDisplaceFieldSample>,
     pub field_hash: u64,
     pub sampler_mode: &'static str,
@@ -68,6 +69,21 @@ pub struct TurbulentDisplaceAeWrapperTelemetry {
     pub evolution_fixed16: i32,
     pub complexity_octaves: u32,
     pub complexity_fraction: f32,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TurbulentDisplaceFieldStateTelemetry {
+    pub model: &'static str,
+    pub coordinate_space: &'static str,
+    pub dispatch_path: &'static str,
+    pub complexity_octaves: u32,
+    pub complexity_fraction: f32,
+    pub evolution_degrees: f32,
+    pub phase_radians: f32,
+    pub amplitude: f32,
+    pub source_uv_convention: &'static str,
+    pub hash_coverage: &'static str,
+    pub tuning_guardrail: &'static str,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -204,6 +220,7 @@ pub fn turbulent_displace_field_telemetry(
     let raw = TurbulentDisplaceParams::from_json(params, time);
     let resolved = raw.resolved();
     let ae_wrapper = ae_wrapper_telemetry(input, raw);
+    let field_state = field_state_telemetry(resolved, ae_wrapper);
     let samples = turbulent_probe_points(input)
         .into_iter()
         .map(|[x, y]| field_sample(input, resolved, x, y))
@@ -214,11 +231,31 @@ pub fn turbulent_displace_field_telemetry(
         raw_params: params.clone(),
         resolved,
         ae_wrapper,
+        field_state,
         samples,
         field_hash,
         sampler_mode: TURBULENT_SAMPLER_MODE,
         edge_policy: edge_policy_label(resolved),
         out_of_bounds_count,
+    }
+}
+
+fn field_state_telemetry(
+    resolved: TurbulentDisplaceResolvedParams,
+    ae_wrapper: TurbulentDisplaceAeWrapperTelemetry,
+) -> TurbulentDisplaceFieldStateTelemetry {
+    TurbulentDisplaceFieldStateTelemetry {
+        model: "native_sine_turbulence_approximation",
+        coordinate_space: "output_pixel_to_source_uv",
+        dispatch_path: ae_wrapper.kernel_path,
+        complexity_octaves: ae_wrapper.complexity_octaves,
+        complexity_fraction: ae_wrapper.complexity_fraction,
+        evolution_degrees: resolved.evolution,
+        phase_radians: resolved.phase_radians,
+        amplitude: resolved.amplitude,
+        source_uv_convention: "source_uv = output_xy + displacement",
+        hash_coverage: "full_frame_displacement_source_uv_sample_xy_oob",
+        tuning_guardrail: "do_not_tune_from_final_png_only",
     }
 }
 
@@ -628,6 +665,25 @@ mod tests {
         assert_eq!(telemetry.ae_wrapper.evolution_fixed16, 90 * 65_536);
         assert_eq!(telemetry.ae_wrapper.complexity_octaves, 2);
         assert_close(telemetry.ae_wrapper.complexity_fraction, 0.0);
+        assert_eq!(
+            telemetry.field_state.model,
+            "native_sine_turbulence_approximation"
+        );
+        assert_eq!(
+            telemetry.field_state.coordinate_space,
+            "output_pixel_to_source_uv"
+        );
+        assert_eq!(
+            telemetry.field_state.dispatch_path,
+            "TurbulentDisplaceFracAllKernel"
+        );
+        assert_eq!(telemetry.field_state.complexity_octaves, 2);
+        assert_close(telemetry.field_state.complexity_fraction, 0.0);
+        assert_eq!(telemetry.field_state.evolution_degrees, 90.0);
+        assert_eq!(
+            telemetry.field_state.tuning_guardrail,
+            "do_not_tune_from_final_png_only"
+        );
         assert_eq!(telemetry.sampler_mode, "nearest_round");
         assert_eq!(telemetry.edge_policy, "clamp_edges_pinning");
         assert_eq!(telemetry.samples.len(), 9);
@@ -809,6 +865,10 @@ mod tests {
 
         assert_eq!(
             telemetry.ae_wrapper.kernel_path,
+            "TurbulentDisplaceFrac1DKernel"
+        );
+        assert_eq!(
+            telemetry.field_state.dispatch_path,
             "TurbulentDisplaceFrac1DKernel"
         );
         assert_eq!(telemetry.ae_wrapper.inferred_internal_displacement_mode, 11);

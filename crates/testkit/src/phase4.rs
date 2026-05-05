@@ -10,6 +10,7 @@ pub const GEOMETRY2_CASE: Phase4Case = Phase4Case {
     frames: &[0],
     checkpoints: &[
         "params",
+        "property_mapping",
         "matrix",
         "inverse_matrix",
         "sample_uv",
@@ -26,6 +27,8 @@ pub const TURBULENT_DISPLACE_CASE: Phase4Case = Phase4Case {
         "dx",
         "dy",
         "displacement_uv",
+        "field_state",
+        "field_hash",
         "sampled_source",
         "final_pixels",
     ],
@@ -149,7 +152,10 @@ mod tests {
         assert!(passport.has_dimension(Dimension::AnimatedParams));
         assert!(passport.has_discontinuity(Discontinuity::SamplerRounding));
         assert!(passport.has_discontinuity(Discontinuity::EdgeSampling));
-        assert_passport_debugs(&passport, &["matrix", "inverse_matrix", "sample_uv"]);
+        assert_passport_debugs(
+            &passport,
+            &["property_mapping", "matrix", "inverse_matrix", "sample_uv"],
+        );
     }
 
     #[test]
@@ -162,7 +168,18 @@ mod tests {
         assert!(passport.has_dimension(Dimension::Temporal));
         assert!(passport.has_discontinuity(Discontinuity::ComplexityOctaveBoundary));
         assert!(passport.has_discontinuity(Discontinuity::SeedChange));
-        assert_passport_debugs(&passport, &["noise", "dx", "dy", "uv", "sampled_source"]);
+        assert_passport_debugs(
+            &passport,
+            &[
+                "noise",
+                "dx",
+                "dy",
+                "uv",
+                "field_state",
+                "field_hash",
+                "sampled_source",
+            ],
+        );
     }
 
     #[test]

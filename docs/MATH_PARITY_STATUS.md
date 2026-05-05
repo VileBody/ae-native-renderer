@@ -313,6 +313,29 @@ and Step 5 gates per module. The current entry order is:
    `M17` collapse, and `M18` motion blur only through their packet-specific
    sidecars and blockers.
 
+### Step 5 Reverse Evidence Gates
+
+The first Step 5 implementation pass added evidence gates that formula patches
+must cite before claiming "reverse implemented" readiness:
+
+```text
+docs/phase_reports/STEP5_REVERSE_IMPLEMENTATION_READINESS_20260505.md
+target/ae_agents/step5_reverse_evidence/report.json
+target/ae_agents/step5_reverse_evidence/warps_fields_evidence_check.json
+```
+
+Current gate results:
+
+- `M19`: required alpha/composite cases `PRI_010`, `CMP_010`, `STK_010`, and
+  `STK_020` measured successfully, but premult/straight remains diagnostic-only.
+- `M15`/`M16`/`M18`: temporal contract reports pass for `TMP_010`, `TMP_020`,
+  `TMP_030`, and `STK_030`.
+- `M12`/`M14`: isolated warps/fields evidence check passes for `EFF_040`,
+  `EFF_060`, and `STK_030`.
+- `M05`-`M09`/text-side `M17`: text-passport diagnostics now separate sourceRect
+  layout tuning from unresolved CoolType raster, selector/expression, and
+  collapse refs.
+
 ## Template Inventory
 
 | Template | Observed math/features | Highest-risk parity areas |

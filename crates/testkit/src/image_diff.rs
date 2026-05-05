@@ -63,6 +63,48 @@ pub const RGB_ALPHA_METRIC_POLICY: RgbAlphaMetricPolicy = RgbAlphaMetricPolicy {
     },
 };
 
+pub const M19_ALPHA_COMPOSITE_GATE_CASES: &[&str] = &["PRI_010", "CMP_010", "STK_010", "STK_020"];
+
+#[derive(Debug, Clone, Copy, Serialize)]
+pub struct M19AlphaCompositeGatePolicy {
+    pub schema: &'static str,
+    pub required_cases: &'static [&'static str],
+    pub primary_visible_metric: &'static str,
+    pub alpha_metric: &'static str,
+    pub compatibility_metric: &'static str,
+    pub background_metric: &'static str,
+    pub raw_rgba_tuning_status: &'static str,
+    pub premult_status: &'static str,
+    pub reverse_readiness_scope: &'static str,
+}
+
+pub const M19_ALPHA_COMPOSITE_GATE_POLICY: M19AlphaCompositeGatePolicy =
+    M19AlphaCompositeGatePolicy {
+        schema: "m19.alpha_composite_gate.v1",
+        required_cases: M19_ALPHA_COMPOSITE_GATE_CASES,
+        primary_visible_metric: "rgb_straight_source_over_ae_background",
+        alpha_metric: "alpha",
+        compatibility_metric: "rgba",
+        background_metric: "background_alpha_normalized",
+        raw_rgba_tuning_status: "compatibility_only_not_effect_tuning",
+        premult_status: "diagnostic_only_premult_contract_unlocked",
+        reverse_readiness_scope: "PRI_010/CMP_010/STK_010/STK_020 must be measured before M19-dependent effect tuning claims reverse implemented readiness",
+    };
+
+pub fn is_m19_alpha_composite_gate_case(case_id: &str) -> bool {
+    M19_ALPHA_COMPOSITE_GATE_CASES.contains(&case_id)
+}
+
+pub fn m19_alpha_composite_gate_role(case_id: &str) -> Option<&'static str> {
+    match case_id {
+        "PRI_010" => Some("primitive_source_alpha_layer_opacity_background_rgb"),
+        "CMP_010" => Some("premult_probe_source_over_projection_sampling_audit"),
+        "STK_010" => Some("drop_shadow_stack_alpha_composite_regression"),
+        "STK_020" => Some("blur_minimax_stack_alpha_order_regression"),
+        _ => None,
+    }
+}
+
 pub fn diff_rgba8(a: &[u8], b: &[u8]) -> DiffMetrics {
     diff_rgba8_channels(a, b, &[0, 1, 2, 3])
 }
@@ -342,8 +384,7 @@ mod tests {
         let ae = [5, 5, 6, 0, 20, 30, 40, 128];
 
         let raw = diff_rgba8(&native, &ae);
-        let normalized =
-            diff_rgba8_background_alpha_normalized(&native, &ae, [5, 5, 6], [5, 5, 6]);
+        let normalized = diff_rgba8_background_alpha_normalized(&native, &ae, [5, 5, 6], [5, 5, 6]);
 
         assert_eq!(raw.max_abs_diff, 255);
         assert_eq!(normalized.max_abs_diff, 0);
@@ -401,8 +442,7 @@ mod tests {
         let straight = [255, 0, 0, 128];
         let premultiplied_looking = [128, 0, 0, 128];
 
-        let over_black =
-            diff_rgb8_over_background(&straight, &premultiplied_looking, [0, 0, 0]);
+        let over_black = diff_rgb8_over_background(&straight, &premultiplied_looking, [0, 0, 0]);
 
         assert_eq!(over_black.max_abs_diff, 64);
         assert_eq!(over_black.changed_pixels, 1);
@@ -425,12 +465,34 @@ mod tests {
     #[test]
     fn rgb_alpha_metric_policy_flags_are_explicit() {
         assert!(RGB_ALPHA_METRIC_POLICY.flags.alpha_reported_separately);
-        assert!(RGB_ALPHA_METRIC_POLICY
-            .flags
-            .rgb_under_alpha_policy_uses_reference_background);
-        assert!(!RGB_ALPHA_METRIC_POLICY
-            .flags
-            .premult_unpremultiply_applied);
+        assert!(
+            RGB_ALPHA_METRIC_POLICY
+                .flags
+                .rgb_under_alpha_policy_uses_reference_background
+        );
+        assert!(!RGB_ALPHA_METRIC_POLICY.flags.premult_unpremultiply_applied);
         assert!(!RGB_ALPHA_METRIC_POLICY.flags.premult_contract_locked);
+    }
+
+    #[test]
+    fn m19_alpha_composite_gate_policy_names_required_cases_and_metrics() {
+        assert_eq!(
+            M19_ALPHA_COMPOSITE_GATE_POLICY.required_cases,
+            ["PRI_010", "CMP_010", "STK_010", "STK_020"]
+        );
+        assert_eq!(
+            M19_ALPHA_COMPOSITE_GATE_POLICY.primary_visible_metric,
+            "rgb_straight_source_over_ae_background"
+        );
+        assert_eq!(
+            M19_ALPHA_COMPOSITE_GATE_POLICY.raw_rgba_tuning_status,
+            "compatibility_only_not_effect_tuning"
+        );
+        assert!(is_m19_alpha_composite_gate_case("CMP_010"));
+        assert_eq!(
+            m19_alpha_composite_gate_role("STK_020"),
+            Some("blur_minimax_stack_alpha_order_regression")
+        );
+        assert_eq!(m19_alpha_composite_gate_role("EFF_010"), None);
     }
 }

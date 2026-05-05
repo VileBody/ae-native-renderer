@@ -153,6 +153,7 @@ pub fn run_pack(options: RunOptions) -> Result<bool> {
             "failures": failures,
             "elapsed_ms": elapsed_ms(started)
         },
+        "m19_alpha_composite_gate": m19_alpha_composite_gate_report_json(&case_reports),
         "cases": case_reports
     });
     fs::write(
@@ -259,6 +260,7 @@ fn run_case(
     let mut rgb_over_ae_background_summary = MetricsAccumulator::new(3);
     let mut background_corner_alpha_diff_frames = Vec::new();
     let mut text_passport_frame_reports = Vec::new();
+    let mut temporal_contract_frame_reports = Vec::new();
 
     for frame in &case.frames_to_compare {
         let time = *frame as f64 / recipe.scene.composition.fps;
@@ -300,7 +302,8 @@ fn run_case(
         let trace_sidecars = write_trace_sidecars(&case_dir, &render_trace)?;
         let text_passport_report =
             compare_frame_text_passport(pack_root, case, *frame, &render_trace)?;
-        write_warps_fields_debug_sidecars(case, &recipe.scene, *frame, time, &case_dir)?;
+        let warps_fields_debug =
+            write_warps_fields_debug_sidecars(case, &recipe.scene, *frame, time, &case_dir)?;
         native_canvas.save_png(&native_path)?;
         fs::copy(&ae_source_path, &ae_path)
             .with_context(|| format!("copying AE golden {}", ae_source_path.display()))?;
@@ -358,6 +361,8 @@ fn run_case(
         if background_corner.rgb_matches_alpha_differs {
             background_corner_alpha_diff_frames.push(*frame);
         }
+        let temporal_contract_report =
+            temporal_contract_frame_report(case, *frame, time, &render_trace, split_metrics.rgba);
 
         rgba_summary.push(split_metrics.rgba);
         rgb_summary.push(split_metrics.rgb);
@@ -401,12 +406,16 @@ fn run_case(
                 rgb_under_alpha_policy_metrics,
                 background_corner.rgb_matches_alpha_differs,
             ),
+            "m19_alpha_composite_gate": m19_alpha_composite_gate_case_json(case),
             "background_corner": background_corner.to_json(),
             "effects_debug": effects_debug,
+            "warps_fields_debug": warps_fields_debug,
             "trace_sidecars": trace_sidecars,
+            "temporal_contract": temporal_contract_frame_ref(&temporal_contract_report),
             "text_passport": text_passport_frame_ref(&text_passport_report)
         }));
         text_passport_frame_reports.push(text_passport_report);
+        temporal_contract_frame_reports.push(temporal_contract_report);
     }
 
     let rgba_metrics = rgba_summary.metrics();
@@ -420,6 +429,8 @@ fn run_case(
     let background_corner_summary =
         background_corner_summary_json(&background_corner_alpha_diff_frames);
     let text_passport_summary = text_passport_summary_json(&text_passport_frame_reports);
+    let temporal_contract_summary =
+        temporal_contract_summary_json(&temporal_contract_frame_reports);
     let text_passport_report_path = case_dir.join("text_passport_comparison.json");
     let text_passport_report = json!({
         "schema": "ae-native-renderer.text-passport-comparison.v1",
@@ -432,21 +443,38 @@ fn run_case(
         &text_passport_report_path,
         serde_json::to_string_pretty(&text_passport_report)?,
     )?;
+    let temporal_contract_report_path = case_dir.join("temporal_contract.json");
+    let temporal_contract_report = json!({
+        "schema": "ae-native-renderer.temporal-contract-report.v1",
+        "case": case.id,
+        "summary": temporal_contract_summary,
+        "frames": temporal_contract_frame_reports
+    });
+    fs::write(
+        &temporal_contract_report_path,
+        serde_json::to_string_pretty(&temporal_contract_report)?,
+    )?;
     let threshold_ok = threshold_mean.map_or(true, |limit| rgba_metrics.mean_abs_diff <= limit)
         && threshold_max.map_or(true, |limit| rgba_metrics.max_abs_diff <= limit);
+    let temporal_contract_ok = temporal_contract_report["summary"]["ok"]
+        .as_bool()
+        .unwrap_or(true);
+    let case_ok = threshold_ok && temporal_contract_ok;
     let status = if threshold_mean.is_some() || threshold_max.is_some() {
-        if threshold_ok {
+        if case_ok {
             "pass"
         } else {
             "fail"
         }
+    } else if !temporal_contract_ok {
+        "fail"
     } else {
         "measured"
     };
     let metrics = json!({
         "case": case.id,
         "status": status,
-        "ok": threshold_ok,
+        "ok": case_ok,
         "metric_contract": testkit::RGB_ALPHA_METRIC_POLICY,
         "thresholds": {
             "mean_abs_diff": threshold_mean,
@@ -481,7 +509,9 @@ fn run_case(
                 rgb_under_alpha_policy_metrics,
                 !background_corner_alpha_diff_frames.is_empty(),
             ),
+            "m19_alpha_composite_gate": m19_alpha_composite_gate_case_json(case),
             "background_corner": background_corner_summary,
+            "temporal_contract": temporal_contract_report["summary"].clone(),
             "text_passport": text_passport_report["summary"].clone(),
             "elapsed_ms": elapsed_ms(case_started)
         },
@@ -498,12 +528,13 @@ fn run_case(
         "modules": case.modules,
         "assets": case.assets,
         "status": status,
-        "ok": threshold_ok,
+        "ok": case_ok,
         "scene": case_dir.join("scene.json").display().to_string(),
         "metrics": case_dir.join("metrics.json").display().to_string(),
         "native_dir": native_dir.display().to_string(),
         "ae_dir": ae_dir.display().to_string(),
         "diff_dir": diff_dir.display().to_string(),
+        "temporal_contract": temporal_contract_report_path.display().to_string(),
         "text_passport": text_passport_report_path.display().to_string(),
         "summary": metrics["summary"].clone(),
         "notes": recipe.notes
@@ -640,6 +671,534 @@ fn alpha_policy_diagnostics_json(
     })
 }
 
+fn m19_alpha_composite_gate_case_json(case: &PackCase) -> Value {
+    let participates = testkit::is_m19_alpha_composite_gate_case(&case.id);
+    json!({
+        "schema": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.schema,
+        "case": case.id,
+        "participates": participates,
+        "role": testkit::m19_alpha_composite_gate_role(&case.id),
+        "required_cases": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.required_cases,
+        "policy": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY,
+        "metric_contract_schema": testkit::RGB_ALPHA_METRIC_POLICY.schema,
+        "primary_visible_metric": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.primary_visible_metric,
+        "alpha_metric": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.alpha_metric,
+        "background_metric": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.background_metric,
+        "compatibility_metric": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.compatibility_metric,
+        "raw_rgba_tuning_allowed": false,
+        "premult_contract_locked": testkit::RGB_ALPHA_METRIC_POLICY.flags.premult_contract_locked,
+        "diagnostic_only": testkit::RGB_ALPHA_METRIC_POLICY.flags.diagnostic_only,
+        "reverse_readiness_status": if participates {
+            "gate_case_measured_diagnostic_only"
+        } else {
+            "not_a_required_m19_alpha_composite_gate_case"
+        },
+        "guardrail": "Use rgb_straight_source_over_ae_background plus alpha/background diagnostics for M19-dependent tuning; raw rgba is compatibility-only."
+    })
+}
+
+fn m19_alpha_composite_gate_report_json(case_reports: &[Value]) -> Value {
+    let mut measured_required_cases = Vec::new();
+    let mut missing_required_cases = Vec::new();
+    let mut failing_required_cases = Vec::new();
+    let mut recipe_error_required_cases = Vec::new();
+
+    for &case_id in testkit::M19_ALPHA_COMPOSITE_GATE_CASES {
+        match case_reports
+            .iter()
+            .find(|report| report.get("case").and_then(Value::as_str) == Some(case_id))
+        {
+            Some(report)
+                if report.get("status").and_then(Value::as_str) == Some("recipe_error") =>
+            {
+                recipe_error_required_cases.push(case_id);
+            }
+            Some(report) => {
+                measured_required_cases.push(case_id);
+                if report.get("ok").and_then(Value::as_bool) != Some(true) {
+                    failing_required_cases.push(case_id);
+                }
+            }
+            None => missing_required_cases.push(case_id),
+        }
+    }
+
+    let complete = missing_required_cases.is_empty() && recipe_error_required_cases.is_empty();
+    let required_cases_ok = complete && failing_required_cases.is_empty();
+    json!({
+        "schema": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.schema,
+        "policy": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY,
+        "metric_contract_schema": testkit::RGB_ALPHA_METRIC_POLICY.schema,
+        "required_cases": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.required_cases,
+        "measured_required_cases": measured_required_cases,
+        "missing_required_cases": missing_required_cases,
+        "recipe_error_required_cases": recipe_error_required_cases,
+        "failing_required_cases": failing_required_cases,
+        "complete": complete,
+        "required_cases_ok": required_cases_ok,
+        "primary_visible_metric": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.primary_visible_metric,
+        "alpha_metric": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.alpha_metric,
+        "background_metric": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.background_metric,
+        "compatibility_metric": testkit::M19_ALPHA_COMPOSITE_GATE_POLICY.compatibility_metric,
+        "raw_rgba_tuning_allowed": false,
+        "premult_contract_locked": testkit::RGB_ALPHA_METRIC_POLICY.flags.premult_contract_locked,
+        "diagnostic_only": testkit::RGB_ALPHA_METRIC_POLICY.flags.diagnostic_only,
+        "reverse_readiness_status": if required_cases_ok {
+            "alpha_composite_gate_complete_diagnostic_only"
+        } else {
+            "blocked_until_required_cases_are_measured_and_ok"
+        },
+        "remaining_blockers": [
+            "premult/straight contract is still diagnostic-only",
+            "raw rgba remains compatibility-only for alpha-sensitive tuning"
+        ],
+        "guardrail": "M19-dependent Step 5 patches must cite this gate and tune visible math against rgb_straight_source_over_ae_background plus alpha/background diagnostics, not raw rgba alone."
+    })
+}
+
+const TEMPORAL_CONTRACT_EPSILON: f64 = 1.0e-9;
+
+fn temporal_contract_frame_report(
+    case: &PackCase,
+    frame: u32,
+    time: f64,
+    trace: &render_core::layer_eval::FrameRenderTrace,
+    rgba_metrics: testkit::DiffMetrics,
+) -> Value {
+    let mut checks = Vec::new();
+    let contract = match case.id.as_str() {
+        "TMP_010" => {
+            checks.extend(tmp_source_time_contract_checks(trace, rgba_metrics));
+            Some("m02.source-time-passport.v1")
+        }
+        "TMP_020" => {
+            checks.extend(tmp_posterize_contract_checks(trace, rgba_metrics));
+            Some("m15.posterize-numbered-source-exact.v1")
+        }
+        "STK_030" => {
+            checks.extend(stk_adjustment_posterize_contract_checks(trace));
+            Some("m15.m16.adjustment-posterize-bucket-live-split.v1")
+        }
+        "TMP_030" => {
+            checks.extend(motion_blur_contract_checks(trace));
+            Some("m18.motion-blur-sampling-passport.v1")
+        }
+        _ => None,
+    };
+    let applicable = contract.is_some();
+    let ok = checks
+        .iter()
+        .all(|check| check.get("ok").and_then(Value::as_bool) == Some(true));
+
+    json!({
+        "schema": "ae-native-renderer.temporal-contract-frame.v1",
+        "case": case.id,
+        "frame": frame,
+        "time": time,
+        "contract": contract,
+        "applicable": applicable,
+        "status": if applicable { "checked" } else { "not_applicable" },
+        "ok": if applicable { json!(ok) } else { Value::Null },
+        "checks": checks
+    })
+}
+
+fn tmp_source_time_contract_checks(
+    trace: &render_core::layer_eval::FrameRenderTrace,
+    rgba_metrics: testkit::DiffMetrics,
+) -> Vec<Value> {
+    let source_records = trace
+        .temporal
+        .iter()
+        .filter(|record| record.source_id.as_deref() == Some("numbered_frames"))
+        .collect::<Vec<_>>();
+    let source_telemetry_required = !trace.temporal.is_empty();
+    vec![
+        temporal_check(
+            "tmp_010_native_matches_ae_exact",
+            diff_metrics_are_exact(rgba_metrics),
+            json!({
+                "mean_abs_diff": rgba_metrics.mean_abs_diff,
+                "max_abs_diff": rgba_metrics.max_abs_diff,
+                "changed_pixels": rgba_metrics.changed_pixels,
+                "guardrail": "M02 numbered-frame sampling must stay exact before source-time formula tuning."
+            }),
+        ),
+        temporal_check(
+            "tmp_010_source_frame_telemetry_present",
+            !source_telemetry_required || !source_records.is_empty(),
+            json!({
+                "records": source_records.len(),
+                "required": source_telemetry_required
+            }),
+        ),
+        temporal_check(
+            "tmp_010_source_frame_quantization_self_consistent",
+            !source_telemetry_required
+                || !source_records.is_empty()
+                    && source_records
+                        .iter()
+                        .all(|record| source_frame_quantization_record_ok(record)),
+            json!({
+                "records": source_records.len(),
+                "policy": "floor(source_time*frame_rate+1e-9)"
+            }),
+        ),
+    ]
+}
+
+fn tmp_posterize_contract_checks(
+    trace: &render_core::layer_eval::FrameRenderTrace,
+    rgba_metrics: testkit::DiffMetrics,
+) -> Vec<Value> {
+    let posterized_records = trace
+        .temporal
+        .iter()
+        .filter(|record| record.posterize.is_some())
+        .collect::<Vec<_>>();
+    vec![
+        temporal_check(
+            "tmp_020_native_matches_ae_exact",
+            diff_metrics_are_exact(rgba_metrics),
+            json!({
+                "mean_abs_diff": rgba_metrics.mean_abs_diff,
+                "max_abs_diff": rgba_metrics.max_abs_diff,
+                "changed_pixels": rgba_metrics.changed_pixels,
+                "guardrail": "TMP_020 is the isolated M15 pixel gate; if it drifts, do not tune STK_030 final pixels."
+            }),
+        ),
+        temporal_check(
+            "tmp_020_posterize_telemetry_present",
+            !posterized_records.is_empty(),
+            json!({ "records": posterized_records.len() }),
+        ),
+        temporal_check(
+            "tmp_020_bucket_time_equals_layer_posterized_time",
+            !posterized_records.is_empty()
+                && posterized_records.iter().all(|record| {
+                    record.posterize.is_some_and(|posterize| {
+                        temporal_time_close(record.posterized_time, posterize.bucket_time)
+                    })
+                }),
+            json!({
+                "records": posterized_records.len(),
+                "contract": "Posterize Time selects bucket time before layer/source sampling."
+            }),
+        ),
+        temporal_check(
+            "tmp_020_source_time_uses_posterized_layer_time",
+            !posterized_records.is_empty()
+                && posterized_records.iter().all(|record| {
+                    source_time_matches_posterized_layer_time(record)
+                        && source_frame_quantization_record_ok(record)
+                }),
+            json!({
+                "records": posterized_records.len(),
+                "contract": "source_time = source_start + (posterized_time - layer_start), clamped at zero"
+            }),
+        ),
+    ]
+}
+
+fn stk_adjustment_posterize_contract_checks(
+    trace: &render_core::layer_eval::FrameRenderTrace,
+) -> Vec<Value> {
+    let expected_order = [
+        "ADBE Geometry2",
+        "ADBE Posterize Time",
+        "ADBE Minimax",
+        "ADBE Turbulent Displace",
+    ];
+    let actual_order = trace
+        .adjustment_effects
+        .iter()
+        .map(|record| record.match_name.as_str())
+        .collect::<Vec<_>>();
+    let posterize_trace = trace
+        .adjustment_effects
+        .iter()
+        .find(|record| record.match_name == "ADBE Posterize Time");
+    let posterize_index = posterize_trace.map(|record| record.effect_index);
+    let bucket_time = posterize_trace.and_then(|record| record.posterize.map(|p| p.bucket_time));
+    let adjustment_temporal = trace
+        .temporal
+        .iter()
+        .filter(|record| record.event == "temporal.adjustment_layer_time")
+        .collect::<Vec<_>>();
+
+    let lower_stack_uses_bucket = bucket_time.is_some_and(|bucket_time| {
+        !trace.adjustment_effects.is_empty()
+            && trace
+                .adjustment_effects
+                .iter()
+                .all(|record| temporal_time_close(record.lower_stack_time, bucket_time))
+    });
+    let pre_posterize_uses_bucket =
+        posterize_index
+            .zip(bucket_time)
+            .is_some_and(|(posterize_index, bucket_time)| {
+                trace
+                    .adjustment_effects
+                    .iter()
+                    .filter(|record| record.effect_index <= posterize_index)
+                    .all(|record| temporal_time_close(record.param_time, bucket_time))
+            });
+    let downstream_uses_live_time = posterize_index.is_some_and(|posterize_index| {
+        trace
+            .adjustment_effects
+            .iter()
+            .filter(|record| record.effect_index > posterize_index)
+            .all(|record| temporal_time_close(record.param_time, record.comp_time))
+    });
+    let adjustment_temporal_uses_bucket = bucket_time.is_some_and(|bucket_time| {
+        !adjustment_temporal.is_empty()
+            && adjustment_temporal.iter().all(|record| {
+                record
+                    .adjustment_lower_stack_time
+                    .is_some_and(|lower_stack_time| {
+                        temporal_time_close(lower_stack_time, bucket_time)
+                    })
+                    && temporal_time_close(record.posterized_time, bucket_time)
+            })
+    });
+    let hashes_present = !trace.adjustment_effects.is_empty()
+        && trace
+            .adjustment_effects
+            .iter()
+            .all(|record| !record.input_hash.is_empty() && !record.output_hash.is_empty());
+
+    vec![
+        temporal_check(
+            "stk_030_adjustment_effect_order_locked",
+            actual_order == expected_order,
+            json!({ "expected": expected_order, "actual": actual_order }),
+        ),
+        temporal_check(
+            "stk_030_posterize_bucket_recorded",
+            posterize_trace
+                .and_then(|record| record.posterize)
+                .is_some(),
+            json!({
+                "posterize_index": posterize_index,
+                "bucket_time": bucket_time
+            }),
+        ),
+        temporal_check(
+            "stk_030_lower_stack_time_is_bucket_time",
+            lower_stack_uses_bucket,
+            json!({
+                "bucket_time": bucket_time,
+                "records": trace.adjustment_effects.len(),
+                "contract": "The input/lower stack is re-rendered at the Posterize bucket time."
+            }),
+        ),
+        temporal_check(
+            "stk_030_pre_posterize_params_use_bucket_time",
+            pre_posterize_uses_bucket,
+            json!({
+                "posterize_index": posterize_index,
+                "contract": "Effects up to and including Posterize observe the bucket time."
+            }),
+        ),
+        temporal_check(
+            "stk_030_downstream_params_use_live_comp_time",
+            downstream_uses_live_time,
+            json!({
+                "posterize_index": posterize_index,
+                "contract": "Effects after Posterize use live comp time while consuming bucketed input."
+            }),
+        ),
+        temporal_check(
+            "stk_030_adjustment_temporal_sidecar_uses_bucket_time",
+            adjustment_temporal_uses_bucket,
+            json!({
+                "records": adjustment_temporal.len(),
+                "bucket_time": bucket_time
+            }),
+        ),
+        temporal_check(
+            "stk_030_adjustment_hashes_present",
+            hashes_present,
+            json!({ "records": trace.adjustment_effects.len() }),
+        ),
+    ]
+}
+
+fn motion_blur_contract_checks(trace: &render_core::layer_eval::FrameRenderTrace) -> Vec<Value> {
+    let sample_count_matches = !trace.motion_blur.is_empty()
+        && trace
+            .motion_blur
+            .iter()
+            .all(|record| record.samples.len() == record.effective_samples);
+    let sample_times_inside_shutter = !trace.motion_blur.is_empty()
+        && trace.motion_blur.iter().all(|record| {
+            let mut previous = None;
+            record.samples.iter().all(|sample| {
+                let monotonic = previous
+                    .map(|previous_time| sample.sample_time >= previous_time)
+                    .unwrap_or(true);
+                previous = Some(sample.sample_time);
+                monotonic
+                    && sample.sample_time + TEMPORAL_CONTRACT_EPSILON >= record.shutter_open
+                    && sample.sample_time <= record.shutter_close + TEMPORAL_CONTRACT_EPSILON
+            })
+        });
+    let weights_normalized = !trace.motion_blur.is_empty()
+        && trace.motion_blur.iter().all(|record| {
+            let summary = record.weight_summary();
+            summary.contributing_samples == 0 || (summary.total_weight as f64 - 1.0).abs() <= 1.0e-5
+        });
+    let samples_expose_temporal_domains = !trace.motion_blur.is_empty()
+        && trace.motion_blur.iter().all(|record| {
+            record.samples.iter().all(|sample| {
+                sample.sample_time.is_finite()
+                    && sample.layer_time.is_finite()
+                    && sample.posterized_time.is_finite()
+            })
+        });
+
+    vec![
+        temporal_check(
+            "tmp_030_motion_blur_trace_present",
+            !trace.motion_blur.is_empty(),
+            json!({ "records": trace.motion_blur.len() }),
+        ),
+        temporal_check(
+            "tmp_030_motion_sample_count_matches_trace",
+            sample_count_matches,
+            json!({ "records": trace.motion_blur.len() }),
+        ),
+        temporal_check(
+            "tmp_030_motion_samples_inside_shutter",
+            sample_times_inside_shutter,
+            json!({
+                "contract": "Motion blur sidecar must expose ordered midpoint samples inside the shutter interval."
+            }),
+        ),
+        temporal_check(
+            "tmp_030_motion_weights_normalized",
+            weights_normalized,
+            json!({
+                "contract": "Contributing motion samples are normalized before accumulation."
+            }),
+        ),
+        temporal_check(
+            "tmp_030_motion_samples_expose_layer_and_posterized_time",
+            samples_expose_temporal_domains,
+            json!({
+                "contract": "M18 tuning uses sample_time/layer_time/posterized_time sidecars before final pixels."
+            }),
+        ),
+    ]
+}
+
+fn temporal_contract_summary_json(frame_reports: &[Value]) -> Value {
+    let mut checked_frames = 0_usize;
+    let mut failed_checks = Vec::new();
+    let mut contracts = Vec::<String>::new();
+
+    for report in frame_reports {
+        if report.get("applicable").and_then(Value::as_bool) != Some(true) {
+            continue;
+        }
+        checked_frames += 1;
+        if let Some(contract) = report.get("contract").and_then(Value::as_str) {
+            if !contracts.iter().any(|value| value == contract) {
+                contracts.push(contract.to_string());
+            }
+        }
+        let frame = report.get("frame").and_then(Value::as_u64).unwrap_or(0);
+        if let Some(checks) = report.get("checks").and_then(Value::as_array) {
+            for check in checks {
+                if check.get("ok").and_then(Value::as_bool) != Some(true) {
+                    failed_checks.push(json!({
+                        "frame": frame,
+                        "name": check.get("name").cloned().unwrap_or(Value::Null),
+                        "detail": check.get("detail").cloned().unwrap_or(Value::Null)
+                    }));
+                }
+            }
+        }
+    }
+
+    json!({
+        "schema": "ae-native-renderer.temporal-contract-summary.v1",
+        "applicable": checked_frames > 0,
+        "ok": failed_checks.is_empty(),
+        "checked_frames": checked_frames,
+        "contracts": contracts,
+        "failed_checks": failed_checks,
+        "guardrail": "Use temporal_contract and trace sidecars to localize M02/M15/M16/M18 before tuning final pixels."
+    })
+}
+
+fn temporal_contract_frame_ref(report: &Value) -> Value {
+    json!({
+        "status": report.get("status").cloned().unwrap_or(Value::Null),
+        "ok": report.get("ok").cloned().unwrap_or(Value::Null),
+        "contract": report.get("contract").cloned().unwrap_or(Value::Null),
+        "checks": report.get("checks").cloned().unwrap_or(Value::Null)
+    })
+}
+
+fn temporal_check(name: &str, ok: bool, detail: Value) -> Value {
+    json!({
+        "name": name,
+        "ok": ok,
+        "severity": "gate",
+        "detail": detail
+    })
+}
+
+fn diff_metrics_are_exact(metrics: testkit::DiffMetrics) -> bool {
+    metrics.max_abs_diff == 0
+        && metrics.changed_pixels == 0
+        && metrics.mean_abs_diff.abs() <= TEMPORAL_CONTRACT_EPSILON
+}
+
+fn source_frame_quantization_record_ok(
+    record: &render_core::layer_eval::TemporalTraceRecord,
+) -> bool {
+    let Some(source_time) = record.source_time else {
+        return false;
+    };
+    let Some(source_frame) = record.source_frame.as_ref() else {
+        return false;
+    };
+    record.source_frame_id == Some(source_frame.frame_id)
+        && source_frame.frame_rate.is_finite()
+        && source_frame.frame_rate > 0.0
+        && source_frame.subframe >= -TEMPORAL_CONTRACT_EPSILON
+        && source_frame.subframe < 1.0 + TEMPORAL_CONTRACT_EPSILON
+        && (((source_time * source_frame.frame_rate) + TEMPORAL_CONTRACT_EPSILON).floor() as u32
+            == source_frame.frame_id)
+        && temporal_time_close(
+            source_frame.frame_time,
+            source_frame.frame_id as f64 / source_frame.frame_rate,
+        )
+        && temporal_time_close(
+            source_frame.subframe,
+            (source_time - source_frame.frame_time) * source_frame.frame_rate,
+        )
+}
+
+fn source_time_matches_posterized_layer_time(
+    record: &render_core::layer_eval::TemporalTraceRecord,
+) -> bool {
+    let Some(source_start) = record.source_start else {
+        return false;
+    };
+    let Some(source_time) = record.source_time else {
+        return false;
+    };
+    let expected = (source_start + (record.posterized_time - record.layer_start)).max(0.0);
+    temporal_time_close(source_time, expected)
+}
+
+fn temporal_time_close(actual: f64, expected: f64) -> bool {
+    (actual - expected).abs() <= TEMPORAL_CONTRACT_EPSILON
+}
+
 #[derive(Debug, Clone, Default)]
 struct TextPassportSnapshot {
     layouts: BTreeMap<String, Vec<Value>>,
@@ -717,6 +1276,7 @@ fn compare_frame_text_passport(
     let reference_path = text_passport_reference_path(pack_root, &case.id, frame);
     let native = text_passport_snapshot_from_trace(trace);
     let native_summary = text_passport_snapshot_summary(&native);
+    let diagnostics = text_passport_diagnostics_json(&case.id, &native, trace);
     if !reference_path.exists() {
         return Ok(json!({
             "frame": frame,
@@ -724,6 +1284,7 @@ fn compare_frame_text_passport(
             "ok": Value::Null,
             "reference": reference_path.display().to_string(),
             "native": native_summary,
+            "diagnostics": diagnostics,
             "contract": text_passport_contract_json()
         }));
     }
@@ -745,6 +1306,7 @@ fn compare_frame_text_passport(
         "native": native_summary,
         "reference_summary": reference_summary,
         "comparison": stats.to_json(),
+        "diagnostics": diagnostics,
         "contract": text_passport_contract_json()
     }))
 }
@@ -814,6 +1376,15 @@ fn push_text_layout_record(snapshot: &mut TextPassportSnapshot, record: &Value) 
     copy_json_field(&mut projected, record, "composition");
     copy_json_field(&mut projected, record, "layer_id");
     copy_json_field(&mut projected, record, "render_path");
+    if let Some(request) = record.get("request") {
+        projected.insert("request".to_string(), project_text_request(request));
+    }
+    if let Some(font_resolution) = record.pointer("/layout/font_resolution") {
+        projected.insert(
+            "font_resolution".to_string(),
+            project_font_resolution(font_resolution),
+        );
+    }
     let glyphs = record
         .pointer("/layout/glyphs")
         .and_then(Value::as_array)
@@ -883,6 +1454,31 @@ fn project_text_glyph_row(glyph: &Value) -> Value {
         "font_postscript_name",
     ] {
         copy_json_field(&mut out, glyph, field);
+    }
+    Value::Object(out)
+}
+
+fn project_text_request(request: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for field in ["text", "font_id", "font_size", "box_rect"] {
+        copy_json_field(&mut out, request, field);
+    }
+    Value::Object(out)
+}
+
+fn project_font_resolution(font_resolution: &Value) -> Value {
+    let mut out = serde_json::Map::new();
+    for field in [
+        "requested_id",
+        "resolved_path",
+        "resolved_family",
+        "resolved_style",
+        "resolved_fullname",
+        "resolved_postscript_name",
+        "fallback",
+        "source",
+    ] {
+        copy_json_field(&mut out, font_resolution, field);
     }
     Value::Object(out)
 }
@@ -1120,10 +1716,331 @@ fn text_passport_snapshot_summary(snapshot: &TextPassportSnapshot) -> Value {
         "layout_layers": snapshot.layouts.len(),
         "layout_records": layout_records,
         "glyph_rows": glyph_rows,
+        "font_instances": text_passport_font_instances_json(snapshot),
+        "glyph_metric_sources": text_passport_glyph_string_counts(snapshot, "metric_source"),
+        "cooltype_reference_statuses": text_passport_glyph_string_counts(
+            snapshot,
+            "cooltype_reference_status"
+        ),
         "selector_animators": snapshot.selectors.len(),
         "selector_records": selector_records,
         "selector_units": selector_units
     })
+}
+
+fn text_passport_font_instances_json(snapshot: &TextPassportSnapshot) -> Value {
+    let mut instances = BTreeMap::<String, Value>::new();
+    for records in snapshot.layouts.values() {
+        for record in records {
+            let request_font_id = record
+                .pointer("/request/font_id")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let font_resolution = record
+                .get("font_resolution")
+                .cloned()
+                .unwrap_or(Value::Null);
+            let key = format!(
+                "{}|{}|{}|{}",
+                request_font_id.as_str().unwrap_or("<request>"),
+                font_resolution
+                    .get("resolved_path")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<path>"),
+                font_resolution
+                    .get("resolved_postscript_name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<postscript>"),
+                font_resolution
+                    .get("source")
+                    .and_then(Value::as_str)
+                    .unwrap_or("<source>")
+            );
+            instances.entry(key).or_insert_with(|| {
+                json!({
+                    "request_font_id": request_font_id,
+                    "font_resolution": font_resolution
+                })
+            });
+        }
+    }
+    Value::Array(instances.into_values().collect())
+}
+
+fn text_passport_glyph_string_counts(snapshot: &TextPassportSnapshot, field: &str) -> Value {
+    let mut counts = BTreeMap::<String, u64>::new();
+    for glyph in text_passport_glyph_rows(snapshot) {
+        let value = glyph
+            .get(field)
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>");
+        *counts.entry(value.to_string()).or_default() += 1;
+    }
+    json!(counts)
+}
+
+fn text_passport_glyph_rows(snapshot: &TextPassportSnapshot) -> Vec<&Value> {
+    let mut rows = Vec::new();
+    for record in snapshot.layouts.values().flatten() {
+        if let Some(glyphs) = record.get("glyphs").and_then(Value::as_array) {
+            rows.extend(glyphs.iter());
+        }
+    }
+    rows
+}
+
+fn text_passport_diagnostics_json(
+    case_id: &str,
+    snapshot: &TextPassportSnapshot,
+    trace: &render_core::layer_eval::FrameRenderTrace,
+) -> Value {
+    let glyph_rows = text_passport_glyph_rows(snapshot);
+    let glyph_count = glyph_rows.len();
+    let not_cooltype_verified = glyph_rows
+        .iter()
+        .filter(|glyph| {
+            glyph
+                .get("cooltype_reference_status")
+                .and_then(Value::as_str)
+                .is_none_or(|status| status != "cooltype_verified")
+        })
+        .count();
+    json!({
+        "font_instance": text_passport_font_instance_diagnostic(case_id, snapshot),
+        "cooltype_metric_scope": {
+            "glyph_rows": glyph_count,
+            "not_cooltype_verified_rows": not_cooltype_verified,
+            "layout_tuning_ready": glyph_count > 0,
+            "cooltype_raster_tuning_ready": glyph_count > 0 && not_cooltype_verified == 0,
+            "formula_tuning_scope": if glyph_count > 0 {
+                "sourceRect/layout advance and bbox deltas only"
+            } else {
+                "no native text layout rows in this frame"
+            },
+            "blocker": if not_cooltype_verified > 0 {
+                "Need deeper CoolType glyph-id/coverage probe before full raster parity tuning."
+            } else {
+                "CoolType row status is verified for all projected glyphs."
+            }
+        },
+        "selector_expression": text_passport_selector_expression_gap_report(case_id, snapshot),
+        "collapse": text_passport_collapse_gap_report(case_id, trace)
+    })
+}
+
+fn text_passport_font_instance_diagnostic(case_id: &str, snapshot: &TextPassportSnapshot) -> Value {
+    let expected = expected_ae_text_font(case_id);
+    let instances = text_passport_font_instances_json(snapshot);
+    let Some(expected_font) = expected else {
+        return json!({
+            "status": "not_text_font_case",
+            "expected_ae_font": Value::Null,
+            "instances": instances
+        });
+    };
+    let Some(instance_array) = instances.as_array() else {
+        return json!({
+            "status": "no_native_layout",
+            "expected_ae_font": expected_font,
+            "instances": instances
+        });
+    };
+    if instance_array.is_empty() {
+        return json!({
+            "status": "no_native_layout",
+            "expected_ae_font": expected_font,
+            "instances": instances
+        });
+    }
+
+    let normalized_expected = normalized_text_key(expected_font);
+    let mut has_exact_identity = false;
+    let mut has_variable_montserrat_asset = false;
+    let mut has_fallback = false;
+
+    for instance in instance_array {
+        let font_resolution = instance.get("font_resolution").unwrap_or(&Value::Null);
+        has_fallback |= font_resolution
+            .get("fallback")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        let resolved_path = font_resolution
+            .get("resolved_path")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        has_variable_montserrat_asset |= resolved_path.contains("Montserrat-Italic[wght].ttf");
+
+        for candidate in font_resolution_name_candidates(font_resolution) {
+            if normalized_text_key(&candidate) == normalized_expected {
+                has_exact_identity = true;
+            }
+        }
+    }
+
+    let status = if has_exact_identity && !has_fallback {
+        "matched"
+    } else if expected_font == "Montserrat-BoldItalic" && has_variable_montserrat_asset {
+        "variable_montserrat_instance_unproven"
+    } else if has_fallback {
+        "font_fallback_or_instance_mismatch"
+    } else {
+        "font_instance_unclassified"
+    };
+    let blocker = match status {
+        "matched" => Value::Null,
+        "variable_montserrat_instance_unproven" => json!(
+            "AE goldens request Montserrat-BoldItalic, while native uses the bundled Montserrat variable italic TTF path; telemetry does not prove BoldItalic axis/named-instance selection."
+        ),
+        "font_fallback_or_instance_mismatch" => json!(
+            "Resolved font identity does not match the AE requested face or was marked fallback."
+        ),
+        _ => json!(
+            "Resolved font identity cannot be classified from current telemetry."
+        ),
+    };
+
+    json!({
+        "status": status,
+        "expected_ae_font": expected_font,
+        "instances": instances,
+        "blocker": blocker
+    })
+}
+
+fn expected_ae_text_font(case_id: &str) -> Option<&'static str> {
+    match case_id {
+        "TXT_010" | "TXT_020" | "GPH_010" => Some("Montserrat-BoldItalic"),
+        "TXT_030" | "TXT_040" => Some("Point-Light"),
+        _ => None,
+    }
+}
+
+fn font_resolution_name_candidates(font_resolution: &Value) -> Vec<String> {
+    let mut candidates = Vec::new();
+    for field in [
+        "requested_id",
+        "resolved_family",
+        "resolved_style",
+        "resolved_fullname",
+        "resolved_postscript_name",
+    ] {
+        if let Some(value) = font_resolution.get(field).and_then(Value::as_str) {
+            candidates.extend(value.split(',').map(str::trim).filter_map(non_empty_string));
+        }
+    }
+    if let (Some(family), Some(style)) = (
+        font_resolution
+            .get("resolved_family")
+            .and_then(Value::as_str),
+        font_resolution
+            .get("resolved_style")
+            .and_then(Value::as_str),
+    ) {
+        for family in family.split(',').map(str::trim) {
+            for style in style.split(',').map(str::trim) {
+                if !family.is_empty() && !style.is_empty() {
+                    candidates.push(format!("{family} {style}"));
+                }
+            }
+        }
+    }
+    candidates
+}
+
+fn text_passport_selector_expression_gap_report(
+    case_id: &str,
+    snapshot: &TextPassportSnapshot,
+) -> Value {
+    let selector_records = snapshot.selectors.values().map(Vec::len).sum::<usize>();
+    let mut selector_units = 0_usize;
+    let mut glyph_passport_units = 0_usize;
+    let mut expression_amount_units = 0_usize;
+    for selector in snapshot.selectors.values().flatten() {
+        let Some(units) = selector.get("units").and_then(Value::as_array) else {
+            continue;
+        };
+        selector_units += units.len();
+        for unit in units {
+            if unit
+                .pointer("/glyph_passport/available")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+            {
+                glyph_passport_units += 1;
+            }
+            if unit.pointer("/expression/raw_amount").is_some()
+                || unit.pointer("/expression/clamped_amount").is_some()
+            {
+                expression_amount_units += 1;
+            }
+        }
+    }
+
+    let requires_selector_refs = matches!(case_id, "TXT_010" | "TXT_020" | "TXT_030");
+    let requires_expression_refs = matches!(case_id, "TXT_040");
+    json!({
+        "selector_records": selector_records,
+        "selector_units": selector_units,
+        "units_with_glyph_passport": glyph_passport_units,
+        "expression_amount_units": expression_amount_units,
+        "selector_gap": if requires_selector_refs && selector_units > 0 {
+            "Native selector units are glyph-linked; AE boundary/weight refs are still required before M06/M07 formula tuning."
+        } else if requires_selector_refs {
+            "Native selector telemetry is missing for this selector case."
+        } else {
+            "No range-selector refs required for this case."
+        },
+        "expression_selector_gap": if requires_expression_refs && expression_amount_units > 0 {
+            "Native expression-selector amount samples exist, but AE amount-curve refs are still missing before M08 tuning."
+        } else if requires_expression_refs {
+            "Native expression-selector amount telemetry is missing for TXT_040."
+        } else {
+            "No expression-selector refs required for this case."
+        }
+    })
+}
+
+fn text_passport_collapse_gap_report(
+    case_id: &str,
+    trace: &render_core::layer_eval::FrameRenderTrace,
+) -> Value {
+    let mut mode_counts = BTreeMap::<String, u64>::new();
+    for record in &trace.collapse {
+        let mode = record
+            .get("mode")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>");
+        *mode_counts.entry(mode.to_string()).or_default() += 1;
+    }
+    let collapsed_text_raster = mode_counts
+        .get("collapsed_text_raster")
+        .copied()
+        .unwrap_or(0)
+        > 0;
+    json!({
+        "collapse_records": trace.collapse.len(),
+        "modes": mode_counts,
+        "gap": if case_id == "GPH_010" && collapsed_text_raster {
+            "Native records matrix pushdown plus scale-hint text rasterization; AE deferred text/vector raster refs are still required before M17 sharpness tuning."
+        } else if case_id == "GPH_010" {
+            "GPH_010 collapse telemetry did not include collapsed_text_raster in this frame."
+        } else {
+            "No collapse tuning refs required for this case."
+        }
+    })
+}
+
+fn normalized_text_key(value: &str) -> String {
+    value
+        .chars()
+        .filter(|ch| ch.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+fn non_empty_string(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 fn text_passport_summary_json(frame_reports: &[Value]) -> Value {
@@ -1221,15 +2138,16 @@ fn write_warps_fields_debug_sidecars(
     frame: u32,
     time: f64,
     case_dir: &Path,
-) -> Result<()> {
+) -> Result<Vec<String>> {
     if !matches!(case.id.as_str(), "EFF_040" | "EFF_060") {
-        return Ok(());
+        return Ok(Vec::new());
     }
 
     let input = Canvas::transparent(scene.composition.width, scene.composition.height);
     let frame_dir = case_dir
         .join("effects_debug")
         .join(format!("frame_{frame:05}"));
+    let mut paths = Vec::new();
 
     for layer in &scene.layers {
         let (layer_id, effects) = sidecar_layer_effects(layer);
@@ -1246,15 +2164,163 @@ fn write_warps_fields_debug_sidecars(
             ) else {
                 continue;
             };
+            validate_warps_fields_sidecar(case, frame, &sidecar)?;
             fs::create_dir_all(&frame_dir)?;
             let effect_name = sidecar_effect_name(&spec.match_name);
-            fs::write(
-                frame_dir.join(format!("{layer_id}_{effect_index:02}_{effect_name}.json")),
-                serde_json::to_string_pretty(&sidecar)?,
-            )?;
+            let path = frame_dir.join(format!("{layer_id}_{effect_index:02}_{effect_name}.json"));
+            fs::write(&path, serde_json::to_string_pretty(&sidecar)?)?;
+            paths.push(path.display().to_string());
         }
     }
 
+    ensure_required_warps_fields_sidecar(case, frame, &paths)?;
+    Ok(paths)
+}
+
+fn ensure_required_warps_fields_sidecar(
+    case: &PackCase,
+    frame: u32,
+    paths: &[String],
+) -> Result<()> {
+    if matches!(case.id.as_str(), "EFF_040" | "EFF_060") {
+        anyhow::ensure!(
+            !paths.is_empty(),
+            "{} frame {} did not write an isolated warps/fields debug sidecar",
+            case.id,
+            frame
+        );
+    }
+    Ok(())
+}
+
+fn validate_warps_fields_sidecar(case: &PackCase, frame: u32, sidecar: &Value) -> Result<()> {
+    match case.id.as_str() {
+        "EFF_040" => validate_geometry2_isolated_sidecar(case, frame, sidecar),
+        "EFF_060" => validate_turbulent_isolated_sidecar(case, frame, sidecar),
+        _ => Ok(()),
+    }
+}
+
+fn validate_geometry2_isolated_sidecar(case: &PackCase, frame: u32, sidecar: &Value) -> Result<()> {
+    anyhow::ensure!(
+        sidecar["schema"] == "ae-native-renderer.geometry2-debug.v1",
+        "{} frame {} Geometry2 sidecar has unexpected schema",
+        case.id,
+        frame
+    );
+    for key in ["0003", "0004", "0008"] {
+        let mapping = &sidecar["property_mapping"][key];
+        anyhow::ensure!(
+            mapping.is_object(),
+            "{} frame {} Geometry2 sidecar is missing property_mapping.{}",
+            case.id,
+            frame,
+            key
+        );
+        anyhow::ensure!(
+            mapping["present"].as_bool().unwrap_or(false),
+            "{} frame {} Geometry2 sidecar property_mapping.{} is not present in raw params",
+            case.id,
+            frame,
+            key
+        );
+    }
+    anyhow::ensure!(
+        sidecar["property_mapping"]["0003"]["native_role"] == "uniform_scale_fallback",
+        "{} frame {} Geometry2 sidecar lost payload 0003 uniform-scale mapping",
+        case.id,
+        frame
+    );
+    anyhow::ensure!(
+        sidecar["property_mapping"]["0004"]["native_role"] == "scale_height",
+        "{} frame {} Geometry2 sidecar lost payload 0004 scale-height mapping",
+        case.id,
+        frame
+    );
+    anyhow::ensure!(
+        sidecar["property_mapping"]["0008"]["native_role"] == "rotation_degrees",
+        "{} frame {} Geometry2 sidecar lost payload 0008 rotation mapping",
+        case.id,
+        frame
+    );
+    anyhow::ensure!(
+        sidecar["forward_matrix"].as_array().map_or(0, Vec::len) == 3
+            && sidecar["inverse_matrix"].as_array().map_or(0, Vec::len) == 3,
+        "{} frame {} Geometry2 sidecar is missing 3x3 matrix checkpoints",
+        case.id,
+        frame
+    );
+    let samples = sidecar["samples"].as_array().map_or(0, Vec::len);
+    anyhow::ensure!(
+        samples >= 9,
+        "{} frame {} Geometry2 sidecar has {} UV samples; expected at least 9",
+        case.id,
+        frame,
+        samples
+    );
+    for field in ["source_uv", "sample_xy", "out_of_bounds"] {
+        anyhow::ensure!(
+            sidecar["samples"][0].get(field).is_some(),
+            "{} frame {} Geometry2 sidecar sample is missing {}",
+            case.id,
+            frame,
+            field
+        );
+    }
+    Ok(())
+}
+
+fn validate_turbulent_isolated_sidecar(case: &PackCase, frame: u32, sidecar: &Value) -> Result<()> {
+    anyhow::ensure!(
+        sidecar["schema"] == "ae-native-renderer.turbulent-displace-field.v1",
+        "{} frame {} Turbulent sidecar has unexpected schema",
+        case.id,
+        frame
+    );
+    for field in ["ae_wrapper", "field_state", "field_hash", "field_hash_u64"] {
+        anyhow::ensure!(
+            sidecar.get(field).is_some(),
+            "{} frame {} Turbulent sidecar is missing {}",
+            case.id,
+            frame,
+            field
+        );
+    }
+    anyhow::ensure!(
+        sidecar["field_state"]["tuning_guardrail"] == "do_not_tune_from_final_png_only",
+        "{} frame {} Turbulent sidecar lost field-first tuning guardrail",
+        case.id,
+        frame
+    );
+    anyhow::ensure!(
+        sidecar["field_state"]["dispatch_path"] == sidecar["ae_wrapper"]["kernel_path"],
+        "{} frame {} Turbulent sidecar field_state dispatch does not match wrapper kernel",
+        case.id,
+        frame
+    );
+    let samples = sidecar["samples"].as_array().map_or(0, Vec::len);
+    anyhow::ensure!(
+        samples >= 9,
+        "{} frame {} Turbulent sidecar has {} field samples; expected at least 9",
+        case.id,
+        frame,
+        samples
+    );
+    for field in [
+        "noise",
+        "displacement",
+        "source_uv",
+        "sample_xy",
+        "out_of_bounds",
+    ] {
+        anyhow::ensure!(
+            sidecar["samples"][0].get(field).is_some(),
+            "{} frame {} Turbulent sidecar sample is missing {}",
+            case.id,
+            frame,
+            field
+        );
+    }
     Ok(())
 }
 
@@ -1574,6 +2640,7 @@ fn warps_fields_debug_json(
                 "match_name": spec.match_name,
                 "input_size": [input.width, input.height],
                 "raw_params": debug.raw_params,
+                "property_mapping": geometry2_property_mapping_json(&debug.property_mapping),
                 "resolved": {
                     "anchor": debug.resolved.anchor,
                     "position": debug.resolved.position,
@@ -1632,6 +2699,36 @@ fn warps_fields_debug_json(
                     "amplitude": debug.resolved.amplitude,
                     "phase_radians": debug.resolved.phase_radians
                 },
+                "ae_wrapper": {
+                    "state_block_bytes": debug.ae_wrapper.state_block_bytes,
+                    "gpu_param_block_bytes": debug.ae_wrapper.gpu_param_block_bytes,
+                    "noise_table_rows": debug.ae_wrapper.noise_table_rows,
+                    "inferred_internal_displacement_mode": debug.ae_wrapper.inferred_internal_displacement_mode,
+                    "kernel_path": debug.ae_wrapper.kernel_path,
+                    "uses_h_lookup": debug.ae_wrapper.uses_h_lookup,
+                    "uses_v_lookup": debug.ae_wrapper.uses_v_lookup,
+                    "h_lookup_len": debug.ae_wrapper.h_lookup_len,
+                    "v_lookup_len": debug.ae_wrapper.v_lookup_len,
+                    "amount_fixed16": debug.ae_wrapper.amount_fixed16,
+                    "size_fixed16": debug.ae_wrapper.size_fixed16,
+                    "offset_fixed16": debug.ae_wrapper.offset_fixed16,
+                    "evolution_fixed16": debug.ae_wrapper.evolution_fixed16,
+                    "complexity_octaves": debug.ae_wrapper.complexity_octaves,
+                    "complexity_fraction": debug.ae_wrapper.complexity_fraction
+                },
+                "field_state": {
+                    "model": debug.field_state.model,
+                    "coordinate_space": debug.field_state.coordinate_space,
+                    "dispatch_path": debug.field_state.dispatch_path,
+                    "complexity_octaves": debug.field_state.complexity_octaves,
+                    "complexity_fraction": debug.field_state.complexity_fraction,
+                    "evolution_degrees": debug.field_state.evolution_degrees,
+                    "phase_radians": debug.field_state.phase_radians,
+                    "amplitude": debug.field_state.amplitude,
+                    "source_uv_convention": debug.field_state.source_uv_convention,
+                    "hash_coverage": debug.field_state.hash_coverage,
+                    "tuning_guardrail": debug.field_state.tuning_guardrail
+                },
                 "samples": debug.samples.iter().map(|sample| json!({
                     "output_xy": sample.output_xy,
                     "noise": sample.noise,
@@ -1649,6 +2746,30 @@ fn warps_fields_debug_json(
         }
         _ => None,
     }
+}
+
+fn geometry2_property_mapping_json(mapping: &effects::geometry::Geometry2PropertyMapping) -> Value {
+    json!({
+        "0003": geometry2_property_mapping_entry_json(&mapping.payload_0003),
+        "0004": geometry2_property_mapping_entry_json(&mapping.payload_0004),
+        "0005": geometry2_property_mapping_entry_json(&mapping.payload_0005),
+        "0008": geometry2_property_mapping_entry_json(&mapping.payload_0008),
+        "0009": geometry2_property_mapping_entry_json(&mapping.payload_0009)
+    })
+}
+
+fn geometry2_property_mapping_entry_json(
+    entry: &effects::geometry::Geometry2PropertyMappingEntry,
+) -> Value {
+    json!({
+        "payload_key": entry.payload_key,
+        "match_name": entry.match_name,
+        "ui_label": entry.ui_label,
+        "native_role": entry.native_role,
+        "present": entry.present,
+        "raw_value": entry.raw_value.clone(),
+        "note": entry.note
+    })
 }
 
 fn sidecar_layer_effects(layer: &Layer) -> (&str, &[EffectSpec]) {
@@ -2506,12 +3627,34 @@ fn elapsed_ms(started: Instant) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use render_core::layer_eval::{
+        AdjustmentEffectTrace, FrameRenderTrace, MotionBlurSampleTrace, MotionBlurTrace,
+        PosterizeTiming, SourceFrameQuantization, TemporalTraceRecord,
+    };
     use render_core::FootageProvider;
 
     fn pack_root() -> PathBuf {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("fixtures/ae_conformance_pack")
+    }
+
+    fn empty_trace(frame: u32, time: f64) -> FrameRenderTrace {
+        FrameRenderTrace {
+            frame,
+            time,
+            layers: Vec::new(),
+            effects: Vec::new(),
+            adjustment_effects: Vec::new(),
+            temporal: Vec::new(),
+            keyframes: Vec::new(),
+            motion_blur: Vec::new(),
+            effect_debug: Vec::new(),
+            text_layouts: Vec::new(),
+            text_selector_weights: Vec::new(),
+            position_expressions: Vec::new(),
+            collapse: Vec::new(),
+        }
     }
 
     #[test]
@@ -2684,6 +3827,215 @@ mod tests {
     }
 
     #[test]
+    fn m19_alpha_composite_gate_report_blocks_missing_required_cases() {
+        let reports = vec![json!({
+            "case": "CMP_010",
+            "status": "measured",
+            "ok": true
+        })];
+
+        let gate = m19_alpha_composite_gate_report_json(&reports);
+
+        assert_eq!(gate["complete"], json!(false));
+        assert_eq!(gate["required_cases_ok"], json!(false));
+        assert_eq!(
+            gate["missing_required_cases"],
+            json!(["PRI_010", "STK_010", "STK_020"])
+        );
+        assert_eq!(
+            gate["primary_visible_metric"],
+            json!("rgb_straight_source_over_ae_background")
+        );
+        assert_eq!(gate["raw_rgba_tuning_allowed"], json!(false));
+        assert_eq!(
+            gate["reverse_readiness_status"],
+            json!("blocked_until_required_cases_are_measured_and_ok")
+        );
+    }
+
+    #[test]
+    fn m19_alpha_composite_gate_report_marks_required_cases_complete_but_diagnostic() {
+        let reports = testkit::M19_ALPHA_COMPOSITE_GATE_CASES
+            .iter()
+            .map(|case| {
+                json!({
+                    "case": case,
+                    "status": "measured",
+                    "ok": true
+                })
+            })
+            .collect::<Vec<_>>();
+
+        let gate = m19_alpha_composite_gate_report_json(&reports);
+
+        assert_eq!(gate["complete"], json!(true));
+        assert_eq!(gate["required_cases_ok"], json!(true));
+        assert_eq!(gate["premult_contract_locked"], json!(false));
+        assert_eq!(gate["diagnostic_only"], json!(true));
+        assert_eq!(
+            gate["reverse_readiness_status"],
+            json!("alpha_composite_gate_complete_diagnostic_only")
+        );
+    }
+
+    #[test]
+    fn temporal_contract_accepts_stk_bucket_live_split() {
+        let mut trace = empty_trace(15, 0.5);
+        let bucket = PosterizeTiming {
+            frame_rate: 6.0,
+            bucket: Some(3),
+            bucket_time: 0.0,
+        };
+        for (effect_index, match_name, param_time, posterize) in [
+            ("ADBE Geometry2", 0.0, None),
+            ("ADBE Posterize Time", 0.0, Some(bucket)),
+            ("ADBE Minimax", 0.5, None),
+            ("ADBE Turbulent Displace", 0.5, None),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(effect_index, (match_name, param_time, posterize))| {
+            (effect_index, match_name, param_time, posterize)
+        }) {
+            trace.adjustment_effects.push(AdjustmentEffectTrace {
+                composition: "STK_030".to_string(),
+                layer_id: "STK_030_adjustment".to_string(),
+                effect_index,
+                match_name: match_name.to_string(),
+                comp_time: 0.5,
+                layer_time: 0.5,
+                lower_stack_time: 0.0,
+                param_time,
+                input_hash: format!("input-{effect_index}"),
+                output_hash: format!("output-{effect_index}"),
+                posterize,
+            });
+        }
+        trace.temporal.push(TemporalTraceRecord {
+            event: "temporal.adjustment_layer_time",
+            composition: "STK_030".to_string(),
+            layer_id: "STK_030_adjustment".to_string(),
+            layer_type: "adjustment",
+            comp_time: 0.5,
+            layer_start: 0.0,
+            layer_time: 0.5,
+            posterized_time: 0.0,
+            source_id: None,
+            source_start: None,
+            source_time: None,
+            source_frame_id: None,
+            source_frame: None,
+            adjustment_lower_stack_time: Some(0.0),
+            posterize: Some(bucket),
+        });
+
+        let checks = stk_adjustment_posterize_contract_checks(&trace);
+
+        assert!(checks
+            .iter()
+            .all(|check| check["ok"].as_bool() == Some(true)));
+    }
+
+    #[test]
+    fn temporal_contract_flags_tmp020_non_exact_pixels() {
+        let mut trace = empty_trace(3, 0.1);
+        trace.temporal.push(TemporalTraceRecord {
+            event: "temporal.layer_time",
+            composition: "TMP_020".to_string(),
+            layer_id: "TMP_020_numbered_posterize".to_string(),
+            layer_type: "footage",
+            comp_time: 0.1,
+            layer_start: 0.0,
+            layer_time: 0.1,
+            posterized_time: 0.0,
+            source_id: Some("numbered_frames".to_string()),
+            source_start: Some(0.0),
+            source_time: Some(0.0),
+            source_frame_id: Some(0),
+            source_frame: Some(SourceFrameQuantization {
+                frame_id: 0,
+                frame_rate: 30.0,
+                frame_time: 0.0,
+                subframe: 0.0,
+                policy: "floor(source_time*frame_rate+1e-9)",
+            }),
+            adjustment_lower_stack_time: None,
+            posterize: Some(PosterizeTiming {
+                frame_rate: 6.0,
+                bucket: Some(0),
+                bucket_time: 0.0,
+            }),
+        });
+        let checks = tmp_posterize_contract_checks(
+            &trace,
+            testkit::DiffMetrics {
+                max_abs_diff: 1,
+                mean_abs_diff: 0.1,
+                rmse_abs_diff: 0.1,
+                changed_pixels: 1,
+                total_pixels: 1,
+            },
+        );
+
+        assert_eq!(checks[0]["name"], json!("tmp_020_native_matches_ae_exact"));
+        assert_eq!(checks[0]["ok"], json!(false));
+        assert!(checks
+            .iter()
+            .skip(1)
+            .all(|check| check["ok"].as_bool() == Some(true)));
+    }
+
+    #[test]
+    fn temporal_contract_accepts_motion_blur_sample_passport() {
+        let mut trace = empty_trace(15, 0.5);
+        trace.motion_blur.push(MotionBlurTrace {
+            composition: "TMP_030".to_string(),
+            layer_id: "TMP_030_motion_blur_probe".to_string(),
+            comp_time: 0.5,
+            frame_duration: 1.0 / 30.0,
+            shutter_open: 0.475,
+            shutter_close: 0.525,
+            shutter_angle: 180.0,
+            shutter_phase: -90.0,
+            requested_samples: 2,
+            effective_samples: 2,
+            divisor: 2.0,
+            samples: vec![
+                MotionBlurSampleTrace {
+                    sample_index: 0,
+                    sample_time: 0.4875,
+                    layer_time: 0.4875,
+                    posterized_time: 0.4875,
+                    source_time: None,
+                    source_frame_id: None,
+                    source_frame: None,
+                    active: true,
+                    opacity: 100.0,
+                    weight: 0.5,
+                },
+                MotionBlurSampleTrace {
+                    sample_index: 1,
+                    sample_time: 0.5125,
+                    layer_time: 0.5125,
+                    posterized_time: 0.5125,
+                    source_time: None,
+                    source_frame_id: None,
+                    source_frame: None,
+                    active: true,
+                    opacity: 100.0,
+                    weight: 0.5,
+                },
+            ],
+        });
+
+        let checks = motion_blur_contract_checks(&trace);
+
+        assert!(checks
+            .iter()
+            .all(|check| check["ok"].as_bool() == Some(true)));
+    }
+
+    #[test]
     fn jsonl_text_passport_snapshot_reads_native_sidecar_events() {
         let records = vec![
             json!({
@@ -2692,12 +4044,25 @@ mod tests {
                 "record": {
                     "composition": "TXT_030",
                     "layer_id": "text",
+                    "request": {
+                        "font_id": "fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf",
+                        "font_size": 74.0
+                    },
                     "layout": {
+                        "font_resolution": {
+                            "requested_id": "fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf",
+                            "resolved_path": "fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf",
+                            "resolved_postscript_name": "Point-Light",
+                            "fallback": false,
+                            "source": "DirectPath"
+                        },
                         "glyphs": [{
                             "character": "G",
                             "font_glyph_id": 42,
                             "glyph_run_index": 0,
-                            "advance_x": 12.0
+                            "advance_x": 12.0,
+                            "metric_source": "fontdue",
+                            "cooltype_reference_status": "not_cooltype_verified"
                         }]
                     }
                 }
@@ -2730,6 +4095,15 @@ mod tests {
         );
         assert_eq!(
             text_passport_snapshot_summary(&snapshot)["selector_units"],
+            json!(1)
+        );
+        assert_eq!(
+            text_passport_snapshot_summary(&snapshot)["font_instances"][0]["font_resolution"]
+                ["resolved_postscript_name"],
+            json!("Point-Light")
+        );
+        assert_eq!(
+            text_passport_snapshot_summary(&snapshot)["glyph_metric_sources"]["fontdue"],
             json!(1)
         );
     }
@@ -2769,5 +4143,79 @@ mod tests {
         let stats = compare_text_passport_snapshots(&reference, &native);
 
         assert!(stats.is_ok(), "{:?}", stats.first_mismatch);
+    }
+
+    #[test]
+    fn text_passport_diagnostics_flag_unproven_montserrat_instance() {
+        let snapshot = text_passport_snapshot_from_jsonl_records(&[json!({
+            "event": "text.layout",
+            "record": {
+                "composition": "TXT_010",
+                "layer_id": "word_reveal",
+                "request": {
+                    "font_id": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf"
+                },
+                "layout": {
+                    "font_resolution": {
+                        "requested_id": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf",
+                        "resolved_path": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf",
+                        "resolved_family": "Montserrat",
+                        "fallback": false,
+                        "source": "DirectPath"
+                    },
+                    "glyphs": [{
+                        "character": "W",
+                        "font_glyph_id": 58,
+                        "glyph_run_index": 0,
+                        "metric_source": "fontdue",
+                        "cooltype_reference_status": "not_cooltype_verified"
+                    }]
+                }
+            }
+        })]);
+
+        let diagnostic = text_passport_font_instance_diagnostic("TXT_010", &snapshot);
+
+        assert_eq!(
+            diagnostic["status"],
+            json!("variable_montserrat_instance_unproven")
+        );
+        assert!(diagnostic["blocker"]
+            .as_str()
+            .unwrap()
+            .contains("BoldItalic axis"));
+    }
+
+    #[test]
+    fn text_passport_gap_report_counts_expression_selector_amount_samples() {
+        let snapshot = text_passport_snapshot_from_jsonl_records(&[json!({
+            "event": "text.selector_weights",
+            "record": {
+                "composition": "TXT_040",
+                "layer_id": "bounce_selector",
+                "animator": "expression_selector_bounce",
+                "units": [{
+                    "index": 0,
+                    "expression": {
+                        "raw_amount": 82.0,
+                        "clamped_amount": 82.0
+                    },
+                    "glyph_passport": {
+                        "available": true,
+                        "glyph_run_indices": [0],
+                        "font_glyph_ids": [37]
+                    }
+                }]
+            }
+        })]);
+
+        let report = text_passport_selector_expression_gap_report("TXT_040", &snapshot);
+
+        assert_eq!(report["expression_amount_units"], json!(1));
+        assert_eq!(report["units_with_glyph_passport"], json!(1));
+        assert!(report["expression_selector_gap"]
+            .as_str()
+            .unwrap()
+            .contains("AE amount-curve refs"));
     }
 }

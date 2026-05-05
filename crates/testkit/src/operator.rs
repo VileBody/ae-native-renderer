@@ -170,6 +170,7 @@ pub fn builtin_passport(match_name: &str) -> Option<OperatorPassport> {
                 "opacity 0 -> transparent contribution".to_string(),
             ],
             debug_outputs: vec![
+                "property_mapping".to_string(),
                 "matrix".to_string(),
                 "inverse_matrix".to_string(),
                 "sample_uv".to_string(),
@@ -376,6 +377,8 @@ pub fn builtin_passport(match_name: &str) -> Option<OperatorPassport> {
                 "dx".to_string(),
                 "dy".to_string(),
                 "uv".to_string(),
+                "field_state".to_string(),
+                "field_hash".to_string(),
                 "sampled_source".to_string(),
                 "final".to_string(),
             ],
