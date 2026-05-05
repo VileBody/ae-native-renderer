@@ -21,6 +21,8 @@ DEFAULT_S3_ENV = Path("/Users/ergin/Desktop/blast_mj_final/.env")
 DEFAULT_NODE = "http://85.239.48.31:8000"
 DEFAULT_WINRM = "http://85.239.48.31:5985/wsman"
 DEFAULT_SERVER_ID = "6849259"
+DEFAULT_SSH_HOST = "ae85"
+DEFAULT_REMOTE_PYTHON = r"C:\Python314\python.exe"
 DEFAULT_PACK = Path("fixtures/ae_probe_pack/shadow_blur_discriminator")
 DEFAULT_CASES = ["SHBL_SOFT_001", "SHBL_SOFT_008", "SHBL_SOFT_018", "SHBL_SOFT_032"]
 
@@ -388,6 +390,32 @@ def run_ps(session: winrm.Session, script: str, *, check: bool = True) -> str:
     return stdout
 
 
+def run_ps_ssh(host: str, script: str, *, check: bool = True, timeout: float | None = None) -> str:
+    result = subprocess.run(
+        [
+            "ssh",
+            host,
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ],
+        input="$ProgressPreference='SilentlyContinue'\n" + script,
+        text=True,
+        capture_output=True,
+        timeout=timeout,
+        check=False,
+    )
+    if check and result.returncode != 0:
+        raise RuntimeError(
+            f"SSH PowerShell failed ({result.returncode})\nSTDOUT:\n{result.stdout}\nSTDERR:\n{result.stderr}"
+        )
+    return result.stdout
+
+
 def ps_quote(value: str) -> str:
     return "'" + value.replace("'", "''") + "'"
 
@@ -436,6 +464,19 @@ def install_remote_script_from_url(session: winrm.Session, remote_path: str, url
     )
 
 
+def install_remote_script_from_url_ssh(host: str, remote_path: str, url: str) -> None:
+    run_ps_ssh(
+        host,
+        "\n".join(
+            [
+                f"$path = {ps_quote(remote_path)}",
+                "New-Item -ItemType Directory -Force -Path (Split-Path -Parent $path) | Out-Null",
+                f"Invoke-WebRequest -Uri {ps_quote(url)} -OutFile $path -UseBasicParsing | Out-Null",
+            ]
+        ),
+    )
+
+
 def upload_remote_file_to_url(session: winrm.Session, remote_path: str, url: str) -> None:
     run_ps(
         session,
@@ -449,12 +490,50 @@ def upload_remote_file_to_url(session: winrm.Session, remote_path: str, url: str
     )
 
 
-def start_remote_trace(session: winrm.Session, remote_script: str, remote_log: str, duration: int, max_events: int) -> int:
+def upload_remote_file_to_url_ssh(host: str, remote_path: str, url: str) -> None:
+    run_ps_ssh(
+        host,
+        "\n".join(
+            [
+                f"$path = {ps_quote(remote_path)}",
+                "if (-not (Test-Path $path)) { exit 2 }",
+                "$tmp = $path + '.upload.tmp'",
+                "$lastError = $null",
+                "for ($i = 0; $i -lt 20; $i++) {",
+                "  try {",
+                "    $src = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)",
+                "    try {",
+                "      $dst = [IO.File]::Open($tmp, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)",
+                "      try { $src.CopyTo($dst) } finally { $dst.Dispose() }",
+                "    } finally { $src.Dispose() }",
+                f"    Invoke-WebRequest -Method Put -Uri {ps_quote(url)} -InFile $tmp -UseBasicParsing | Out-Null",
+                "    Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue",
+                "    exit 0",
+                "  } catch {",
+                "    $lastError = $_",
+                "    Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue",
+                "    Start-Sleep -Milliseconds 500",
+                "  }",
+                "}",
+                "throw $lastError",
+            ]
+        ),
+    )
+
+
+def start_remote_trace(
+    session: winrm.Session,
+    remote_python: str,
+    remote_script: str,
+    remote_log: str,
+    duration: int,
+    max_events: int,
+) -> int:
     stdout_log = remote_log + ".stdout.txt"
     stderr_log = remote_log + ".stderr.txt"
     ps = "\n".join(
         [
-            "$old = Get-CimInstance Win32_Process | Where-Object { $_.CommandLine -like '*ae_trace_drop_shadow_remote.py*' }",
+            "$old = Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe', 'python3.exe') -and $_.CommandLine -like '*ae_trace_drop_shadow_remote.py*' }",
             "foreach ($p in $old) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }",
             f"if (Test-Path {ps_quote(remote_log)}) {{ Remove-Item -Path {ps_quote(remote_log)} -Force }}",
             f"if (Test-Path {ps_quote(stdout_log)}) {{ Remove-Item -Path {ps_quote(stdout_log)} -Force }}",
@@ -465,12 +544,130 @@ def start_remote_trace(session: winrm.Session, remote_script: str, remote_log: s
             f"  '--duration', '{duration}',",
             f"  '--max-events', '{max_events}'",
             ")",
-            "$p = Start-Process -FilePath 'python' -ArgumentList $argsList -WindowStyle Hidden -PassThru "
+            f"$p = Start-Process -FilePath {ps_quote(remote_python)} -ArgumentList $argsList -WindowStyle Hidden -PassThru "
             f"-RedirectStandardOutput {ps_quote(stdout_log)} -RedirectStandardError {ps_quote(stderr_log)}",
             "$p.Id",
         ]
     )
     return int(run_ps(session, ps).strip().splitlines()[-1])
+
+
+def start_remote_trace_foreground_ssh(
+    host: str,
+    remote_python: str,
+    remote_script: str,
+    remote_log: str,
+    duration: int,
+    max_events: int,
+) -> subprocess.Popen[str]:
+    stdout_log = remote_log + ".stdout.txt"
+    stderr_log = remote_log + ".stderr.txt"
+    cleanup = "\n".join(
+        [
+            "$old = Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe', 'python3.exe') -and $_.CommandLine -like '*ae_trace_drop_shadow_remote.py*' }",
+            "foreach ($p in $old) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }",
+            f"if (Test-Path {ps_quote(remote_log)}) {{ Remove-Item -Path {ps_quote(remote_log)} -Force }}",
+            f"if (Test-Path {ps_quote(stdout_log)}) {{ Remove-Item -Path {ps_quote(stdout_log)} -Force }}",
+            f"if (Test-Path {ps_quote(stderr_log)}) {{ Remove-Item -Path {ps_quote(stderr_log)} -Force }}",
+        ]
+    )
+    run_ps_ssh(host, cleanup, check=False)
+    script = "\n".join(
+        [
+            f"& {ps_quote(remote_python)} -u {ps_quote(remote_script)} "
+            f"--out {ps_quote(remote_log)} --duration {duration} --max-events {max_events} "
+            f"> {ps_quote(stdout_log)} 2> {ps_quote(stderr_log)}",
+            "exit $LASTEXITCODE",
+        ]
+    )
+    proc = subprocess.Popen(
+        [
+            "ssh",
+            host,
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ],
+        stdin=subprocess.PIPE,
+        text=True,
+    )
+    assert proc.stdin is not None
+    proc.stdin.write("$ProgressPreference='SilentlyContinue'\n" + script)
+    proc.stdin.close()
+    return proc
+
+
+def stop_remote_traces_ssh(host: str) -> None:
+    run_ps_ssh(
+        host,
+        "\n".join(
+            [
+                "$old = Get-CimInstance Win32_Process | Where-Object { $_.Name -in @('python.exe', 'python3.exe') -and $_.CommandLine -like '*ae_trace_drop_shadow_remote.py*' }",
+                "foreach ($p in $old) { Stop-Process -Id $p.ProcessId -Force -ErrorAction SilentlyContinue }",
+            ]
+        ),
+        check=False,
+    )
+
+
+def start_remote_tail_ssh(host: str, remote_path: str) -> subprocess.Popen[str]:
+    script = "\n".join(
+        [
+            f"$path = {ps_quote(remote_path)}",
+            "while (-not (Test-Path $path)) { Start-Sleep -Milliseconds 250 }",
+            "Get-Content -Path $path -Wait",
+        ]
+    )
+    proc = subprocess.Popen(
+        [
+            "ssh",
+            host,
+            "powershell",
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            "-",
+        ],
+        stdin=subprocess.PIPE,
+        text=True,
+    )
+    assert proc.stdin is not None
+    proc.stdin.write("$ProgressPreference='SilentlyContinue'\n" + script)
+    proc.stdin.close()
+    return proc
+
+
+def stop_tail(proc: subprocess.Popen[str] | None) -> None:
+    if proc is None or proc.poll() is not None:
+        return
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=3)
+
+
+def stop_ssh_process(proc: subprocess.Popen[str] | None, *, timeout: float = 8.0) -> None:
+    if proc is None:
+        return
+    try:
+        proc.wait(timeout=timeout)
+        return
+    except subprocess.TimeoutExpired:
+        pass
+    proc.terminate()
+    try:
+        proc.wait(timeout=3)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.wait(timeout=3)
 
 
 def fetch_remote_text(session: winrm.Session, remote_path: str) -> str:
@@ -489,6 +686,31 @@ def fetch_remote_text(session: winrm.Session, remote_path: str) -> str:
 def fetch_remote_text_if_exists(session: winrm.Session, remote_path: str) -> str:
     try:
         return fetch_remote_text(session, remote_path)
+    except Exception:
+        return ""
+
+
+def fetch_remote_text_ssh(host: str, remote_path: str) -> str:
+    ps = "\n".join(
+        [
+            f"$path = {ps_quote(remote_path)}",
+            "if (-not (Test-Path $path)) { exit 2 }",
+            "$src = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)",
+            "$ms = New-Object IO.MemoryStream",
+            "$src.CopyTo($ms)",
+            "$src.Dispose()",
+            "$encoded = [Convert]::ToBase64String($ms.ToArray())",
+            "$ms.Dispose()",
+            "Write-Output $encoded",
+        ]
+    )
+    encoded = run_ps_ssh(host, ps).strip()
+    return base64.b64decode(encoded).decode("utf-8", errors="replace")
+
+
+def fetch_remote_text_if_exists_ssh(host: str, remote_path: str) -> str:
+    try:
+        return fetch_remote_text_ssh(host, remote_path)
     except Exception:
         return ""
 
@@ -553,6 +775,9 @@ def main() -> int:
     ap.add_argument("--iac-env", default=str(DEFAULT_IAC_ENV))
     ap.add_argument("--server-id", default=DEFAULT_SERVER_ID)
     ap.add_argument("--winrm", default=DEFAULT_WINRM)
+    ap.add_argument("--transport", choices=["ssh", "winrm"], default="ssh")
+    ap.add_argument("--ssh-host", default=DEFAULT_SSH_HOST)
+    ap.add_argument("--remote-python", default=DEFAULT_REMOTE_PYTHON)
     ap.add_argument("--node", default=DEFAULT_NODE)
     ap.add_argument("--s3-env", default=str(DEFAULT_S3_ENV))
     ap.add_argument("--bucket", default="")
@@ -560,6 +785,7 @@ def main() -> int:
     ap.add_argument("--case", action="append", default=[])
     ap.add_argument("--duration", type=int, default=90)
     ap.add_argument("--max-events", type=int, default=80)
+    ap.add_argument("--live-tail", action="store_true", help="Stream remote Frida JSONL while the render is running")
     ap.add_argument("--out-dir", default="")
     args = ap.parse_args()
 
@@ -572,47 +798,86 @@ def main() -> int:
     prefix = args.prefix.strip("/").strip()
     s3_root = f"{prefix}/{stamp}" if prefix else stamp
 
-    password = timeweb_root_password(Path(args.iac_env).expanduser(), args.server_id)
-    session = winrm.Session(args.winrm, auth=("Administrator", password), transport="ntlm")
     remote_root = f"C:\\ae_dev\\frida_traces\\drop_shadow_softness_{stamp}"
     remote_script = remote_root + "\\ae_trace_drop_shadow_remote.py"
     tracer_key = f"{s3_root}/ae_trace_drop_shadow_remote.py"
     upload_s3_text(bucket=bucket, key=tracer_key, text=REMOTE_TRACER, content_type="text/x-python")
-    install_remote_script_from_url(
-        session,
-        remote_script,
-        presign_s3_get(bucket=bucket, key=tracer_key, expires_s=3600),
-    )
+    session: winrm.Session | None = None
+    script_url = presign_s3_get(bucket=bucket, key=tracer_key, expires_s=3600)
+    if args.transport == "winrm":
+        password = timeweb_root_password(Path(args.iac_env).expanduser(), args.server_id)
+        session = winrm.Session(args.winrm, auth=("Administrator", password), transport="ntlm")
+        install_remote_script_from_url(session, remote_script, script_url)
+    else:
+        install_remote_script_from_url_ssh(args.ssh_host, remote_script, script_url)
 
     summaries = []
     for case_id in case_ids:
         remote_log = remote_root + f"\\{case_id}.jsonl"
-        pid = start_remote_trace(session, remote_script, remote_log, args.duration, args.max_events)
+        pid: int | None = None
+        trace_proc: subprocess.Popen[str] | None = None
+        if args.transport == "winrm":
+            assert session is not None
+            pid = start_remote_trace(
+                session,
+                args.remote_python,
+                remote_script,
+                remote_log,
+                args.duration,
+                args.max_events,
+            )
+        else:
+            trace_proc = start_remote_trace_foreground_ssh(
+                args.ssh_host,
+                args.remote_python,
+                remote_script,
+                remote_log,
+                args.duration,
+                args.max_events,
+            )
+        tail_proc = start_remote_tail_ssh(args.ssh_host, remote_log) if args.live_tail and args.transport == "ssh" else None
         time.sleep(3.0)
         job_id = f"drop_shadow_soft_trace_{case_id}_{stamp}"
         try:
             run_case(case_id, job_id, args.node)
         finally:
-            run_ps(session, f"Wait-Process -Id {pid} -Timeout 8", check=False)
-            run_ps(session, f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue", check=False)
+            if args.transport == "winrm":
+                assert session is not None
+                assert pid is not None
+                run_ps(session, f"Wait-Process -Id {pid} -Timeout 8", check=False)
+                run_ps(session, f"Stop-Process -Id {pid} -Force -ErrorAction SilentlyContinue", check=False)
+            else:
+                stop_ssh_process(trace_proc)
+                stop_remote_traces_ssh(args.ssh_host)
+            stop_tail(tail_proc)
 
         log_key = f"{s3_root}/{case_id}.jsonl"
         try:
-            upload_remote_file_to_url(
-                session,
-                remote_log,
-                presign_s3_put(bucket=bucket, key=log_key, expires_s=3600),
-            )
+            if args.transport == "winrm":
+                assert session is not None
+                upload_remote_file_to_url(
+                    session,
+                    remote_log,
+                    presign_s3_put(bucket=bucket, key=log_key, expires_s=3600),
+                )
+                trace_text = download_s3_text(bucket=bucket, key=log_key)
+            else:
+                trace_text = fetch_remote_text_ssh(args.ssh_host, remote_log)
+                upload_s3_text(bucket=bucket, key=log_key, text=trace_text, content_type="application/jsonl")
         except Exception as exc:
-            stdout = fetch_remote_text_if_exists(session, remote_log + ".stdout.txt")
-            stderr = fetch_remote_text_if_exists(session, remote_log + ".stderr.txt")
+            if args.transport == "winrm":
+                assert session is not None
+                stdout = fetch_remote_text_if_exists(session, remote_log + ".stdout.txt")
+                stderr = fetch_remote_text_if_exists(session, remote_log + ".stderr.txt")
+            else:
+                stdout = fetch_remote_text_if_exists_ssh(args.ssh_host, remote_log + ".stdout.txt")
+                stderr = fetch_remote_text_if_exists_ssh(args.ssh_host, remote_log + ".stderr.txt")
             raise RuntimeError(
                 f"remote Frida trace did not produce/upload log for {case_id}\n"
                 f"upload error: {exc}\n"
                 f"remote stdout:\n{stdout}\n"
                 f"remote stderr:\n{stderr}"
             ) from exc
-        trace_text = download_s3_text(bucket=bucket, key=log_key)
         local_log = out_dir / f"{case_id}.jsonl"
         local_log.write_text(trace_text, encoding="utf-8")
         summary = summarize_case(case_id, parse_trace(trace_text))
