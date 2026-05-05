@@ -41,6 +41,8 @@ import frida
 STD_OPTIONS = "?StandardOptions@BoxBlurOptions@GF@@SA?AU12@_N00HMM@Z"
 FAST_BOX_BLUR = "?FastBoxBlur@GF@@YAHAEBV?$shared_ptr@VDevice@GF@@@std@@PEBXHHHHHPEAXHHHHHUPixelFormat@dvamediatypes@@AEBUBoxBlurOptions@1@@Z"
 SET_ALPHA_ONLY = "?SetBlurAlphaChannelOnly@BoxBlurOptions@GF@@QEAAXXZ"
+GET_EFFECT_PROC = "?GetEffectProc@FLT_FCSpec@@UEBAP6AHXZXZ"
+SET_EFFECT_PROC = "?SetEffectProc@FLT_FCSpec@@QEAAXP6AHXZ@Z"
 BOX_OPTIONS_FACTORIES = [
     "?StandardOptions@BoxBlurOptions@GF@@SA?AU12@HHMM@Z",
     "?StandardOptions@BoxBlurOptions@GF@@SA?AU12@_N00HMM@Z",
@@ -88,6 +90,119 @@ RENDER_EXPORTS = [
     {"module": "ImageRenderer.dll", "name": "IR_Composite", "kind": "ir_composite"},
     {"module": "ImageRenderer.dll", "name": "IR_CompositeWithBlendMode", "kind": "ir_composite_with_blend_mode"},
 ]
+CPU_EFFECT_EXPORTS = [
+    {
+        "module": "FLT.dll",
+        "name": "?FLT_GeneralEffectCallPlus@@YAHPEAVFLT_FCSeqSpec@@PEBUT_Time@@HPEAXFFPEAH@Z",
+        "kind": "flt_general_effect_call_plus",
+    },
+    {
+        "module": "FLT.dll",
+        "name": "?FLT_CompletelyGeneralEffectCall@@YAHPEAVFLT_FCSeqSpec@@PEBUT_Time@@PEAX@Z",
+        "kind": "flt_completely_general_effect_call",
+    },
+    {
+        "module": "FLT.dll",
+        "name": "?FLT_FastBlur@@YAXPEAUPF_ProgressInfo@@PEAVPF_World@@MMHHHH1@Z",
+        "kind": "flt_fast_blur",
+    },
+    {
+        "module": "FLT.dll",
+        "name": "?FLT_DirectionalBlur@@YAXPEAUPF_ProgressInfo@@HNNNNPEAUPF_LayerDef@@1@Z",
+        "kind": "flt_directional_blur",
+    },
+    {
+        "module": "PF.dll",
+        "name": "??$PFp_Convolve@VPF_Pixel8@@@@YAHPEAUPF_ProgressInfo@@PEBV?$PF_WorldX@VPF_Pixel8@@@@PEBUM_LRect@@FFIHPEAH333PEAV1@@Z",
+        "kind": "pfp_convolve_pixel8",
+    },
+    {
+        "module": "PF.dll",
+        "name": "??0PF_SummedAreaTable@@QEAA@PEBVPF_World@@_N@Z",
+        "kind": "pf_summed_area_table_ctor",
+    },
+    {
+        "module": "PF.dll",
+        "name": "??0?$PF_HorizontalSumTable@VPF_Pixel8@@@@QEAA@PEBV?$PF_WorldX@VPF_Pixel8@@@@HHNNNNNN_NV?$shared_ptr@$$CBVPF_ColorSettings@@@std@@1@Z",
+        "kind": "pf_horizontal_sum_table_pixel8_ctor",
+    },
+    {
+        "module": "BEE.dll",
+        "name": "?BEE_WorkQueue_RenderToOutput@@YA_KV?$shared_ptr@VBEE_WorkQueue_Client@@@boost@@V?$shared_ptr@VBEE_WorkQueue_RenderToOutput_Params@@@2@V?$shared_ptr@VBEE_WorkQueueIdList@@@2@AEBV?$function@$$A6AX_KV?$shared_ptr@VBEE_WorkQueue_RenderToOutput_Result@@@boost@@@Z@2@AEBV?$function@$$A6AHW4ItemChangeType@@V?$shared_ptr@VBEE_WorkQueue_Item@@@boost@@@Z@2@@Z",
+        "kind": "bee_workqueue_render_to_output",
+    },
+    {
+        "module": "BEE.dll",
+        "name": "?BEEp_WorkQueue_GetRenderGuidWithRO@@YA_KAEBV?$shared_ptr@VBEE_WorkQueue_Client@@@boost@@HHAEBV?$basic_string@_WU?$char_traits@_W@std@@U?$STLAllocator@_W@allocator@dvacore@@@std@@AEBVBEE_LayerRenderOptions@@AEBV?$shared_ptr@VBEE_WorkQueueIdList@@@2@AEBV?$function@$$A6AX_KHAEBVGuid@utility@dvacore@@@Z@2@AEBV?$function@$$A6AHW4ItemChangeType@@V?$shared_ptr@VBEE_WorkQueue_Item@@@boost@@@Z@2@PEAVBEE_Project@@@Z",
+        "kind": "bee_workqueue_get_render_guid_with_ro",
+    },
+    {
+        "module": "BEE.dll",
+        "name": "?BEE_CheckoutLayerFrame@@YAXPEBVBEE_AVLayer@@AEBVBEE_LayerRenderOptions@@W4BEE_LayerCheckoutType@@PEAVBEE_CheckoutReceiptPtr@@PEAF@Z",
+        "kind": "bee_checkout_layer_frame",
+    },
+    {
+        "module": "BEE.dll",
+        "name": "?BEE_CheckoutCachedLayerFrame@@YA_NPEBVBEE_AVLayer@@AEBVBEE_LayerRenderOptions@@W4BEE_LayerCheckoutType@@W4BEE_CacheHitType@@PEAVBEE_CheckoutReceiptPtr@@PEAF@Z",
+        "kind": "bee_checkout_cached_layer_frame",
+    },
+    {
+        "module": "BEE.dll",
+        "name": "?BEE_CheckoutOrRenderLayerFrameAsyncRedraw@@YAHPEAVBEE_PFContextAsyncJobManager@@IPEAVBEE_AVLayer@@AEAVBEE_LayerRenderOptions@@PEAVBEE_CheckoutReceiptPtr@@@Z",
+        "kind": "bee_checkout_or_render_layer_frame_async_redraw",
+    },
+    {
+        "module": "BEE.dll",
+        "name": "?Rasterize2DGraph@BEE_AVLayer@@UEBA?AV?$IntrusivePtr@VRG_RenderNode@@@RefCountedInterface@utility@dvacore@@AEBVBEE_LayerRenderOptions@@PEBVBEE_RenderTrace@@_NPEAVRG_RenderNode@@@Z",
+        "kind": "bee_avlayer_rasterize_2d_graph",
+    },
+    {
+        "module": "BEE.dll",
+        "name": "?GetOutputWorld@FrameTask@bee@@UEAAPEBVPF_World@@XZ",
+        "kind": "bee_frame_task_get_output_world",
+    },
+    {
+        "module": "BEE.dll",
+        "name": "?GetNextRenderTask@BEE_CheckoutItemFrameRange_RenderTaskHelper@@UEAA?AV?$shared_ptr@VRenderTask@bee@@@std@@XZ",
+        "kind": "bee_get_next_render_task",
+    },
+    {
+        "module": "PIN.dll",
+        "name": "?PIN_AddFrame@@YAHPEAVPIN_OutSpec@@HHAEBVPF_MaybeWritableWorld@@PEBUM_LPoint@@AEBV?$shared_ptr@$$CBVPF_ColorSettings@@@std@@PEAUPIN_InterruptFuncs@@E@Z",
+        "kind": "pin_add_frame",
+    },
+    {
+        "module": "PIN.dll",
+        "name": "?PIN_OutputFrame@@YAHPEAVPIN_OutSpec@@AEBV?$shared_ptr@$$CBVPF_ColorSettings@@@std@@AEBVPF_MaybeWritableWorld@@PEAUPIN_InterruptFuncs@@E@Z",
+        "kind": "pin_output_frame",
+    },
+    {
+        "module": "PIN.dll",
+        "name": "?PIN_ReserveFrame@@YAHPEAVPIN_OutSpec@@HHPEAE@Z",
+        "kind": "pin_reserve_frame",
+    },
+    {
+        "module": "PIN.dll",
+        "name": "?PIN_UnReserveFrame@@YAHPEAVPIN_OutSpec@@HHPEAE@Z",
+        "kind": "pin_unreserve_frame",
+    },
+    {
+        "module": "PIN.dll",
+        "name": "?PIN_ColorManageOutputWorld@@YAX_N0PEAVPIN_ColorSettings@@AEBV?$shared_ptr@$$CBVPF_ColorSettings@@@std@@PEAUPIN_InterruptFuncs@@PEAVPF_World@@H@Z",
+        "kind": "pin_color_manage_output_world",
+    },
+    {
+        "module": "PIN.dll",
+        "name": "?PIN_ConvertPFWorldToVideoFrame@@YA_NPEBVPF_World@@_N1HHPEAVPIN_VideoFrameWrapper@@@Z",
+        "kind": "pin_convert_pf_world_to_video_frame",
+    },
+]
+PLUGIN_ENTRY_EXPORTS = [
+    {"module": "Drop_Shadow.aex", "name": "EffectMainExtra", "kind": "drop_shadow_effect_main_extra"},
+    {"module": "Box_Blur.aex", "name": "EffectMainExtra", "kind": "box_blur_effect_main_extra"},
+    {"module": "Box_Blur.aex", "name": "EffectMainExtra2", "kind": "box_blur_effect_main_extra2"},
+    {"module": "Glow.aex", "name": "EffectMain", "kind": "glow_effect_main"},
+]
 OFFSET_HOOKS: list[dict[str, str]] = []
 
 JS = r"""
@@ -106,6 +221,11 @@ const WATCH_MODULES = [
   "GPUFoundation.DLL",
   "ImageRenderer.dll",
   "RendererCPU.dll",
+  "PF.dll",
+  "FLT.dll",
+  "BEE.dll",
+  "PIN.dll",
+  "MEE.dll",
   "RendererGPU.dll",
   "AfterFXLib.dll",
   "Drop_Shadow.aex",
@@ -115,6 +235,12 @@ const WATCH_MODULES = [
 const GENERIC_HOOK_MODULES = {
   "GPUFoundation.DLL": true,
   "ImageRenderer.dll": true,
+  "RendererCPU.dll": true,
+  "PF.dll": true,
+  "FLT.dll": true,
+  "BEE.dll": false,
+  "PIN.dll": false,
+  "MEE.dll": false,
   "Drop_Shadow.aex": true,
   "Box_Blur.aex": true,
   "Glow.aex": true
@@ -124,11 +250,17 @@ const HOOK_ALL_EXPORT_MODULES = {
   "Box_Blur.aex": true,
   "Glow.aex": true
 };
-const GENERIC_EXPORT_RE = /(blur|box|gauss|alpha|premult|unpremult|compos|blend|shadow|glow|mask)/i;
+const GENERIC_EXPORT_RE = /(blur|box|gauss|alpha|premult|unpremult|compos|blend|shadow|glow|mask|effect|render|world|iterate|filter|kernel|convol|soft)/i;
+const NOISY_CXX_EXPORT_RE = /^\?\?[0148]/;
 const boxOptionsFactories = BOX_OPTIONS_FACTORIES_PLACEHOLDER;
 const boxOptionsSetters = BOX_OPTIONS_SETTERS_PLACEHOLDER;
 const renderExports = RENDER_EXPORTS_PLACEHOLDER;
+const cpuEffectExports = CPU_EFFECT_EXPORTS_PLACEHOLDER;
+const pluginEntryExports = PLUGIN_ENTRY_EXPORTS_PLACEHOLDER;
 const offsetHooks = OFFSET_HOOKS_PLACEHOLDER;
+let moduleObserverInstalled = false;
+const effectProcHooks = {};
+const effectProcCallCounts = {};
 
 function hexptr(p) {
   if (p === null || p === undefined) {
@@ -153,6 +285,190 @@ function safeReadPointer(p) {
   try { return ptr(p).readPointer().toString(); } catch (e) { return null; }
 }
 
+function memoryWords(p, count) {
+  if (p === null || p === undefined || ptr(p).isNull()) {
+    return [];
+  }
+  const q = ptr(p);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const off = i * 8;
+    const r = q.add(off);
+    out.push({
+      offset: off,
+      ptr: safeReadPointer(r),
+      s32_0: safeReadS32(r),
+      u32_0: safeReadU32(r),
+      f32_0: safeReadFloat(r),
+      s32_4: safeReadS32(r.add(4)),
+      u32_4: safeReadU32(r.add(4)),
+      f32_4: safeReadFloat(r.add(4))
+    });
+  }
+  return out;
+}
+
+function memoryBytes(p, count) {
+  if (p === null || p === undefined || ptr(p).isNull()) {
+    return null;
+  }
+  try {
+    const bytes = new Uint8Array(ptr(p).readByteArray(count));
+    const out = [];
+    for (let i = 0; i < bytes.length; i++) {
+      out.push(("0" + bytes[i].toString(16)).slice(-2));
+    }
+    return out.join("");
+  } catch (e) {
+    return null;
+  }
+}
+
+function pointerArray(p, count) {
+  if (p === null || p === undefined || ptr(p).isNull()) {
+    return [];
+  }
+  const q = ptr(p);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const pp = safeReadPointer(q.add(i * Process.pointerSize));
+    out.push({index: i, ptr: pp});
+  }
+  return out;
+}
+
+function dumpPfParamDef(p) {
+  if (p === null || p === undefined || ptr(p).isNull()) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    words: memoryWords(q, 24)
+  };
+}
+
+function dumpPfWorldLike(p) {
+  if (p === null || p === undefined || ptr(p).isNull()) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    words: memoryWords(q, 20)
+  };
+}
+
+function dumpAeEffectCall(ctx, moduleName, exportName) {
+  const paramsPtr = ptr(ctx.r9);
+  const paramPtrs = pointerArray(paramsPtr, 24);
+  return {
+    module: moduleName,
+    export_name: exportName,
+    // AE effect entrypoints are normally PF_Cmd, PF_InData*, PF_OutData*, PF_ParamDef*[],
+    // then PF_LayerDef* output and extra args on the Windows x64 stack.
+    pf_cmd: ptr(ctx.rcx).toString(),
+    pf_cmd_s32: ptr(ctx.rcx).toInt32(),
+    in_data: ptr(ctx.rdx).toString(),
+    out_data: ptr(ctx.r8).toString(),
+    params: paramsPtr.toString(),
+    output_stack_0x28: safeReadPointer(ctx.rsp.add(0x28)),
+    extra_stack_0x30: safeReadPointer(ctx.rsp.add(0x30)),
+    in_data_words: memoryWords(ptr(ctx.rdx), 24),
+    out_data_words: memoryWords(ptr(ctx.r8), 16),
+    params_array: paramPtrs,
+    param_defs: paramPtrs.slice(0, 12).map(function (entry) {
+      return {index: entry.index, ptr: entry.ptr, def: entry.ptr === null ? null : dumpPfParamDef(ptr(entry.ptr))};
+    }),
+    output_words: memoryWords(safeReadPointer(ctx.rsp.add(0x28)), 16),
+    extra_words: memoryWords(safeReadPointer(ctx.rsp.add(0x30)), 12)
+  };
+}
+
+function installEffectProcPointer(address, origin) {
+  if (address === null || address === undefined) {
+    return;
+  }
+  const p = ptr(address);
+  if (p.isNull()) {
+    return;
+  }
+  const loc = moduleOffset(p);
+  if (loc.module === null) {
+    return;
+  }
+  const key = p.toString();
+  if (effectProcHooks[key]) {
+    return;
+  }
+  try {
+    Interceptor.attach(p, {
+      onEnter: function () {
+        const seen = effectProcCallCounts[key] || 0;
+        if (seen >= 80) {
+          return;
+        }
+        effectProcCallCounts[key] = seen + 1;
+        const current = moduleOffset(p);
+        emit("effect_proc_enter", {
+          origin: origin,
+          address: p.toString(),
+          module: current.module,
+          offset: current.offset,
+          call_index: seen + 1,
+          ae_effect_call: dumpAeEffectCall(this.context, current.module || "unknown", "effect_proc_pointer"),
+          backtrace: backtrace(this.context)
+        });
+      },
+      onLeave: function (retval) {
+        emit("effect_proc_leave", {
+          origin: origin,
+          address: p.toString(),
+          retval: ptr(retval).toString()
+        });
+      }
+    });
+    effectProcHooks[key] = true;
+    meta("effect_proc_hook_installed", {
+      origin: origin,
+      address: p.toString(),
+      module: loc.module,
+      offset: loc.offset
+    });
+  } catch (e) {
+    effectProcHooks[key] = true;
+    meta("effect_proc_hook_error", {
+      origin: origin,
+      address: p.toString(),
+      module: loc.module,
+      offset: loc.offset,
+      error: String(e)
+    });
+  }
+}
+
+function dumpCpuEffectCall(ctx, target) {
+  return {
+    module: target.module,
+    export_name: target.name,
+    cpu_kind: target.kind,
+    regs: regSnapshot(ctx),
+    stack: stackSnapshot(ctx),
+    seq_spec_words: memoryWords(ptr(ctx.rcx), 20),
+    time_words: memoryWords(ptr(ctx.rdx), 8),
+    r8_words: memoryWords(ptr(ctx.r8), 16),
+    r9_words: memoryWords(ptr(ctx.r9), 16),
+    rcx_world_like: dumpPfWorldLike(ptr(ctx.rcx)),
+    rdx_world_like: dumpPfWorldLike(ptr(ctx.rdx)),
+    r8_world_like: dumpPfWorldLike(ptr(ctx.r8)),
+    r9_world_like: dumpPfWorldLike(ptr(ctx.r9)),
+    stack_0x28_world_like: dumpPfWorldLike(safeReadPointer(ctx.rsp.add(0x28))),
+    stack_0x30_world_like: dumpPfWorldLike(safeReadPointer(ctx.rsp.add(0x30))),
+    stack_0x38_world_like: dumpPfWorldLike(safeReadPointer(ctx.rsp.add(0x38))),
+    backtrace: backtrace(ctx)
+  };
+}
+
 function dumpBoxBlurOptions(p) {
   const q = ptr(p);
   return {
@@ -167,6 +483,68 @@ function dumpBoxBlurOptions(p) {
     force_v2_vertical: (safeReadU32(q.add(0x18)) >>> 8) & 0xff,
     using_16_bit_compute: (safeReadU32(q.add(0x18)) >>> 16) & 0xff
   };
+}
+
+function dumpBoxBlur1DImgOpInfo(p) {
+  if (p === null || p === undefined || ptr(p).isNull()) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    vtable: safeReadPointer(q),
+    field_08: safeReadS32(q.add(0x08)),
+    field_0c: safeReadS32(q.add(0x0c)),
+    field_10: safeReadS32(q.add(0x10)),
+    field_14: safeReadS32(q.add(0x14)),
+    field_18: safeReadS32(q.add(0x18)),
+    field_1c: safeReadS32(q.add(0x1c)),
+    radius_float_20: safeReadFloat(q.add(0x20)),
+    rounded_radius_24: safeReadS32(q.add(0x24)),
+    flags_or_alpha_28: safeReadU32(q.add(0x28)),
+    field_38: safeReadS32(q.add(0x38)),
+    span_mode_3c: safeReadU32(q.add(0x3c)) & 0xff,
+    premult_or_channel_3d: (safeReadU32(q.add(0x3c)) >>> 8) & 0xff,
+    bool_3e: (safeReadU32(q.add(0x3c)) >>> 16) & 0xff,
+    bool_3f: (safeReadU32(q.add(0x3c)) >>> 24) & 0xff,
+    raw_00_80: memoryBytes(q, 0x80),
+    words: memoryWords(q, 16)
+  };
+}
+
+function decodeXmmValue(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const out = {raw: String(value)};
+  try {
+    if (value instanceof ArrayBuffer) {
+      const view = new DataView(value);
+      const bytes = new Uint8Array(value);
+      out.hex = Array.prototype.map.call(bytes, function (b) {
+        return ("0" + b.toString(16)).slice(-2);
+      }).join("");
+      out.f32_0_le = view.getFloat32(0, true);
+      out.f32_1_le = view.getFloat32(4, true);
+      out.f64_0_le = view.getFloat64(0, true);
+    }
+  } catch (e) {
+    out.error = String(e);
+  }
+  return out;
+}
+
+function xmmSnapshot(ctx) {
+  const names = ["xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"];
+  const out = {};
+  names.forEach(function (name) {
+    try {
+      out[name] = decodeXmmValue(ctx[name]);
+    } catch (e) {
+      out[name] = {error: String(e)};
+    }
+  });
+  return out;
 }
 
 function meta(kind, payload) {
@@ -382,6 +760,8 @@ function installRenderExportHooks() {
     hookByExport(target.module, target.name, "render_export:" + target.kind, function (address) {
       Interceptor.attach(address, {
         onEnter: function () {
+          this.thisPtr = ptr(this.context.rcx);
+          this.renderKind = target.kind;
           emit("render_export_enter", {
             render_kind: target.kind,
             module: target.module,
@@ -389,11 +769,110 @@ function installRenderExportHooks() {
             address: address.toString(),
             has_drop_shadow_frame: hasDropShadowFrame(this.context),
             regs: regSnapshot(this.context),
+            xmm: xmmSnapshot(this.context),
             stack: stackSnapshot(this.context),
+            box_blur_1d_op_before: target.kind === "gf_box_blur_1d_imgop_ctor_full" ? dumpBoxBlur1DImgOpInfo(this.thisPtr) : null,
             backtrace: backtrace(this.context)
+          });
+        },
+        onLeave: function (retval) {
+          if (this.renderKind === "gf_box_blur_1d_imgop_ctor_full") {
+            emit("render_export_leave", {
+              render_kind: target.kind,
+              module: target.module,
+              export_name: target.name,
+              retval: ptr(retval).toString(),
+              box_blur_1d_op_after: dumpBoxBlur1DImgOpInfo(this.thisPtr)
+            });
+          }
+        }
+      });
+    });
+  });
+}
+
+function installCpuEffectHooks() {
+  cpuEffectExports.forEach(function (target) {
+    hookByExport(target.module, target.name, "cpu_effect:" + target.kind, function (address) {
+      Interceptor.attach(address, {
+        onEnter: function () {
+          this.target = target;
+          emit("cpu_effect_enter", dumpCpuEffectCall(this.context, target));
+        },
+        onLeave: function (retval) {
+          emit("cpu_effect_leave", {
+            module: target.module,
+            export_name: target.name,
+            cpu_kind: target.kind,
+            retval: ptr(retval).toString()
           });
         }
       });
+    });
+  });
+}
+
+function installPluginEntryHooks() {
+  pluginEntryExports.forEach(function (target) {
+    hookByExport(target.module, target.name, "plugin_entry:" + target.kind, function (address) {
+      Interceptor.attach(address, {
+        onEnter: function () {
+          emit("plugin_entry_enter", {
+            module: target.module,
+            export_name: target.name,
+            plugin_kind: target.kind,
+            address: address.toString(),
+            offset: ptr(address).sub(Process.findModuleByName(target.module).base).toString(),
+            ae_effect_call: dumpAeEffectCall(this.context, target.module, target.name),
+            backtrace: backtrace(this.context)
+          });
+        },
+        onLeave: function (retval) {
+          emit("plugin_entry_leave", {
+            module: target.module,
+            export_name: target.name,
+            plugin_kind: target.kind,
+            retval: ptr(retval).toString()
+          });
+        }
+      });
+    });
+  });
+}
+
+function installEffectProcDiscoveryHooks() {
+  hookByExport("FLT.dll", GET_EFFECT_PROC_PLACEHOLDER, "effect_proc_getter", function (address) {
+    Interceptor.attach(address, {
+      onEnter: function () {
+        this.fcSpec = ptr(this.context.rcx);
+      },
+      onLeave: function (retval) {
+        const proc = ptr(retval);
+        const loc = moduleOffset(proc);
+        emit("effect_proc_get_leave", {
+          fc_spec: this.fcSpec.toString(),
+          proc: proc.toString(),
+          proc_module: loc.module,
+          proc_offset: loc.offset
+        });
+        installEffectProcPointer(proc, "GetEffectProc");
+      }
+    });
+  });
+  hookByExport("FLT.dll", SET_EFFECT_PROC_PLACEHOLDER, "effect_proc_setter", function (address) {
+    Interceptor.attach(address, {
+      onEnter: function () {
+        const proc = ptr(this.context.rdx);
+        const loc = moduleOffset(proc);
+        emit("effect_proc_set_enter", {
+          fc_spec: ptr(this.context.rcx).toString(),
+          proc: proc.toString(),
+          proc_module: loc.module,
+          proc_offset: loc.offset,
+          backtrace: backtrace(this.context)
+        });
+        installEffectProcPointer(proc, "SetEffectProc");
+      }
     });
   });
 }
@@ -421,7 +900,20 @@ function installOffsetHooks() {
             offset: target.offset,
             address: address.toString(),
             regs: regSnapshot(this.context),
+            xmm: xmmSnapshot(this.context),
             stack: stackSnapshot(this.context),
+            rax_words: memoryWords(ptr(this.context.rax), 20),
+            rbx_words: memoryWords(ptr(this.context.rbx), 20),
+            rcx_words: memoryWords(ptr(this.context.rcx), 20),
+            rdx_words: memoryWords(ptr(this.context.rdx), 20),
+            rsi_words: memoryWords(ptr(this.context.rsi), 20),
+            rdi_words: memoryWords(ptr(this.context.rdi), 20),
+            r8_words: memoryWords(ptr(this.context.r8), 20),
+            r9_words: memoryWords(ptr(this.context.r9), 20),
+            rcx_world_like: dumpPfWorldLike(ptr(this.context.rcx)),
+            rdx_world_like: dumpPfWorldLike(ptr(this.context.rdx)),
+            r8_world_like: dumpPfWorldLike(ptr(this.context.r8)),
+            r9_world_like: dumpPfWorldLike(ptr(this.context.r9)),
             backtrace: backtrace(this.context)
           });
         }
@@ -462,10 +954,21 @@ function stackSnapshot(ctx) {
 
 function regSnapshot(ctx) {
   return {
+    rax: ptr(ctx.rax).toString(),
+    rbx: ptr(ctx.rbx).toString(),
     rcx: ptr(ctx.rcx).toString(),
     rdx: ptr(ctx.rdx).toString(),
+    rsi: ptr(ctx.rsi).toString(),
+    rdi: ptr(ctx.rdi).toString(),
+    rbp: ptr(ctx.rbp).toString(),
     r8: ptr(ctx.r8).toString(),
     r9: ptr(ctx.r9).toString(),
+    r10: ptr(ctx.r10).toString(),
+    r11: ptr(ctx.r11).toString(),
+    r12: ptr(ctx.r12).toString(),
+    r13: ptr(ctx.r13).toString(),
+    r14: ptr(ctx.r14).toString(),
+    r15: ptr(ctx.r15).toString(),
     rsp: ptr(ctx.rsp).toString()
   };
 }
@@ -507,6 +1010,9 @@ function installGenericExportHook(moduleName, module, exp) {
   if (!HOOK_ALL_EXPORT_MODULES[moduleName] && !GENERIC_EXPORT_RE.test(exp.name)) {
     return;
   }
+  if ((moduleName === "BEE.dll" || moduleName === "PIN.dll" || moduleName === "MEE.dll") && NOISY_CXX_EXPORT_RE.test(exp.name)) {
+    return;
+  }
   const key = moduleName + "!" + exp.name + "!generic";
   if (installedHooks[key]) {
     return;
@@ -531,6 +1037,7 @@ function installGenericExportHook(moduleName, module, exp) {
           has_drop_shadow_frame: hasDropShadowFrame(this.context),
           regs: regSnapshot(this.context),
           stack: stackSnapshot(this.context),
+          ae_effect_call: HOOK_ALL_EXPORT_MODULES[moduleName] ? dumpAeEffectCall(this.context, moduleName, exp.name) : null,
           backtrace: backtrace(this.context).slice(0, 16)
         });
       }
@@ -576,10 +1083,35 @@ function installAllHooks() {
   installKnownHooks();
   installBoxOptionHooks();
   installRenderExportHooks();
+  installCpuEffectHooks();
+  installPluginEntryHooks();
+  installEffectProcDiscoveryHooks();
   installOffsetHooks();
   installBroadHooks();
 }
 
+function installModuleObserver() {
+  if (moduleObserverInstalled || typeof Process.attachModuleObserver !== "function") {
+    return;
+  }
+  moduleObserverInstalled = true;
+  Process.attachModuleObserver({
+    onAdded: function (module) {
+      if (WATCH_MODULES.indexOf(module.name) === -1) {
+        return;
+      }
+      meta("module_added", {
+        module: module.name,
+        base: module.base.toString(),
+        size: module.size,
+        path: module.path
+      });
+      installAllHooks();
+    }
+  });
+}
+
+installModuleObserver();
 installAllHooks();
 setInterval(installAllHooks, 500);
 """
@@ -601,9 +1133,13 @@ def main() -> int:
     script_text = script_text.replace("STD_OPTIONS_PLACEHOLDER", json.dumps(STD_OPTIONS))
     script_text = script_text.replace("FAST_BOX_BLUR_PLACEHOLDER", json.dumps(FAST_BOX_BLUR))
     script_text = script_text.replace("SET_ALPHA_ONLY_PLACEHOLDER", json.dumps(SET_ALPHA_ONLY))
+    script_text = script_text.replace("GET_EFFECT_PROC_PLACEHOLDER", json.dumps(GET_EFFECT_PROC))
+    script_text = script_text.replace("SET_EFFECT_PROC_PLACEHOLDER", json.dumps(SET_EFFECT_PROC))
     script_text = script_text.replace("BOX_OPTIONS_FACTORIES_PLACEHOLDER", json.dumps(BOX_OPTIONS_FACTORIES))
     script_text = script_text.replace("BOX_OPTIONS_SETTERS_PLACEHOLDER", json.dumps(BOX_OPTIONS_SETTERS))
     script_text = script_text.replace("RENDER_EXPORTS_PLACEHOLDER", json.dumps(RENDER_EXPORTS))
+    script_text = script_text.replace("CPU_EFFECT_EXPORTS_PLACEHOLDER", json.dumps(CPU_EFFECT_EXPORTS))
+    script_text = script_text.replace("PLUGIN_ENTRY_EXPORTS_PLACEHOLDER", json.dumps(PLUGIN_ENTRY_EXPORTS))
     offset_hooks = []
     for item in args.offset_hook:
         module, _, rest = item.partition(":")
@@ -1229,8 +1765,19 @@ def summarize_case(case_id: str, events: list[dict[str, object]]) -> dict[str, o
     box_factory = [e for e in events if e.get("kind") == "box_options_factory_leave"]
     box_setter = [e for e in events if e.get("kind") == "box_options_setter_leave"]
     render_exports = [e for e in events if e.get("kind") == "render_export_enter"]
+    cpu_effects = [e for e in events if e.get("kind") == "cpu_effect_enter"]
+    plugin_entries = [e for e in events if e.get("kind") == "plugin_entry_enter"]
+    effect_proc_get = [e for e in events if e.get("kind") == "effect_proc_get_leave"]
+    effect_proc_set = [e for e in events if e.get("kind") == "effect_proc_set_enter"]
+    effect_proc_entries = [e for e in events if e.get("kind") == "effect_proc_enter"]
     offset_hooks = [e for e in events if e.get("kind") == "offset_hook_enter"]
     generic = [e for e in events if e.get("kind") == "generic_export_enter"]
+    ae_effect = [
+        e
+        for e in generic
+        if e.get("module") in {"Drop_Shadow.aex", "Box_Blur.aex", "Glow.aex"}
+        and isinstance(e.get("ae_effect_call"), dict)
+    ]
     generic_hooks = [e for e in events if e.get("kind") == "generic_hook_installed"]
     modules = [e for e in events if e.get("kind") == "module_snapshot"]
     return {
@@ -1243,10 +1790,22 @@ def summarize_case(case_id: str, events: list[dict[str, object]]) -> dict[str, o
         "box_options_setter_leave": box_setter[:8],
         "render_export_enter": render_exports[:12],
         "render_export_count": len(render_exports),
+        "cpu_effect_enter": cpu_effects[:12],
+        "cpu_effect_count": len(cpu_effects),
+        "plugin_entry_enter": plugin_entries[:12],
+        "plugin_entry_count": len(plugin_entries),
+        "effect_proc_get_leave": effect_proc_get[:12],
+        "effect_proc_get_count": len(effect_proc_get),
+        "effect_proc_set_enter": effect_proc_set[:12],
+        "effect_proc_set_count": len(effect_proc_set),
+        "effect_proc_enter": effect_proc_entries[:12],
+        "effect_proc_count": len(effect_proc_entries),
         "offset_hook_enter": offset_hooks[:12],
         "offset_hook_count": len(offset_hooks),
         "generic_export_enter": generic[:12],
         "generic_export_count": len(generic),
+        "ae_effect_call_enter": ae_effect[:12],
+        "ae_effect_call_count": len(ae_effect),
         "generic_hook_count": len(generic_hooks),
         "module_snapshot": modules[:8],
         "event_count": len(events),

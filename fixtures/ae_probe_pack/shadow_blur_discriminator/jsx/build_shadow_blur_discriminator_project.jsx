@@ -10,6 +10,8 @@ and writes a small property dump for effect index verification.
 */
 
 (function buildShadowBlurDiscriminatorProject() {
+    resetProjectAndCaches();
+
     app.beginUndoGroup("Build Shadow / Blur Discriminator Probe Pack");
 
     var SCRIPT_FILE = new File($.fileName);
@@ -34,10 +36,8 @@ and writes a small property dump for effect index verification.
         colorShadowOpacity: 130
     };
 
-    if (!app.project) {
-        app.newProject();
-    }
     app.project.bitsPerChannel = 8;
+    purgeCaches();
 
     var folders = {
         root: getOrCreateFolder("AE_SHADOW_BLUR_DISCRIMINATOR"),
@@ -60,6 +60,25 @@ and writes a small property dump for effect index verification.
     );
 
     app.endUndoGroup();
+
+    function resetProjectAndCaches() {
+        purgeCaches();
+        if (app.project) {
+            try {
+                app.project.close(CloseOptions.DO_NOT_SAVE_CHANGES);
+            } catch (_closeErr) {
+            }
+        }
+        app.newProject();
+        purgeCaches();
+    }
+
+    function purgeCaches() {
+        try {
+            app.purge(PurgeTarget.ALL_CACHES);
+        } catch (_purgeErr) {
+        }
+    }
 
     function buildSources(cfg, folder, packDir) {
         return {

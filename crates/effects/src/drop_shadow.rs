@@ -6,7 +6,7 @@ use raster_cpu::{composite_normal, Canvas};
 use serde_json::Value;
 
 const DROP_SHADOW_SOFTNESS_DIVISOR: f32 = 2.71;
-const DROP_SHADOW_SOFTNESS_SCALE: f32 = 1.4;
+const DROP_SHADOW_FLT_SOFTNESS_SCALE: f32 = 0.5;
 const DROP_SHADOW_SOFTNESS_ITERATIONS: u32 = 1;
 
 #[derive(Debug, Default)]
@@ -200,7 +200,7 @@ fn drop_shadow_blur_radius(softness: f32) -> u32 {
     if softness <= 0.0 {
         0
     } else {
-        blur_radius((softness * DROP_SHADOW_SOFTNESS_SCALE) / DROP_SHADOW_SOFTNESS_DIVISOR)
+        blur_radius((softness * DROP_SHADOW_FLT_SOFTNESS_SCALE) / DROP_SHADOW_SOFTNESS_DIVISOR)
     }
 }
 
@@ -378,10 +378,12 @@ mod tests {
     }
 
     #[test]
-    fn ae_probe_softness_18_expands_shadow_by_ten_pixels() {
-        assert_eq!(drop_shadow_blur_radius(18.0), 10);
+    fn ae_cpu_probe_softness_18_uses_flt_blur_radius() {
+        assert_eq!(drop_shadow_blur_radius(18.0), 4);
         assert_eq!(drop_shadow_blur_iterations(18.0), 1);
         assert_eq!(drop_shadow_blur_radius(1.0), 1);
+        assert_eq!(drop_shadow_blur_radius(8.0), 2);
+        assert_eq!(drop_shadow_blur_radius(32.0), 6);
         assert_eq!(drop_shadow_blur_radius(0.0), 0);
         assert_eq!(drop_shadow_blur_iterations(0.0), 0);
     }
@@ -404,7 +406,7 @@ mod tests {
         );
 
         assert_eq!(trace.params.opacity_normalized, 0.5);
-        assert_eq!(trace.params.blur_radius, 2);
+        assert_eq!(trace.params.blur_radius, 1);
         assert_eq!(trace.params.blur_iterations, 1);
         assert_eq!(trace.alpha.input.nonzero_pixels, 1);
         assert_eq!(trace.alpha.raw_offset_shadow.nonzero_pixels, 1);
