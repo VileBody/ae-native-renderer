@@ -33,7 +33,9 @@ or audit without reopening the same binary.
   proprietary material.
 - `docs/reverse_engineering/`: stable workflow docs and cross-links.
   Start M19/color-alpha work from `M19_REVERSE_LOCK.md`, then use
-  `MATH_CONTRACTS_GUARDRAILS.md` for cross-module guardrails.
+  `MATH_CONTRACTS_GUARDRAILS.md` for cross-module guardrails. For remaining
+  module work, use `MODULE_HYPOTHESIS_VALIDATION_PLANS.md` before implementing
+  formula candidates.
 - `docs/phase_reports/`: dated findings and module-specific reverse notes, for
   example `AE_REVERSE_GEOMETRY2_GHIDRA.md`.
   The current artifact intake checklist is
