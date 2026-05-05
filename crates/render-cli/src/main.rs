@@ -2,7 +2,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use media_gst::{VideoSink, VideoSource};
 use serde_json::{json, Value};
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -117,6 +117,38 @@ enum Command {
         #[arg(long)]
         fail_on_diff: bool,
     },
+    HypothesisPack {
+        #[arg(long)]
+        module: String,
+        #[arg(long)]
+        candidate: String,
+        #[arg(long, value_enum, default_value_t = HypothesisStatusArg::Instrumented)]
+        status: HypothesisStatusArg,
+        #[arg(long, value_enum, default_value_t = HypothesisGateKindArg::Isolated)]
+        gate: HypothesisGateKindArg,
+        #[arg(long)]
+        question: Option<String>,
+        #[arg(long)]
+        hypothesis: Option<String>,
+        #[arg(long = "evidence")]
+        evidence_sources: Vec<String>,
+        #[arg(long = "note")]
+        notes: Vec<String>,
+        #[arg(long)]
+        candidate_config: Option<PathBuf>,
+        #[arg(long, default_value = "fixtures/ae_conformance_pack")]
+        pack: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long = "case")]
+        cases: Vec<String>,
+        #[arg(long)]
+        threshold_mean: Option<f64>,
+        #[arg(long)]
+        threshold_max: Option<u8>,
+        #[arg(long)]
+        fail_on_diff: bool,
+    },
     Job {
         #[arg(long)]
         job_dir: PathBuf,
@@ -149,6 +181,27 @@ enum RouteMode {
     Auto,
     Native,
     Fallback,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum HypothesisStatusArg {
+    CandidateReady,
+    Instrumented,
+    IsolatedImproved,
+    CompositionImproved,
+    StackSafe,
+    NeedsNewProbe,
+    Rejected,
+    ReverseImplemented,
+    ParityLocked,
+}
+
+#[derive(Debug, Clone, Copy, ValueEnum, PartialEq, Eq)]
+enum HypothesisGateKindArg {
+    Isolated,
+    Composition,
+    Stack,
+    Template,
 }
 
 struct CliExit {
@@ -276,6 +329,48 @@ fn run() -> Result<(), CliExit> {
                 Ok(())
             }
         }
+        Command::HypothesisPack {
+            module,
+            candidate,
+            status,
+            gate,
+            question,
+            hypothesis,
+            evidence_sources,
+            notes,
+            candidate_config,
+            pack,
+            out,
+            cases,
+            threshold_mean,
+            threshold_max,
+            fail_on_diff,
+        } => {
+            let ok = run_hypothesis_pack(HypothesisPackOptions {
+                module,
+                candidate,
+                status,
+                gate,
+                question,
+                hypothesis,
+                evidence_sources,
+                notes,
+                candidate_config,
+                pack,
+                out,
+                cases,
+                threshold_mean,
+                threshold_max,
+            })
+            .map_err(CliExit::render)?;
+            if fail_on_diff && !ok {
+                Err(CliExit::render(anyhow::anyhow!(
+                    "hypothesis conformance thresholds failed"
+                )))
+            } else {
+                Ok(())
+            }
+        }
         Command::Job {
             job_dir,
             payload,
@@ -327,6 +422,141 @@ fn doctor() -> anyhow::Result<()> {
         effects::EffectRegistry::known_match_names().len()
     );
     Ok(())
+}
+
+struct HypothesisPackOptions {
+    module: String,
+    candidate: String,
+    status: HypothesisStatusArg,
+    gate: HypothesisGateKindArg,
+    question: Option<String>,
+    hypothesis: Option<String>,
+    evidence_sources: Vec<String>,
+    notes: Vec<String>,
+    candidate_config: Option<PathBuf>,
+    pack: PathBuf,
+    out: PathBuf,
+    cases: Vec<String>,
+    threshold_mean: Option<f64>,
+    threshold_max: Option<u8>,
+}
+
+fn run_hypothesis_pack(options: HypothesisPackOptions) -> anyhow::Result<bool> {
+    fs::create_dir_all(&options.out)?;
+    let ok = conformance_pack::run_pack(conformance_pack::RunOptions {
+        pack: options.pack,
+        out: options.out.clone(),
+        cases: options.cases,
+        threshold_mean: options.threshold_mean,
+        threshold_max: options.threshold_max,
+    })?;
+
+    let conformance_report_path = options.out.join("report.json");
+    let conformance_report: Value =
+        serde_json::from_str(&fs::read_to_string(&conformance_report_path)?)?;
+    let candidate_config = match options.candidate_config {
+        Some(path) => serde_json::from_str(
+            &fs::read_to_string(&path)
+                .with_context(|| format!("reading candidate config {}", path.display()))?,
+        )
+        .with_context(|| format!("parsing candidate config {}", path.display()))?,
+        None => Value::Null,
+    };
+
+    let case_summaries = conformance_report
+        .get("cases")
+        .and_then(Value::as_array)
+        .map(|cases| {
+            cases
+                .iter()
+                .map(|case| {
+                    json!({
+                        "case": case.get("case"),
+                        "status": case.get("status"),
+                        "ok": case.get("ok"),
+                        "modules": case.get("modules"),
+                        "summary": case.get("summary")
+                    })
+                })
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let case_ids = conformance_report
+        .get("cases")
+        .and_then(Value::as_array)
+        .map(|cases| {
+            cases
+                .iter()
+                .filter_map(|case| case.get("case").and_then(Value::as_str))
+                .map(str::to_string)
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+
+    let mut gate_artifacts = BTreeMap::new();
+    gate_artifacts.insert(
+        "conformance_report".to_string(),
+        conformance_report_path.display().to_string(),
+    );
+    let gate = testkit::HypothesisGate {
+        kind: hypothesis_gate_kind(options.gate),
+        name: "native_conformance_pack".to_string(),
+        cases: case_ids,
+        ok,
+        metrics: json!({
+            "summary": conformance_report.get("summary"),
+            "m19_alpha_composite_gate": conformance_report.get("m19_alpha_composite_gate"),
+            "cases": case_summaries
+        }),
+        artifacts: gate_artifacts,
+        notes: options.notes.clone(),
+    };
+
+    let mut artifacts = BTreeMap::new();
+    artifacts.insert(
+        "conformance_report".to_string(),
+        conformance_report_path.display().to_string(),
+    );
+    let hypothesis_report_path = options.out.join("hypothesis_report.json");
+    let mut report = testkit::HypothesisRunReport::new(options.module, options.candidate)
+        .with_status(hypothesis_status(options.status))
+        .with_candidate_config(candidate_config)?;
+    report.question = options.question;
+    report.hypothesis = options.hypothesis;
+    report.evidence_sources = options.evidence_sources;
+    report.notes = options.notes;
+    report.gates.push(gate);
+    report.artifacts = artifacts;
+    testkit::write_hypothesis_report(&hypothesis_report_path, &report)?;
+    println!(
+        "hypothesis-pack.done ok={} report={}",
+        ok,
+        hypothesis_report_path.display()
+    );
+    Ok(ok)
+}
+
+fn hypothesis_status(status: HypothesisStatusArg) -> testkit::HypothesisStatus {
+    match status {
+        HypothesisStatusArg::CandidateReady => testkit::HypothesisStatus::CandidateReady,
+        HypothesisStatusArg::Instrumented => testkit::HypothesisStatus::Instrumented,
+        HypothesisStatusArg::IsolatedImproved => testkit::HypothesisStatus::IsolatedImproved,
+        HypothesisStatusArg::CompositionImproved => testkit::HypothesisStatus::CompositionImproved,
+        HypothesisStatusArg::StackSafe => testkit::HypothesisStatus::StackSafe,
+        HypothesisStatusArg::NeedsNewProbe => testkit::HypothesisStatus::NeedsNewProbe,
+        HypothesisStatusArg::Rejected => testkit::HypothesisStatus::Rejected,
+        HypothesisStatusArg::ReverseImplemented => testkit::HypothesisStatus::ReverseImplemented,
+        HypothesisStatusArg::ParityLocked => testkit::HypothesisStatus::ParityLocked,
+    }
+}
+
+fn hypothesis_gate_kind(gate: HypothesisGateKindArg) -> testkit::HypothesisGateKind {
+    match gate {
+        HypothesisGateKindArg::Isolated => testkit::HypothesisGateKind::Isolated,
+        HypothesisGateKindArg::Composition => testkit::HypothesisGateKind::Composition,
+        HypothesisGateKindArg::Stack => testkit::HypothesisGateKind::Stack,
+        HypothesisGateKindArg::Template => testkit::HypothesisGateKind::Template,
+    }
 }
 
 fn probe(path: PathBuf) -> anyhow::Result<()> {

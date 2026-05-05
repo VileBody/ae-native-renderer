@@ -153,9 +153,7 @@ fn known_fixture_font_paths(font_id: &str) -> Vec<PathBuf> {
     let normalized = normalized_font_name(font_id);
     let file_name = match normalized.as_str() {
         "pointlight" | "point" => "Point-Light.ttf",
-        "montserratbolditalic" | "montserratitalic" | "montserrat" => {
-            "Montserrat-Italic[wght].ttf"
-        }
+        "montserratbolditalic" | "montserratitalic" | "montserrat" => "Montserrat-Italic[wght].ttf",
         _ => return Vec::new(),
     };
 
@@ -382,7 +380,8 @@ mod tests {
 
     #[test]
     fn montserrat_family_resolution_uses_conformance_asset_when_available() {
-        let path = PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf");
+        let path =
+            PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf");
         if !path.exists() {
             return;
         }

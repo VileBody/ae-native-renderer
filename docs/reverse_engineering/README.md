@@ -47,6 +47,9 @@ or audit without reopening the same binary.
 - `fixtures/ae_probe_pack/`: larger exploratory AE probe packs and captured
   output metadata.
 
+Local Rust/GStreamer setup for running this workflow without Docker is documented
+in `docs/LOCAL_RUST_TOOLCHAIN.md`.
+
 Do not commit or redistribute Adobe binaries. The repository `.gitignore`
 already ignores `target/`, `.aex`, `.dll`, `.aep`, and most generated media; keep
 new binary copies inside ignored locations anyway.

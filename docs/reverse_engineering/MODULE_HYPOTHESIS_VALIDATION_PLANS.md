@@ -54,6 +54,29 @@ Do not keep a large permanent "formula zoo" in production code. Candidate paths
 are allowed while experimenting, but a locked module should expose one default
 formula plus narrow compatibility guards.
 
+Current shared implementation:
+
+- `testkit::HypothesisRunReport` writes schema
+  `ae-native-renderer.hypothesis-run.v1` with module, candidate id, candidate
+  config hash, status, gates, evidence, artifacts, and notes.
+- `render-cli hypothesis-pack` wraps a conformance-pack run and writes
+  `hypothesis_report.json` beside the native `report.json`.
+
+Example:
+
+```bash
+cargo run -p render-cli -- hypothesis-pack \
+  --module M10 \
+  --candidate shadow_blur_floor \
+  --status instrumented \
+  --gate isolated \
+  --question "How does AE map Drop Shadow softness to blur radius?" \
+  --hypothesis "radius is floored before the shared blur kernel" \
+  --evidence docs/reverse_engineering/effect_math_blur_glow_shadow.md \
+  --case EFF_010 \
+  --out target/ae_agents/m10_shadow_blur_floor
+```
+
 ## M05 Text Layout / Glyph Metrics
 
 ### Sequential Hypotheses

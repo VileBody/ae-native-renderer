@@ -1,6 +1,7 @@
 pub mod conformance;
 pub mod fixtures;
 pub mod golden;
+pub mod hypothesis;
 pub mod image_diff;
 pub mod interpolation;
 pub mod obligations;
@@ -15,6 +16,7 @@ pub mod temporal;
 
 pub use conformance::*;
 pub use fixtures::*;
+pub use hypothesis::*;
 pub use image_diff::*;
 pub use interpolation::*;
 pub use obligations::*;
