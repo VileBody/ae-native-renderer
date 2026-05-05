@@ -899,7 +899,7 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 0.0,
                 evolution: 0.0,
-                field_hash: 7384706558273748747,
+                field_hash: 5288378514766893336,
                 out_of_bounds_count: 5233,
                 center_displacement: [10.146056, -0.62947536],
                 center_source_uv: [266.14606, 255.37053],
@@ -908,7 +908,7 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 0.5,
                 evolution: 45.0,
-                field_hash: 7768990428551524772,
+                field_hash: 8799583953116669421,
                 out_of_bounds_count: 5154,
                 center_displacement: [3.7621496, -8.169911],
                 center_source_uv: [259.76215, 247.8301],
@@ -917,7 +917,7 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 1.0,
                 evolution: 90.0,
-                field_hash: 6840344849678748397,
+                field_hash: 3093366535440662700,
                 out_of_bounds_count: 5183,
                 center_displacement: [-4.8255854, -10.925628],
                 center_source_uv: [251.17441, 245.07437],
@@ -926,7 +926,7 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 1.5,
                 evolution: 135.0,
-                field_hash: 15750954376230437120,
+                field_hash: 6881573285027360280,
                 out_of_bounds_count: 5117,
                 center_displacement: [-10.586543, -7.2808738],
                 center_source_uv: [245.41345, 248.71913],
