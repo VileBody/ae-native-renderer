@@ -1500,7 +1500,8 @@ fn effect_debug_trace_json(
                     "shadow_only": trace.params.shadow_only,
                     "dx": trace.params.dx,
                     "dy": trace.params.dy,
-                    "blur_radius": trace.params.blur_radius
+                    "blur_radius": trace.params.blur_radius,
+                    "blur_iterations": trace.params.blur_iterations
                 },
                 "alpha_policy": {
                     "canvas_storage": "straight_rgba8",

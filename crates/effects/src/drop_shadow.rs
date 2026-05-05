@@ -5,6 +5,10 @@ use crate::{
 use raster_cpu::{composite_normal, Canvas};
 use serde_json::Value;
 
+const DROP_SHADOW_SOFTNESS_DIVISOR: f32 = 2.71;
+const DROP_SHADOW_SOFTNESS_SCALE: f32 = 1.4;
+const DROP_SHADOW_SOFTNESS_ITERATIONS: u32 = 1;
+
 #[derive(Debug, Default)]
 pub struct DropShadow;
 
@@ -50,8 +54,9 @@ impl Effect for DropShadow {
         }
 
         let radius = drop_shadow_blur_radius(softness);
+        let iterations = drop_shadow_blur_iterations(softness);
         if radius > 0 {
-            shadow = blur_shadow_alpha_channel_only(&shadow, radius, color);
+            shadow = blur_shadow_alpha_channel_only(&shadow, radius, iterations, color);
         }
 
         if shadow_only {
@@ -99,6 +104,7 @@ pub struct DropShadowDebugParams {
     pub dx: i32,
     pub dy: i32,
     pub blur_radius: u32,
+    pub blur_iterations: u32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -133,8 +139,12 @@ pub fn drop_shadow_debug_trace(input: &Canvas, params: &Value) -> DropShadowDebu
     let raw_shadow = raw_offset_shadow_canvas(input, params, resolved);
     let mut blurred_shadow = raw_shadow.clone();
     if resolved.blur_radius > 0 {
-        blurred_shadow =
-            blur_shadow_alpha_channel_only(&blurred_shadow, resolved.blur_radius, params.color);
+        blurred_shadow = blur_shadow_alpha_channel_only(
+            &blurred_shadow,
+            resolved.blur_radius,
+            resolved.blur_iterations,
+            params.color,
+        );
     }
 
     let mut output = blurred_shadow.clone();
@@ -174,6 +184,7 @@ fn resolve_drop_shadow_debug_params(params: DropShadowParams) -> DropShadowDebug
         dx,
         dy,
         blur_radius: drop_shadow_blur_radius(params.softness),
+        blur_iterations: drop_shadow_blur_iterations(params.softness),
     }
 }
 
@@ -189,7 +200,15 @@ fn drop_shadow_blur_radius(softness: f32) -> u32 {
     if softness <= 0.0 {
         0
     } else {
-        blur_radius(softness / 2.0).saturating_add(1)
+        blur_radius((softness * DROP_SHADOW_SOFTNESS_SCALE) / DROP_SHADOW_SOFTNESS_DIVISOR)
+    }
+}
+
+fn drop_shadow_blur_iterations(softness: f32) -> u32 {
+    if softness <= 0.0 {
+        0
+    } else {
+        DROP_SHADOW_SOFTNESS_ITERATIONS
     }
 }
 
@@ -204,7 +223,12 @@ fn alpha_mask_canvas(input: &Canvas) -> Canvas {
     mask
 }
 
-fn blur_shadow_alpha_channel_only(shadow: &Canvas, radius: u32, color: [u8; 4]) -> Canvas {
+fn blur_shadow_alpha_channel_only(
+    shadow: &Canvas,
+    radius: u32,
+    iterations: u32,
+    color: [u8; 4],
+) -> Canvas {
     let mut alpha_only = Canvas::transparent(shadow.width, shadow.height);
     for y in 0..shadow.height {
         for x in 0..shadow.width {
@@ -213,7 +237,10 @@ fn blur_shadow_alpha_channel_only(shadow: &Canvas, radius: u32, color: [u8; 4]) 
         }
     }
 
-    let blurred_alpha = blur_canvas(&alpha_only, radius);
+    let mut blurred_alpha = alpha_only;
+    for _ in 0..iterations.max(1) {
+        blurred_alpha = blur_canvas(&blurred_alpha, radius);
+    }
     let mut output = Canvas::transparent(shadow.width, shadow.height);
     for y in 0..shadow.height {
         for x in 0..shadow.width {
@@ -343,7 +370,7 @@ mod tests {
         let mut shadow = Canvas::transparent(3, 1);
         shadow.set_pixel(1, 0, [color[0], color[1], color[2], 255]);
 
-        let blurred = blur_shadow_alpha_channel_only(&shadow, 1, color);
+        let blurred = blur_shadow_alpha_channel_only(&shadow, 1, 1, color);
 
         assert_eq!(blurred.pixel(0, 0), [200, 100, 50, 127]);
         assert_eq!(blurred.pixel(1, 0), [200, 100, 50, 85]);
@@ -353,7 +380,10 @@ mod tests {
     #[test]
     fn ae_probe_softness_18_expands_shadow_by_ten_pixels() {
         assert_eq!(drop_shadow_blur_radius(18.0), 10);
+        assert_eq!(drop_shadow_blur_iterations(18.0), 1);
+        assert_eq!(drop_shadow_blur_radius(1.0), 1);
         assert_eq!(drop_shadow_blur_radius(0.0), 0);
+        assert_eq!(drop_shadow_blur_iterations(0.0), 0);
     }
 
     #[test]
@@ -374,6 +404,8 @@ mod tests {
         );
 
         assert_eq!(trace.params.opacity_normalized, 0.5);
+        assert_eq!(trace.params.blur_radius, 2);
+        assert_eq!(trace.params.blur_iterations, 1);
         assert_eq!(trace.alpha.input.nonzero_pixels, 1);
         assert_eq!(trace.alpha.raw_offset_shadow.nonzero_pixels, 1);
         assert!(
