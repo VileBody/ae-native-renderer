@@ -33,6 +33,9 @@ stores pixels in the same format.
 - `rgb_under_alpha_policy`: RGB diff after straight RGBA8 source-over projection
   onto the AE/reference background RGB. This normalizes invisible RGB under alpha
   zero and exposes premult-looking RGB at partial alpha.
+- `rgb_straight_source_over_ae_background`: explicit alias for
+  `rgb_under_alpha_policy`; added so effect/alpha reports name the current
+  straight-RGBA diagnostic assumption directly.
 - `rgb_over_native_background` and `rgb_over_ae_background`: explicit projection
   variants for background-sensitivity checks.
 
@@ -79,6 +82,11 @@ Unknown / BLOCKER:
 Policy: keep native straight RGBA8 as an implementation approximation only. Any
 alpha-sensitive formula tuning must record the M19 metrics above or a
 module-local pre/post-alpha probe.
+
+Step 4 effects/alpha update: Box Blur, Drop Shadow, and Glow sidecars now report
+diagnostic-only `alpha_policy` and per-intermediate alpha stats. These are probes,
+not proof of AE internals; do not use them to change global alpha behavior without
+an orchestrator decision.
 
 ## Gamma / Color
 

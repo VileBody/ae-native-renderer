@@ -80,6 +80,16 @@ pub struct BoxBlurDebugParams {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct CanvasAlphaStats {
+    pub total_pixels: u64,
+    pub nonzero_pixels: u64,
+    pub full_pixels: u64,
+    pub alpha_sum: u64,
+    pub alpha_min_nonzero: u8,
+    pub alpha_max: u8,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct BoxBlurIntermediateHashes {
     pub input_rgba: u64,
     pub horizontal_pass_rgba: u64,
@@ -88,9 +98,18 @@ pub struct BoxBlurIntermediateHashes {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct BoxBlurIntermediateAlphaStats {
+    pub input: CanvasAlphaStats,
+    pub horizontal_pass: CanvasAlphaStats,
+    pub first_iteration: CanvasAlphaStats,
+    pub output: CanvasAlphaStats,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct BoxBlurDebugTrace {
     pub params: BoxBlurDebugParams,
     pub hashes: BoxBlurIntermediateHashes,
+    pub alpha: BoxBlurIntermediateAlphaStats,
 }
 
 pub fn box_blur_debug_trace(input: &Canvas, params: &Value, time: f64) -> BoxBlurDebugTrace {
@@ -112,6 +131,12 @@ pub fn box_blur_debug_trace(input: &Canvas, params: &Value, time: f64) -> BoxBlu
             horizontal_pass_rgba: canvas_debug_hash(&horizontal),
             first_iteration_rgba: canvas_debug_hash(&first_iteration),
             output_rgba: canvas_debug_hash(&output),
+        },
+        alpha: BoxBlurIntermediateAlphaStats {
+            input: canvas_alpha_stats(input),
+            horizontal_pass: canvas_alpha_stats(&horizontal),
+            first_iteration: canvas_alpha_stats(&first_iteration),
+            output: canvas_alpha_stats(&output),
         },
     }
 }
@@ -216,6 +241,40 @@ pub fn canvas_debug_hash(canvas: &Canvas) -> u64 {
         hash = hash.wrapping_mul(0x100000001b3);
     }
     hash
+}
+
+pub fn canvas_alpha_stats(canvas: &Canvas) -> CanvasAlphaStats {
+    let mut nonzero_pixels = 0_u64;
+    let mut full_pixels = 0_u64;
+    let mut alpha_sum = 0_u64;
+    let mut alpha_min_nonzero = u8::MAX;
+    let mut alpha_max = 0_u8;
+
+    for pixel in canvas.data.chunks_exact(4) {
+        let alpha = pixel[3];
+        alpha_sum += u64::from(alpha);
+        alpha_max = alpha_max.max(alpha);
+        if alpha > 0 {
+            nonzero_pixels += 1;
+            alpha_min_nonzero = alpha_min_nonzero.min(alpha);
+        }
+        if alpha == 255 {
+            full_pixels += 1;
+        }
+    }
+
+    if nonzero_pixels == 0 {
+        alpha_min_nonzero = 0;
+    }
+
+    CanvasAlphaStats {
+        total_pixels: u64::from(canvas.width) * u64::from(canvas.height),
+        nonzero_pixels,
+        full_pixels,
+        alpha_sum,
+        alpha_min_nonzero,
+        alpha_max,
+    }
 }
 
 fn add_pixel(sum: &mut [u32; 4], pixel: [u8; 4]) {
@@ -432,6 +491,8 @@ mod tests {
             canvas_debug_hash(&first_iteration)
         );
         assert_eq!(trace.hashes.output_rgba, canvas_debug_hash(&final_output));
+        assert_eq!(trace.alpha.input.nonzero_pixels, 1);
+        assert!(trace.alpha.output.nonzero_pixels > trace.alpha.input.nonzero_pixels);
     }
 
     #[test]
@@ -439,5 +500,21 @@ mod tests {
         assert_eq!(blur_iterations(-3.0), 1);
         assert_eq!(blur_iterations(0.49), 1);
         assert_eq!(blur_iterations(1.5), 2);
+    }
+
+    #[test]
+    fn alpha_stats_count_coverage_and_extrema() {
+        let mut input = Canvas::transparent(3, 1);
+        input.set_pixel(0, 0, [10, 20, 30, 64]);
+        input.set_pixel(1, 0, [10, 20, 30, 255]);
+
+        let stats = canvas_alpha_stats(&input);
+
+        assert_eq!(stats.total_pixels, 3);
+        assert_eq!(stats.nonzero_pixels, 2);
+        assert_eq!(stats.full_pixels, 1);
+        assert_eq!(stats.alpha_sum, 319);
+        assert_eq!(stats.alpha_min_nonzero, 64);
+        assert_eq!(stats.alpha_max, 255);
     }
 }

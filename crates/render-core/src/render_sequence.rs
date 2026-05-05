@@ -1,6 +1,7 @@
 use crate::layer_eval::{
     render_frame_with_footage_traced, CheckerboardFootageProvider, EffectTiming, FootageProvider,
-    FrameRenderTrace, LayerTiming, MotionBlurTrace, TemporalTraceRecord,
+    FrameRenderTrace, KeyframeTraceRecord, LayerTiming, MotionBlurTrace, SourceFrameQuantization,
+    TemporalTraceRecord,
 };
 use raster_cpu::Canvas;
 use render_ir::{EffectSpec, Layer, Scene, Transform2D};
@@ -389,6 +390,7 @@ fn frame_trace_json(trace: &FrameRenderTrace) -> serde_json::Value {
         "effects": trace.effects.iter().map(effect_timing_json).collect::<Vec<_>>(),
         "adjustment_effects": trace.adjustment_effects.iter().map(adjustment_effect_trace_json).collect::<Vec<_>>(),
         "temporal": trace.temporal.iter().map(temporal_trace_record_json).collect::<Vec<_>>(),
+        "keyframes": trace.keyframes.iter().map(keyframe_trace_record_json).collect::<Vec<_>>(),
         "motion_blur": trace.motion_blur.iter().map(motion_blur_trace_json).collect::<Vec<_>>(),
         "text_layouts": &trace.text_layouts,
         "text_selector_weights": &trace.text_selector_weights,
@@ -488,6 +490,7 @@ fn temporal_trace_record_json(record: &TemporalTraceRecord) -> serde_json::Value
         "source_start": record.source_start,
         "source_time": record.source_time,
         "source_frame_id": record.source_frame_id,
+        "source_frame": record.source_frame.as_ref().map(source_frame_quantization_json),
         "adjustment_lower_stack_time": record.adjustment_lower_stack_time,
         "posterize": record.posterize.map(|posterize| {
             json!({
@@ -499,7 +502,46 @@ fn temporal_trace_record_json(record: &TemporalTraceRecord) -> serde_json::Value
     })
 }
 
+fn keyframe_trace_record_json(record: &KeyframeTraceRecord) -> serde_json::Value {
+    json!({
+        "event": record.event,
+        "composition": record.composition,
+        "layer_id": record.layer_id,
+        "property": record.property,
+        "sample_time": record.sample_time,
+        "value": record.value,
+        "phase": record.phase,
+        "interpolation": record.interpolation,
+        "segment_index": record.segment_index,
+        "key_start_time": record.key_start_time,
+        "key_end_time": record.key_end_time,
+        "normalized_time": record.normalized_time,
+        "eased_progress": record.eased_progress,
+        "hold": record.hold,
+        "approximate": record.approximate,
+        "ease": record.ease.map(|ease| {
+            json!({
+                "x1": ease.x1,
+                "y1": ease.y1,
+                "x2": ease.x2,
+                "y2": ease.y2
+            })
+        })
+    })
+}
+
+fn source_frame_quantization_json(frame: &SourceFrameQuantization) -> serde_json::Value {
+    json!({
+        "frame_id": frame.frame_id,
+        "frame_rate": frame.frame_rate,
+        "frame_time": frame.frame_time,
+        "subframe": frame.subframe,
+        "policy": frame.policy
+    })
+}
+
 fn motion_blur_trace_json(trace: &MotionBlurTrace) -> serde_json::Value {
+    let weight_summary = trace.weight_summary();
     json!({
         "event": "temporal.motion_blur",
         "composition": trace.composition,
@@ -508,19 +550,32 @@ fn motion_blur_trace_json(trace: &MotionBlurTrace) -> serde_json::Value {
         "frame_duration": trace.frame_duration,
         "shutter_open": trace.shutter_open,
         "shutter_close": trace.shutter_close,
+        "shutter_duration": trace.shutter_close - trace.shutter_open,
         "shutter_angle": trace.shutter_angle,
         "shutter_phase": trace.shutter_phase,
         "requested_samples": trace.requested_samples,
         "effective_samples": trace.effective_samples,
         "divisor": trace.divisor,
+        "weight_summary": {
+            "active_samples": weight_summary.active_samples,
+            "contributing_samples": weight_summary.contributing_samples,
+            "total_weight": weight_summary.total_weight
+        },
         "samples": trace.samples.iter().map(|sample| {
             json!({
                 "sample_index": sample.sample_index,
                 "sample_time": sample.sample_time,
+                "shutter_offset": sample.sample_time - trace.shutter_open,
+                "shutter_fraction": if trace.shutter_close > trace.shutter_open {
+                    Some((sample.sample_time - trace.shutter_open) / (trace.shutter_close - trace.shutter_open))
+                } else {
+                    None
+                },
                 "layer_time": sample.layer_time,
                 "posterized_time": sample.posterized_time,
                 "source_time": sample.source_time,
                 "source_frame_id": sample.source_frame_id,
+                "source_frame": sample.source_frame.as_ref().map(source_frame_quantization_json),
                 "active": sample.active,
                 "opacity": sample.opacity,
                 "weight": sample.weight
@@ -550,6 +605,16 @@ fn write_temporal_trace_lines(log: &mut File, trace: &FrameRenderTrace) -> anyho
                 "frame": trace.frame,
                 "time": trace.time,
                 "record": temporal_trace_record_json(record)
+            }),
+        )?;
+    }
+    for record in &trace.keyframes {
+        write_json_line(
+            log,
+            &json!({
+                "frame": trace.frame,
+                "time": trace.time,
+                "record": keyframe_trace_record_json(record)
             }),
         )?;
     }
@@ -1060,6 +1125,7 @@ mod tests {
                 }),
             }],
             temporal: Vec::new(),
+            keyframes: Vec::new(),
             motion_blur: Vec::new(),
             effect_debug: Vec::new(),
             text_layouts: Vec::new(),

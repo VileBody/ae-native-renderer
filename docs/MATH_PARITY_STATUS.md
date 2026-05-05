@@ -55,22 +55,22 @@ nearby AE math backlog. Template status is derived from this table.
 | `M01` | Timeline layer activity, z-order, opacity compositing | `implemented approximate` | all three | Deterministic layer activity, reverse layer order, normal alpha composite, render logs. | Add AE frame mapping fixtures, alpha/premult telemetry, and template frame goldens. |
 | `M02` | Footage source-time sampling and media frame selection | `implemented approximate` | all three | `source_start`, activity windows, sequential decode/cache, media plan logs. | Numbered-frame source fixtures, source-time telemetry, AE/reference frame-index goldens. |
 | `M03` | 2D transform matrix, anchor/position/scale/rotation sampling | `implemented approximate` | all three | Matrix convention, inverse sampling, bilinear sampler, ROI bounds, unit tests. | Operator passport, coordinate-field/UV diff fixtures, matrix telemetry, AE transform goldens. |
-| `M04` | Keyframes: hold/linear/cubic Bezier approximation | `instrumented/testable` | all three | Scalar/Vec2 keyframes, compact cubic ease, unit tests, Bezier conformance micro-scene scaffold. | Export AE ease PNGs, compare temporal-ease tangent mapping, tune solver/parameter mapping. |
-| `M05` | Text rasterization and glyph layout | `AE golden exists` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; CoolType glyph metric targets selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows; layout sidecars now emit glyph-run index, advance x/y, bbox min/max, baseline delta slot, metric source, and CoolType reference status. AE sourceRect-based text telemetry refs are imported for `TXT_010`/`TXT_020`/`TXT_030`/`TXT_040`. | Use the text passport mismatches to tune shaping/composer/raster coverage; add deeper CoolType glyph-id/coverage rows when the AE scripting subset is not enough. |
-| `M06` | Text Range Selector reveal by words/characters/lines | `instrumented/testable` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, smoothness/randomize/wiggly approximations, glyph/word/line bbox units, selector-unit sidecars linked to glyph-run passports. | Add boundary fixtures and AE text reveal goldens; tune selector boundaries, order, smoothness, and whitespace treatment. |
+| `M04` | Keyframes: hold/linear/cubic Bezier approximation | `instrumented/testable` | all three | Scalar/Vec2 keyframes, compact cubic ease, unit tests, Bezier conformance micro-scene scaffold, and `temporal.keyframe_sample` records with segment/ease/progress diagnostics. | Export AE ease telemetry/PNGs, compare temporal-ease tangent mapping, then tune solver/parameter mapping. |
+| `M05` | Text rasterization and glyph layout | `AE golden exists` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; CoolType glyph metric targets selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows; layout sidecars now emit glyph-run index, advance x/y, comp-space bbox/minmax/centers/baselines, baseline delta slot, metric source, and CoolType reference status. AE sourceRect-based text telemetry refs are imported for `TXT_010`/`TXT_020`/`TXT_030`/`TXT_040`. | Use the text passport mismatches to tune shaping/composer/raster coverage; add deeper CoolType glyph-id/coverage rows and Montserrat instance mapping when the AE scripting subset is not enough. |
+| `M06` | Text Range Selector reveal by words/characters/lines | `instrumented/testable` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, smoothness/randomize/wiggly approximations, glyph/word/line bbox units, selector-unit sidecars linked to glyph-run passports, and clipped-glyph selector units preserved for off-canvas text. | Add boundary fixtures and AE text reveal goldens; tune selector boundaries, order, smoothness, and whitespace treatment. |
 | `M07` | Character text animator position/scale/rotation/blur | `instrumented/testable` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles, per-unit glyph refs, final matrix, opacity alpha scale, and blur radius telemetry. | Add AE glyph animator goldens and tune per-glyph transform center, blur kernel, opacity composition, and selector weighting. |
 | `M08` | Expression selector bounce | `implemented approximate` | `impulse_2nd` | Recognized generated `per_character_bounce` selector with deterministic native evaluator path. | Expression selector amount telemetry, AE bounce curve samples, tune delay/frequency/decay semantics. |
 | `M09` | Property expression subset: generated `edge_wobble` | `implemented approximate` | `scenes_3rd` | Named position-expression mode plus small scalar/Vec2 expression evaluator. | Per-property expression telemetry, AE samples for footage motion, tune waveform/envelope. |
-| `M10` | Drop Shadow | `instrumented/testable` | `template_4th`, `impulse_2nd` | Effect module, typed/numbered params, unit tests, effects conformance scaffold. | Per-effect AE PNGs, alpha/shadow-mask telemetry, tune blur/offset/composite/premult. |
-| `M11` | Glow | `instrumented/testable` | `template_4th` | Effect module, typed/numbered params, unit tests, effects conformance scaffold. | AE glow goldens, threshold/luma/radius/intensity telemetry, tune kernel/composite. |
-| `M12` | Geometry2 | `implemented approximate` | `scenes_3rd` | Adjustment effect module with transform-like params and time-varying scalar support. | Coordinate-field fixtures, UV diff, AE Geometry2 goldens, sampler/edge-mode tuning. |
-| `M13` | Minimax | `implemented approximate` | `scenes_3rd` | Effect module with AE operation/channel/direction enum surface, time-aware radius, and primitive unit tests. | Fractional-radius probes, Direction impulse/ramp goldens, Don't Shrink Edges behavior, GPU/CPU path parity. |
-| `M14` | Turbulent Displace | `instrumented/testable` | `scenes_3rd` | Deterministic sine/noise displacement approximation, time-varying evolution param support, AE-wrapper telemetry from Ghidra for internal mode, `FracAll`/`Frac1D` path, fixed16 slots, complexity split, and H/V lookup sizes. | Replace the approximate field with the recovered two-path AE-shaped state model, verify property indices `8/9/10/14`, add lookup hashes, then tune noise/evolution/octaves against AE field goldens. |
-| `M15` | Posterize Time true temporal behavior | `implemented approximate` | `scenes_3rd` | Posterize Time now quantizes layer/source/effect time above stateless canvas effects, including adjustment-layer lower-stack resampling; render-core tests cover layer and adjustment behavior. | Add quantized-time/source-frame telemetry, AE temporal micro-scene goldens, and tune boundary/order semantics against AE. |
-| `M16` | Adjustment layer pipeline and effect-stack order | `instrumented/testable` | `scenes_3rd` | Adjustment layers apply known effects to accumulated canvas; layer/effect timings are logged. | Graph-order checkpoints, non-commuting effect-order fixtures, AE adjustment-stack goldens. |
+| `M10` | Drop Shadow | `instrumented/testable` | `template_4th`, `impulse_2nd` | Effect module, typed/numbered params, unit tests, effects conformance scaffold, straight-RGBA alpha-policy sidecar, and source/raw/blurred/final alpha stats. | Use shadow-mask/intermediate telemetry before tuning blur/offset/composite; final-pixel tuning remains blocked by M19 premult substrate. |
+| `M11` | Glow | `instrumented/testable` | `template_4th` | Effect module, typed/numbered params, unit tests, effects conformance scaffold, time-aware params, straight-RGBA alpha-policy sidecar, and threshold/blurred/scaled/final alpha stats. | Resolve Glow Based On enum and blur/composite route with AE probes before threshold/radius/intensity formula tuning. |
+| `M12` | Geometry2 | `implemented approximate` | `scenes_3rd` | Adjustment effect module with transform-like params, time-varying scalar support, matrix/sample debug data, and adjustment-stack debug sidecars. | Compare stack Geometry2 matrix/UV telemetry against AE refs; then tune sampler/edge-mode only with coordinate-field evidence. |
+| `M13` | Minimax | `implemented approximate` | `scenes_3rd` | Effect module with AE operation/channel/direction enum surface, time-aware radius, primitive unit tests, and stack debug hashes including direction and Don't Shrink Edges. | Fractional-radius probes, Direction impulse/ramp goldens, Don't Shrink Edges behavior, GPU/CPU path parity. |
+| `M14` | Turbulent Displace | `instrumented/testable` | `scenes_3rd` | Deterministic sine/noise displacement approximation, time-varying evolution param support, AE-wrapper telemetry from Ghidra for internal mode, `FracAll`/`Frac1D` path, fixed16 slots, complexity split, H/V lookup sizes, and adjustment-stack field sidecars. | Replace the approximate field with the recovered two-path AE-shaped state model, verify property indices `8/9/10/14`, add lookup hashes, then tune noise/evolution/octaves against AE field goldens. |
+| `M15` | Posterize Time true temporal behavior | `implemented approximate` | `scenes_3rd` | Posterize Time now quantizes layer/source/effect time above stateless canvas effects, including adjustment-layer lower-stack resampling; temporal telemetry includes source-frame quantization policy/time/subframe. | Add AE temporal micro-scene telemetry for bucket boundaries and tune boundary/order semantics against AE. |
+| `M16` | Adjustment layer pipeline and effect-stack order | `instrumented/testable` | `scenes_3rd` | Adjustment layers apply known effects to accumulated canvas; per-effect input/output hashes, bucket/live param times, and Geometry2/Minimax/Turbulent debug checkpoints are logged for adjustment stacks. | Compare STK_030 sidecars to AE adjustment-stack goldens before changing global ordering. |
 | `M17` | Collapse transformations / text precomp graph | `instrumented/testable` | payload structure for `template_4th`, `impulse_2nd`; future nested cases | Nested graph validation, cycle detection, text/solid-only collapse, parent matrix composition, scale-aware collapsed text rasterization, collapse micro-scene scaffold. | AE collapsed/rasterized pair goldens, vector/text deferred-raster telemetry, wider nested-case coverage. |
-| `M18` | Motion blur | `instrumented/testable` | not observed in current imported target scenes; AE backlog | Composition/layer switches, shutter angle/phase/samples, subframe sampling, motion-blur micro-scene scaffold. | AE shutter/sample goldens, premult accumulation audit, static-layer skip, per-sample telemetry. |
-| `M19` | Color, alpha, sampling, gamma assumptions | `implemented approximate` | all three | Straight RGBA8 canvas, normal composite, deterministic PNG output. | Premult/straight audit, alpha-ramp fixtures, gamma/color-space decision, AE compositing goldens. |
+| `M18` | Motion blur | `instrumented/testable` | not observed in current imported target scenes; AE backlog | Composition/layer switches, shutter angle/phase/samples, subframe sampling, motion-blur micro-scene scaffold, per-sample shutter fraction/offset/source-frame telemetry, and weight summaries. | AE shutter/sample goldens, premult accumulation audit, and static-layer skip once shutter sample facts are known. |
+| `M19` | Color, alpha, sampling, gamma assumptions | `instrumented/testable` | all three | Straight RGBA8 canvas, normal composite, deterministic PNG output, split RGB/alpha/background-normalized metrics, `rgb_straight_source_over_ae_background` alias, and diagnostic-only alpha-policy reports. | Premult/straight audit, alpha-ramp fixtures, gamma/color-space decision, AE compositing goldens. |
 | `M20` | Masks, mattes, blend modes | `not implemented` | not observed as required for current snapshots | Capability reporting/fallback policy only where detected. | Implement only when payload inventory shows usage; then add operator fixtures and AE goldens. |
 | `M21` | 3D, camera, spatial paths, roving keyframes, arbitrary ExtendScript | `not implemented` | not required for current snapshots | Explicit later scope. | Separate roadmap phase; do not block current three-template parity unless payloads start using them. |
 
@@ -175,6 +175,117 @@ but only for the AE scripting/sourceRect subset. Selector-unit grouping is now
 checked as a subset too. Selector weights, animator contribution values, and
 true CoolType glyph ids still need deeper AE/CoolType probes before they can
 move into formula tuning.
+
+### Step 4 Text Layout Tuning
+
+Worker A made the first non-probe math changes in the text lane:
+
+- auto-leading now uses the AE-style `font_size * 1.2` model instead of
+  fontdue line metrics;
+- multiline text blocks are centered as a block;
+- whitespace advance no longer has a synthetic floor;
+- text layout telemetry reports comp-space bboxes, centers, and baselines;
+- clipped/off-canvas glyphs are preserved as selector units.
+
+Integrated run:
+
+```text
+target/ae_agents/step4_math_after_current/report.json
+```
+
+Text-passport movement against `step4_math_baseline`:
+
+| Case | Mismatches before | Mismatches after | Max delta before | Max delta after |
+| --- | ---: | ---: | ---: | ---: |
+| `TXT_010` | 2548 | 2548 | 36.206 | 24.996 |
+| `TXT_020` | 4116 | 4046 | 66.424 | 17.864 |
+| `TXT_030` | 1092 | 1092 | 35.155 | 32.708 |
+| `TXT_040` | 1568 | 1560 | 23.803 | 22.125 |
+
+Visual PNG mean moved in mixed directions: `TXT_040` improved, while
+`TXT_010`/`TXT_020`/`TXT_030` got slightly worse. This is acceptable for this
+step because the explicit goal was moving from implemented behavior toward
+measured layout parity, not locking final pixels. Remaining blockers are exact
+CoolType glyph advances/raster coverage and Montserrat `BoldItalic` instance
+mapping versus the checked-in Montserrat variable italic font.
+
+### Step 4 Temporal / Ease / Motion Diagnostics
+
+Worker B added diagnostic-only checkpoints for M04/M15/M18:
+
+- `temporal.keyframe_sample` records now capture segment index, key times,
+  normalized/eased progress, interpolation mode, hold flag, and cubic-ease
+  control points;
+- layer/source temporal records include structured source-frame quantization
+  policy, frame time, and subframe;
+- motion-blur samples include shutter offset/fraction, source-frame
+  quantization, and weight summaries.
+
+The focused before/after visual metrics for `INT_020`, `TMP_020`, `TMP_030`,
+and `STK_030` are unchanged. This is intentional: no ease, posterize, or motion
+blur formula was changed without AE-side tangent/bucket/shutter facts.
+
+### Step 4 Geometry / Procedural / Adjustment Diagnostics
+
+Worker D added adjustment-stack checkpoints for M12/M13/M14/M16:
+
+- `STK_030` adjustment traces now include Geometry2 matrix/UV sample debug
+  payloads on real stack inputs;
+- Minimax stack diagnostics include resolved direction and Don't Shrink Edges;
+- Turbulent Displace stack diagnostics include resolved field/wrapper/hash
+  telemetry.
+
+Integrated verification passed after concurrent text/sequence changes were
+merged: `render-core` unit test
+`adjustment_stack_debug_records_geometry_minimax_and_turbulent_checkpoints`
+passes, and `STK_030` renders in the integrated 16-case conformance run. The
+final pixel metrics are unchanged; Turbulent and Geometry2 remain blocked on AE
+field/coordinate goldens before formula tuning.
+
+### Step 4 Expression/Collapse Diagnostics
+
+Worker E added diagnostic-only checkpoints for the M09/M17 lane:
+
+- `EXP_010` expression telemetry now reports the generated named subset,
+  evaluator mode, vector target type, fingerprint/source, and seeded
+  `thisComp`/`thisLayer` timing context.
+- `GPH_010` collapse telemetry now reports normalized matrix summaries
+  (`translation`, `scale`, `scale_max`, determinant, rotation, axis dot,
+  affine flag) next to the raw matrices.
+- Collapse records now include explicit deferred-raster checkpoints. Current
+  status is `matrix_pushdown_only` for collapsed boundaries and
+  `intermediate_text_raster` for collapsed text. This is intentionally not an
+  AE parity claim; true text/vector deferred rasterization still needs AE
+  host-side probes and goldens.
+
+Focused run:
+
+```text
+target/ae_agents/worker_e_step4_before/report.json
+target/ae_agents/worker_e_step4_after/report.json
+```
+
+The before/after visual metrics for `EXP_010`, `GPH_010`, `CMP_010`,
+`TMP_010`, and `TMP_020` are unchanged; this step only improves localization.
+
+### Step 4 Effects / Alpha Diagnostics
+
+Worker C added diagnostic-only checkpoints for M10/M11/M19:
+
+- Box Blur, Drop Shadow, and Glow effect sidecars now state the local
+  `straight_rgba8` alpha policy and report alpha coverage/sum/min/max for
+  each relevant intermediate buffer.
+- Conformance metrics now include the explicit alias
+  `rgb_straight_source_over_ae_background` plus `alpha_policy_diagnostics` so
+  effect tuning can distinguish raw RGBA failures from straight/premult
+  substrate ambiguity.
+- Focused subset run:
+  `target/ae_agents/worker_c_step4_effects_alpha_after/report.json`
+  (`EFF_010`, `EFF_020`, `EFF_030`, `EFF_070`) completed with `ok=true`.
+
+This step does not change final effect math. Glow/Drop Shadow tuning remains
+blocked until M19 premult/straight behavior and Glow Based On enum probes are
+resolved.
 
 ## Template Inventory
 

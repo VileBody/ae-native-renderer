@@ -1,5 +1,5 @@
 use crate::{
-    box_blur::{blur_canvas, blur_radius, canvas_debug_hash},
+    box_blur::{blur_canvas, blur_radius, canvas_alpha_stats, canvas_debug_hash, CanvasAlphaStats},
     param_f32_at_any, param_value, Effect, EffectContext,
 };
 use raster_cpu::{composite_normal, Canvas};
@@ -125,9 +125,19 @@ pub struct GlowIntermediateHashes {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlowIntermediateAlphaStats {
+    pub input: CanvasAlphaStats,
+    pub threshold_source: CanvasAlphaStats,
+    pub blurred_glow: CanvasAlphaStats,
+    pub intensity_scaled_glow: CanvasAlphaStats,
+    pub final_output: CanvasAlphaStats,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlowDebugTrace {
     pub params: GlowDebugParams,
     pub hashes: GlowIntermediateHashes,
+    pub alpha: GlowIntermediateAlphaStats,
 }
 
 pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugTrace {
@@ -157,6 +167,13 @@ pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugT
             blurred_glow_rgba: canvas_debug_hash(&blurred),
             intensity_scaled_glow_rgba: canvas_debug_hash(&scaled),
             final_rgba: canvas_debug_hash(&output),
+        },
+        alpha: GlowIntermediateAlphaStats {
+            input: canvas_alpha_stats(input),
+            threshold_source: canvas_alpha_stats(&source),
+            blurred_glow: canvas_alpha_stats(&blurred),
+            intensity_scaled_glow: canvas_alpha_stats(&scaled),
+            final_output: canvas_alpha_stats(&output),
         },
     }
 }
@@ -410,5 +427,26 @@ mod tests {
 
         assert_eq!(trace.params.radius, 0.5);
         assert_eq!(trace.params.kernel_radius, 1);
+    }
+
+    #[test]
+    fn debug_trace_reports_threshold_and_glow_alpha_intermediates() {
+        let mut input = Canvas::transparent(3, 1);
+        input.set_pixel(0, 0, [32, 32, 32, 255]);
+        input.set_pixel(1, 0, [240, 240, 240, 64]);
+
+        let trace = glow_debug_trace(
+            &input,
+            &json!({ "0001": "color channels", "0002": 120, "0003": 2, "0004": 1.0 }),
+            0.0,
+        );
+
+        assert_eq!(trace.params.based_on, "color_channels");
+        assert_eq!(trace.alpha.input.nonzero_pixels, 2);
+        assert_eq!(trace.alpha.threshold_source.nonzero_pixels, 1);
+        assert!(
+            trace.alpha.blurred_glow.nonzero_pixels >= trace.alpha.threshold_source.nonzero_pixels
+        );
+        assert!(trace.alpha.final_output.nonzero_pixels >= trace.alpha.input.nonzero_pixels);
     }
 }

@@ -1,5 +1,5 @@
 use crate::{
-    box_blur::{blur_canvas, blur_radius, canvas_debug_hash},
+    box_blur::{blur_canvas, blur_radius, canvas_alpha_stats, canvas_debug_hash, CanvasAlphaStats},
     param_bool_any, param_f32_any, param_rgba_any, Effect, EffectContext,
 };
 use raster_cpu::{composite_normal, Canvas};
@@ -111,9 +111,19 @@ pub struct DropShadowIntermediateHashes {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub struct DropShadowIntermediateAlphaStats {
+    pub input: CanvasAlphaStats,
+    pub source_alpha: CanvasAlphaStats,
+    pub raw_offset_shadow: CanvasAlphaStats,
+    pub blurred_shadow: CanvasAlphaStats,
+    pub final_output: CanvasAlphaStats,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct DropShadowDebugTrace {
     pub params: DropShadowDebugParams,
     pub hashes: DropShadowIntermediateHashes,
+    pub alpha: DropShadowIntermediateAlphaStats,
 }
 
 pub fn drop_shadow_debug_trace(input: &Canvas, params: &Value) -> DropShadowDebugTrace {
@@ -140,6 +150,13 @@ pub fn drop_shadow_debug_trace(input: &Canvas, params: &Value) -> DropShadowDebu
             raw_offset_shadow_rgba: canvas_debug_hash(&raw_shadow),
             blurred_shadow_rgba: canvas_debug_hash(&blurred_shadow),
             final_rgba: canvas_debug_hash(&output),
+        },
+        alpha: DropShadowIntermediateAlphaStats {
+            input: canvas_alpha_stats(input),
+            source_alpha: canvas_alpha_stats(&source_alpha),
+            raw_offset_shadow: canvas_alpha_stats(&raw_shadow),
+            blurred_shadow: canvas_alpha_stats(&blurred_shadow),
+            final_output: canvas_alpha_stats(&output),
         },
     }
 }
@@ -329,5 +346,34 @@ mod tests {
     fn ae_probe_softness_18_expands_shadow_by_ten_pixels() {
         assert_eq!(drop_shadow_blur_radius(18.0), 10);
         assert_eq!(drop_shadow_blur_radius(0.0), 0);
+    }
+
+    #[test]
+    fn debug_trace_reports_shadow_alpha_intermediates() {
+        let mut input = Canvas::transparent(5, 1);
+        input.set_pixel(1, 0, [255, 255, 255, 255]);
+
+        let trace = drop_shadow_debug_trace(
+            &input,
+            &json!({
+                "0001": [0, 0, 0, 1],
+                "0002": 50,
+                "0003": 180,
+                "0004": 1,
+                "0005": 2,
+                "0006": false
+            }),
+        );
+
+        assert_eq!(trace.params.opacity_normalized, 0.5);
+        assert_eq!(trace.alpha.input.nonzero_pixels, 1);
+        assert_eq!(trace.alpha.raw_offset_shadow.nonzero_pixels, 1);
+        assert!(
+            trace.alpha.blurred_shadow.nonzero_pixels
+                > trace.alpha.raw_offset_shadow.nonzero_pixels
+        );
+        assert!(
+            trace.alpha.final_output.nonzero_pixels >= trace.alpha.blurred_shadow.nonzero_pixels
+        );
     }
 }

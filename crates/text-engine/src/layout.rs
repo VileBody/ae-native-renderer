@@ -203,7 +203,7 @@ fn layout_with_font(
     let lines: Vec<&str> = req.text.split('\n').collect();
     let lines = if lines.is_empty() { vec![""] } else { lines };
     let line_height = font_line_height(font, req.font_size);
-    let mut baseline = first_baseline(box_rect);
+    let mut baseline = first_baseline(box_rect, line_height, lines.len());
     let mut glyphs = Vec::new();
     let mut telemetry_glyphs = Vec::new();
     let mut telemetry_line_boxes = Vec::new();
@@ -310,10 +310,8 @@ fn layout_with_font(
     }
 }
 
-pub(crate) fn font_line_height(font: &Font, font_size: f32) -> f32 {
-    font.horizontal_line_metrics(font_size)
-        .map(|metrics| metrics.new_line_size.abs().max(font_size))
-        .unwrap_or(font_size * 1.2)
+pub(crate) fn font_line_height(_font: &Font, font_size: f32) -> f32 {
+    font_size * 1.2
 }
 
 pub(crate) fn measure_line(font: &Font, line: &str, font_size: f32) -> f32 {
@@ -322,8 +320,9 @@ pub(crate) fn measure_line(font: &Font, line: &str, font_size: f32) -> f32 {
         .sum()
 }
 
-pub(crate) fn first_baseline(box_rect: [f32; 4]) -> f32 {
-    box_rect[1] + box_rect[3] * 0.5
+pub(crate) fn first_baseline(box_rect: [f32; 4], line_height: f32, line_count: usize) -> f32 {
+    let block_offset = line_height * line_count.saturating_sub(1) as f32 * 0.5;
+    box_rect[1] + box_rect[3] * 0.5 - block_offset
 }
 
 pub(crate) fn line_start_x(box_rect: [f32; 4], line_width: f32) -> f32 {
@@ -346,7 +345,7 @@ pub(crate) fn glyph_advance(font: &Font, ch: char, font_size: f32) -> f32 {
         return font
             .metrics_indexed(font.lookup_glyph_index(' '), font_size)
             .advance_width
-            .max(font_size * 0.3);
+            .max(0.0);
     }
     font.metrics_indexed(font.lookup_glyph_index(ch), font_size)
         .advance_width
@@ -590,6 +589,35 @@ mod tests {
             .glyphs
             .iter()
             .any(|glyph| glyph.baseline > glyph.bbox[1]));
+    }
+
+    #[test]
+    fn real_layout_centers_multiline_block_with_ae_auto_leading() {
+        let Some(path) = point_light_fixture() else {
+            return;
+        };
+        let font_size = 20.0;
+        let layout = layout_text(&TextLayoutRequest {
+            text: "A\nB".to_string(),
+            font_id: path.display().to_string(),
+            font_size,
+            box_rect: Some([0.0, 0.0, 100.0, 80.0]),
+        })
+        .unwrap();
+
+        assert_approx(layout.telemetry.line_height, font_size * 1.2);
+        assert_approx(layout.telemetry.line_boxes[0].baseline, 28.0);
+        assert_approx(layout.telemetry.line_boxes[1].baseline, 52.0);
+    }
+
+    #[test]
+    fn space_advance_uses_font_metric_without_synthetic_floor() {
+        let Some(path) = point_light_fixture() else {
+            return;
+        };
+        let (font, _) = load_font_with_telemetry(path.to_str().unwrap()).unwrap();
+
+        assert_approx(glyph_advance(&font, ' ', 64.0), 0.0);
     }
 
     #[test]

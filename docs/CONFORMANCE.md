@@ -123,3 +123,61 @@ module is ready to become an enforced gate.
 The shared guardrails for alpha/premult, gamma/color, edge sampling, time,
 quality/bpc, CPU/GPU path, and parameter mapping live in
 `docs/reverse_engineering/MATH_CONTRACTS_GUARDRAILS.md`.
+
+## Worker E Step 4 EXP/GPH/CMP/TMP Run
+
+Expression/collapse diagnostics were checked with:
+
+```bash
+cargo run -p render-cli -- conformance-pack \
+  --pack fixtures/ae_conformance_pack \
+  --out target/ae_agents/worker_e_step4_after \
+  --case EXP_010 --case GPH_010 --case CMP_010 --case TMP_010 --case TMP_020
+```
+
+Measured after metrics match the before run because the change is telemetry
+only:
+
+| Case | RGBA mean | RGBA max | Sidecar check |
+| --- | ---: | ---: | --- |
+| `EXP_010` | `1.3197853565` | `255` | 8 expression telemetry records with named subset context. |
+| `GPH_010` | `14.5752954483` | `255` | 12 collapse records with matrix reports and deferred-raster checkpoints. |
+| `CMP_010` | `4.3968381882` | `188` | Composite metrics unchanged. |
+| `TMP_010` | `0.0` | `0` | Temporal baseline unchanged. |
+| `TMP_020` | `0.0` | `0` | Posterize baseline unchanged. |
+
+## Step 4 Integrated Math Run
+
+The integrated Step 4 pass was run through the native runner after all worker
+patches were merged:
+
+```bash
+cargo run -p render-cli -- conformance-pack \
+  --pack fixtures/ae_conformance_pack \
+  --out target/ae_agents/step4_math_after_current \
+  --case TXT_010 --case TXT_020 --case TXT_030 --case TXT_040 \
+  --case INT_020 --case TMP_010 --case TMP_020 --case TMP_030 \
+  --case EFF_010 --case EFF_020 --case EFF_030 --case EFF_070 \
+  --case STK_030 --case EXP_010 --case GPH_010 --case CMP_010
+```
+
+Result:
+
+```text
+ok=true
+cases=16
+report=target/ae_agents/step4_math_after_current/report.json
+```
+
+The report should be compared to the local baseline with:
+
+```bash
+python3 scripts/compare_conformance_reports.py \
+  target/ae_agents/step4_math_baseline/report.json \
+  target/ae_agents/step4_math_after_current/report.json
+```
+
+The biggest measurable movement is in `text_passport.max_abs_delta`, not final
+PNG mean. That distinction is intentional: Step 4 prioritizes turning modules
+into localized, tuneable math objects before changing broad final-pixel
+formulas.

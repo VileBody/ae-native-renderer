@@ -25,6 +25,7 @@ pub struct FrameRenderTrace {
     pub effects: Vec<EffectTiming>,
     pub adjustment_effects: Vec<AdjustmentEffectTrace>,
     pub temporal: Vec<TemporalTraceRecord>,
+    pub keyframes: Vec<KeyframeTraceRecord>,
     pub motion_blur: Vec<MotionBlurTrace>,
     pub effect_debug: Vec<EffectDebugRecord>,
     pub text_layouts: Vec<Value>,
@@ -91,8 +92,38 @@ pub struct TemporalTraceRecord {
     pub source_start: Option<f64>,
     pub source_time: Option<f64>,
     pub source_frame_id: Option<u32>,
+    pub source_frame: Option<SourceFrameQuantization>,
     pub adjustment_lower_stack_time: Option<f64>,
     pub posterize: Option<PosterizeTiming>,
+}
+
+#[derive(Debug, Clone)]
+pub struct KeyframeTraceRecord {
+    pub event: &'static str,
+    pub composition: String,
+    pub layer_id: String,
+    pub property: &'static str,
+    pub sample_time: f64,
+    pub value: Value,
+    pub phase: &'static str,
+    pub interpolation: &'static str,
+    pub segment_index: Option<usize>,
+    pub key_start_time: Option<f64>,
+    pub key_end_time: Option<f64>,
+    pub normalized_time: Option<f32>,
+    pub eased_progress: Option<f32>,
+    pub hold: bool,
+    pub approximate: bool,
+    pub ease: Option<render_ir::KeyframeEase>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SourceFrameQuantization {
+    pub frame_id: u32,
+    pub frame_rate: f64,
+    pub frame_time: f64,
+    pub subframe: f64,
+    pub policy: &'static str,
 }
 
 #[derive(Debug, Clone)]
@@ -146,6 +177,7 @@ pub struct MotionBlurSampleTrace {
     pub posterized_time: f64,
     pub source_time: Option<f64>,
     pub source_frame_id: Option<u32>,
+    pub source_frame: Option<SourceFrameQuantization>,
     pub active: bool,
     pub opacity: f32,
     pub weight: f32,
@@ -203,6 +235,7 @@ pub fn render_frame_with_footage_traced(
         effects: Vec::new(),
         adjustment_effects: Vec::new(),
         temporal: Vec::new(),
+        keyframes: Vec::new(),
         motion_blur: Vec::new(),
         effect_debug: Vec::new(),
         text_layouts: Vec::new(),
@@ -394,13 +427,16 @@ fn render_motion_blurred_layer(
             0.0
         };
         let sample_source_time = source_time_for_layer(layer, sample_posterized_time);
+        let sample_source_frame =
+            sample_source_time.and_then(|time| source_frame_quantization(time, comp.fps));
         sample_traces.push(MotionBlurSampleTrace {
             sample_index,
             sample_time,
             layer_time: sample_layer_time,
             posterized_time: sample_posterized_time,
             source_time: sample_source_time,
-            source_frame_id: sample_source_time.and_then(|time| source_frame_id(time, comp.fps)),
+            source_frame_id: sample_source_frame.as_ref().map(|frame| frame.frame_id),
+            source_frame: sample_source_frame,
             active: sample_active,
             opacity: sample_opacity,
             weight: sample_weight,
@@ -548,6 +584,7 @@ fn record_layer_temporal_trace(
         return;
     };
     let source_time = source_time_for_layer(layer, posterized_time);
+    let source_frame = source_time.and_then(|time| source_frame_quantization(time, comp.fps));
     trace.temporal.push(TemporalTraceRecord {
         event: "temporal.layer_time",
         composition: comp.id.clone(),
@@ -560,7 +597,8 @@ fn record_layer_temporal_trace(
         source_id: source_id_for_layer(layer),
         source_start: source_start_for_layer(layer),
         source_time,
-        source_frame_id: source_time.and_then(|time| source_frame_id(time, comp.fps)),
+        source_frame_id: source_frame.as_ref().map(|frame| frame.frame_id),
+        source_frame,
         adjustment_lower_stack_time: None,
         posterize: first_posterize_timing(effects_of(layer), comp_time)
             .map(|timing| timing.posterize),
@@ -592,6 +630,7 @@ fn record_adjustment_temporal_trace(
         source_start: None,
         source_time: None,
         source_frame_id: None,
+        source_frame: None,
         adjustment_lower_stack_time: Some(lower_stack_time),
         posterize,
     });
@@ -639,15 +678,26 @@ fn source_time_for_layer(layer: &Layer, posterized_time: f64) -> Option<f64> {
     }
 }
 
-fn source_frame_id(source_time: f64, fps: f64) -> Option<u32> {
+const SOURCE_FRAME_QUANTIZATION_EPSILON: f64 = 1.0e-9;
+const SOURCE_FRAME_QUANTIZATION_POLICY: &str = "floor(source_time*frame_rate+1e-9)";
+
+fn source_frame_quantization(source_time: f64, fps: f64) -> Option<SourceFrameQuantization> {
     if !source_time.is_finite() || !fps.is_finite() || fps <= 0.0 {
         return None;
     }
-    let frame = ((source_time * fps) + 1.0e-9).floor();
+    let frame = ((source_time * fps) + SOURCE_FRAME_QUANTIZATION_EPSILON).floor();
     if !(0.0..=u32::MAX as f64).contains(&frame) {
         return None;
     }
-    Some(frame as u32)
+    let frame_id = frame as u32;
+    let frame_time = frame_id as f64 / fps;
+    Some(SourceFrameQuantization {
+        frame_id,
+        frame_rate: fps,
+        frame_time,
+        subframe: (source_time - frame_time) * fps,
+        policy: SOURCE_FRAME_QUANTIZATION_POLICY,
+    })
 }
 
 fn render_layer_stub(
@@ -674,7 +724,7 @@ fn render_layer_stub(
             ..
         } => {
             let evaluated = evaluate_transform(transform, layer_time, *start, *duration, comp.fps);
-            record_transform_expression_trace(
+            record_transform_sampling_trace(
                 trace.as_deref_mut(),
                 &comp.id,
                 id,
@@ -706,7 +756,7 @@ fn render_layer_stub(
             ..
         } => {
             let evaluated = evaluate_transform(transform, layer_time, *start, *duration, comp.fps);
-            record_transform_expression_trace(
+            record_transform_sampling_trace(
                 trace.as_deref_mut(),
                 &comp.id,
                 id,
@@ -740,6 +790,8 @@ fn render_layer_stub(
                 &request,
                 [local_width, local_height],
                 1.0,
+                transform_to_matrix(&evaluated).matrix(),
+                [rect.x, rect.y],
                 layout.as_ref(),
                 "layer_text",
             );
@@ -779,7 +831,7 @@ fn render_layer_stub(
             ..
         } => {
             let evaluated = evaluate_transform(transform, layer_time, *start, *duration, comp.fps);
-            record_transform_expression_trace(
+            record_transform_sampling_trace(
                 trace.as_deref_mut(),
                 &comp.id,
                 id,
@@ -845,7 +897,7 @@ fn render_layer_stub(
                 stack.pop();
                 let evaluated =
                     evaluate_transform(transform, layer_time, *start, *duration, comp.fps);
-                record_transform_expression_trace(
+                record_transform_sampling_trace(
                     trace.as_deref_mut(),
                     &comp.id,
                     id,
@@ -935,7 +987,7 @@ fn render_collapsed_precomp(
     let source_time = (time - *start).max(0.0);
     let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
     let parent_matrix = transform_to_matrix(&evaluated).matrix();
-    record_transform_expression_trace(
+    record_transform_sampling_trace(
         trace.as_deref_mut(),
         &parent_comp.id,
         id,
@@ -1003,7 +1055,7 @@ fn render_layer_with_parent_matrix(
             ..
         } => {
             let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
-            record_transform_expression_trace(
+            record_transform_sampling_trace(
                 trace.as_deref_mut(),
                 &parent_comp.id,
                 id,
@@ -1042,7 +1094,7 @@ fn render_layer_with_parent_matrix(
             ..
         } => {
             let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
-            record_transform_expression_trace(
+            record_transform_sampling_trace(
                 trace.as_deref_mut(),
                 &parent_comp.id,
                 id,
@@ -1079,6 +1131,15 @@ fn render_layer_with_parent_matrix(
                 &request,
                 [local_width, local_height],
                 raster_scale,
+                if raster_scale > 1.0001 {
+                    matrix.mul(Mat3::scale(Vec2::new(
+                        1.0 / raster_scale,
+                        1.0 / raster_scale,
+                    )))
+                } else {
+                    matrix
+                },
+                [rect.x * raster_scale, rect.y * raster_scale],
                 layout.as_ref(),
                 "collapsed_text",
             );
@@ -1149,7 +1210,7 @@ fn render_layer_with_parent_matrix(
             })?;
             let source_time = (time - *start).max(0.0);
             let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
-            record_transform_expression_trace(
+            record_transform_sampling_trace(
                 trace.as_deref_mut(),
                 &parent_comp.id,
                 id,
@@ -1398,12 +1459,29 @@ fn effect_debug_trace_json(
                 "params": {
                     "radius": trace.params.radius,
                     "iterations": trace.params.iterations,
+                    "iterations_applied": trace.params.iterations_applied,
+                    "edge_policy": trace.params.edge_policy,
                     "kernel_radius": trace.params.kernel_radius
+                },
+                "alpha_policy": {
+                    "canvas_storage": "straight_rgba8",
+                    "blur_input": "straight_rgba8_all_channels",
+                    "blur_kernel": "separable_box_average",
+                    "edge_policy": trace.params.edge_policy,
+                    "premult_unpremultiply_applied": false,
+                    "diagnostic_only": true
                 },
                 "hashes": {
                     "input_rgba": debug_hash_hex(trace.hashes.input_rgba),
                     "horizontal_pass_rgba": debug_hash_hex(trace.hashes.horizontal_pass_rgba),
+                    "first_iteration_rgba": debug_hash_hex(trace.hashes.first_iteration_rgba),
                     "output_rgba": debug_hash_hex(trace.hashes.output_rgba)
+                },
+                "alpha_stats": {
+                    "input": alpha_stats_json(trace.alpha.input),
+                    "horizontal_pass": alpha_stats_json(trace.alpha.horizontal_pass),
+                    "first_iteration": alpha_stats_json(trace.alpha.first_iteration),
+                    "output": alpha_stats_json(trace.alpha.output)
                 }
             }))
         }
@@ -1422,12 +1500,28 @@ fn effect_debug_trace_json(
                     "dy": trace.params.dy,
                     "blur_radius": trace.params.blur_radius
                 },
+                "alpha_policy": {
+                    "canvas_storage": "straight_rgba8",
+                    "source_alpha": "input_alpha_channel",
+                    "shadow_mask": "offset_alpha_scaled_by_opacity_and_color_alpha",
+                    "softness": "alpha_channel_only_box_blur_then_recolor",
+                    "composite": "straight_rgba8_normal_source_over",
+                    "premult_unpremultiply_applied": false,
+                    "diagnostic_only": true
+                },
                 "hashes": {
                     "input_rgba": debug_hash_hex(trace.hashes.input_rgba),
                     "source_alpha_rgba": debug_hash_hex(trace.hashes.source_alpha_rgba),
                     "raw_offset_shadow_rgba": debug_hash_hex(trace.hashes.raw_offset_shadow_rgba),
                     "blurred_shadow_rgba": debug_hash_hex(trace.hashes.blurred_shadow_rgba),
                     "final_rgba": debug_hash_hex(trace.hashes.final_rgba)
+                },
+                "alpha_stats": {
+                    "input": alpha_stats_json(trace.alpha.input),
+                    "source_alpha": alpha_stats_json(trace.alpha.source_alpha),
+                    "raw_offset_shadow": alpha_stats_json(trace.alpha.raw_offset_shadow),
+                    "blurred_shadow": alpha_stats_json(trace.alpha.blurred_shadow),
+                    "final": alpha_stats_json(trace.alpha.final_output)
                 }
             }))
         }
@@ -1440,12 +1534,31 @@ fn effect_debug_trace_json(
                     "intensity": trace.params.intensity,
                     "kernel_radius": trace.params.kernel_radius
                 },
+                "alpha_policy": {
+                    "canvas_storage": "straight_rgba8",
+                    "threshold_source": trace.params.based_on,
+                    "blur_input": "thresholded_straight_rgba8",
+                    "blur_kernel": "separable_box_average",
+                    "intensity_scale": "straight_rgba8_channels",
+                    "composite": "straight_rgba8_normal_source_over",
+                    "premult_unpremultiply_applied": false,
+                    "diagnostic_only": true
+                },
                 "hashes": {
                     "input_rgba": debug_hash_hex(trace.hashes.input_rgba),
                     "threshold_source_rgba": debug_hash_hex(trace.hashes.threshold_source_rgba),
                     "blurred_glow_rgba": debug_hash_hex(trace.hashes.blurred_glow_rgba),
-                    "intensity_scaled_glow_rgba": debug_hash_hex(trace.hashes.intensity_scaled_glow_rgba),
+                    "intensity_scaled_glow_rgba": debug_hash_hex(
+                        trace.hashes.intensity_scaled_glow_rgba
+                    ),
                     "final_rgba": debug_hash_hex(trace.hashes.final_rgba)
+                },
+                "alpha_stats": {
+                    "input": alpha_stats_json(trace.alpha.input),
+                    "threshold_source": alpha_stats_json(trace.alpha.threshold_source),
+                    "blurred_glow": alpha_stats_json(trace.alpha.blurred_glow),
+                    "intensity_scaled_glow": alpha_stats_json(trace.alpha.intensity_scaled_glow),
+                    "final": alpha_stats_json(trace.alpha.final_output)
                 }
             }))
         }
@@ -1455,13 +1568,95 @@ fn effect_debug_trace_json(
                 "params": {
                     "operation": trace.params.operation,
                     "channels": trace.params.channels,
+                    "direction": trace.params.direction,
                     "radius": trace.params.radius,
-                    "kernel_radius": trace.params.kernel_radius
+                    "kernel_radius": trace.params.kernel_radius,
+                    "dont_shrink_edges": trace.params.dont_shrink_edges
                 },
                 "hashes": {
                     "input_rgba": debug_hash_hex(trace.hashes.input_rgba),
                     "output_rgba": debug_hash_hex(trace.hashes.output_rgba)
                 }
+            }))
+        }
+        "ADBE Geometry2" => {
+            let debug = effects::geometry::geometry2_debug_data(input, params, time);
+            Some(json!({
+                "schema": "ae-native-renderer.geometry2-debug.v1",
+                "raw_params": debug.raw_params,
+                "resolved": {
+                    "anchor": debug.resolved.anchor,
+                    "position": debug.resolved.position,
+                    "scale": debug.resolved.scale,
+                    "rotation": debug.resolved.rotation,
+                    "skew": debug.resolved.skew,
+                    "skew_axis": debug.resolved.skew_axis,
+                    "pixel_aspect": debug.resolved.pixel_aspect
+                },
+                "forward_matrix": debug.forward_matrix,
+                "inverse_matrix": debug.inverse_matrix,
+                "samples": debug.samples.iter().map(|sample| json!({
+                    "output_xy": sample.output_xy,
+                    "source_uv": sample.source_uv,
+                    "sample_xy": sample.sample_xy,
+                    "sample_rgba": sample.sample_rgba,
+                    "out_of_bounds": sample.out_of_bounds
+                })).collect::<Vec<_>>(),
+                "sampler_mode": debug.sampler_mode,
+                "edge_policy": debug.edge_policy,
+                "out_of_bounds_count": debug.out_of_bounds_count
+            }))
+        }
+        "ADBE Turbulent Displace" => {
+            let debug = effects::turbulent_displace::turbulent_displace_field_telemetry(
+                input, params, time,
+            );
+            Some(json!({
+                "schema": "ae-native-renderer.turbulent-displace-field.v1",
+                "raw_params": debug.raw_params,
+                "resolved": {
+                    "displacement_type": debug.resolved.displacement_type,
+                    "amount": debug.resolved.amount,
+                    "size": debug.resolved.size,
+                    "offset": debug.resolved.offset,
+                    "complexity": debug.resolved.complexity,
+                    "evolution": debug.resolved.evolution,
+                    "random_seed": debug.resolved.random_seed,
+                    "pinning": debug.resolved.pinning,
+                    "resize_layer": debug.resolved.resize_layer,
+                    "amplitude": debug.resolved.amplitude,
+                    "phase_radians": debug.resolved.phase_radians
+                },
+                "ae_wrapper": {
+                    "state_block_bytes": debug.ae_wrapper.state_block_bytes,
+                    "gpu_param_block_bytes": debug.ae_wrapper.gpu_param_block_bytes,
+                    "noise_table_rows": debug.ae_wrapper.noise_table_rows,
+                    "inferred_internal_displacement_mode": debug.ae_wrapper.inferred_internal_displacement_mode,
+                    "kernel_path": debug.ae_wrapper.kernel_path,
+                    "uses_h_lookup": debug.ae_wrapper.uses_h_lookup,
+                    "uses_v_lookup": debug.ae_wrapper.uses_v_lookup,
+                    "h_lookup_len": debug.ae_wrapper.h_lookup_len,
+                    "v_lookup_len": debug.ae_wrapper.v_lookup_len,
+                    "amount_fixed16": debug.ae_wrapper.amount_fixed16,
+                    "size_fixed16": debug.ae_wrapper.size_fixed16,
+                    "offset_fixed16": debug.ae_wrapper.offset_fixed16,
+                    "evolution_fixed16": debug.ae_wrapper.evolution_fixed16,
+                    "complexity_octaves": debug.ae_wrapper.complexity_octaves,
+                    "complexity_fraction": debug.ae_wrapper.complexity_fraction
+                },
+                "samples": debug.samples.iter().map(|sample| json!({
+                    "output_xy": sample.output_xy,
+                    "noise": sample.noise,
+                    "displacement": sample.displacement,
+                    "source_uv": sample.source_uv,
+                    "sample_xy": sample.sample_xy,
+                    "out_of_bounds": sample.out_of_bounds
+                })).collect::<Vec<_>>(),
+                "field_hash": format!("{:016x}", debug.field_hash),
+                "field_hash_u64": debug.field_hash,
+                "sampler_mode": debug.sampler_mode,
+                "edge_policy": debug.edge_policy,
+                "out_of_bounds_count": debug.out_of_bounds_count
             }))
         }
         _ => None,
@@ -1470,6 +1665,21 @@ fn effect_debug_trace_json(
 
 fn debug_hash_hex(hash: u64) -> String {
     format!("0x{hash:016x}")
+}
+
+fn alpha_stats_json(stats: effects::box_blur::CanvasAlphaStats) -> Value {
+    let total = stats.total_pixels.max(1) as f64;
+    json!({
+        "total_pixels": stats.total_pixels,
+        "nonzero_pixels": stats.nonzero_pixels,
+        "full_pixels": stats.full_pixels,
+        "coverage_ratio": stats.nonzero_pixels as f64 / total,
+        "full_coverage_ratio": stats.full_pixels as f64 / total,
+        "alpha_sum": stats.alpha_sum,
+        "alpha_mean": stats.alpha_sum as f64 / total,
+        "alpha_min_nonzero": stats.alpha_min_nonzero,
+        "alpha_max": stats.alpha_max
+    })
 }
 
 fn layer_type(layer: &Layer) -> &'static str {
@@ -1609,6 +1819,58 @@ fn matrix_scale_hint(matrix: Mat3) -> f32 {
     sx.max(sy).max(1.0)
 }
 
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct MatrixReport {
+    translation: [f32; 2],
+    scale: [f32; 2],
+    scale_max: f32,
+    determinant: f32,
+    rotation_degrees: f32,
+    axis_dot: f32,
+    affine_2d: bool,
+}
+
+fn matrix_report(matrix: Mat3) -> MatrixReport {
+    let m = matrix.m;
+    let x_axis = [m[0][0], m[1][0]];
+    let y_axis = [m[0][1], m[1][1]];
+    let sx = (x_axis[0].powi(2) + x_axis[1].powi(2)).sqrt();
+    let sy = (y_axis[0].powi(2) + y_axis[1].powi(2)).sqrt();
+    let determinant = m[0][0] * m[1][1] - m[0][1] * m[1][0];
+    MatrixReport {
+        translation: [clean_float(m[0][2]), clean_float(m[1][2])],
+        scale: [clean_float(sx), clean_float(sy)],
+        scale_max: clean_float(sx.max(sy).max(1.0)),
+        determinant: clean_float(determinant),
+        rotation_degrees: clean_float(x_axis[1].atan2(x_axis[0]).to_degrees()),
+        axis_dot: clean_float(x_axis[0] * y_axis[0] + x_axis[1] * y_axis[1]),
+        affine_2d: m[2][0].abs() <= 1.0e-6
+            && m[2][1].abs() <= 1.0e-6
+            && (m[2][2] - 1.0).abs() <= 1.0e-6,
+    }
+}
+
+fn matrix_report_json(matrix: Mat3) -> Value {
+    let report = matrix_report(matrix);
+    json!({
+        "translation": report.translation,
+        "scale": report.scale,
+        "scale_max": report.scale_max,
+        "determinant": report.determinant,
+        "rotation_degrees": report.rotation_degrees,
+        "axis_dot": report.axis_dot,
+        "affine_2d": report.affine_2d
+    })
+}
+
+fn clean_float(value: f32) -> f32 {
+    if value.abs() <= 1.0e-6 {
+        0.0
+    } else {
+        value
+    }
+}
+
 fn transform_to_matrix(transform: &render_ir::Transform2D) -> Transform2D {
     Transform2D {
         anchor: Vec2::from(transform.anchor),
@@ -1715,6 +1977,161 @@ fn evaluate_position_expression_sample(
 }
 
 #[allow(clippy::too_many_arguments)]
+fn record_transform_sampling_trace(
+    mut trace: Option<&mut FrameRenderTrace>,
+    composition_id: &str,
+    layer_id: &str,
+    transform: &render_ir::Transform2D,
+    time: f64,
+    layer_start: f64,
+    layer_duration: f64,
+    fps: f64,
+) {
+    record_transform_keyframe_trace(
+        trace.as_deref_mut(),
+        composition_id,
+        layer_id,
+        transform,
+        time,
+    );
+    record_transform_expression_trace(
+        trace,
+        composition_id,
+        layer_id,
+        transform,
+        time,
+        layer_start,
+        layer_duration,
+        fps,
+    );
+}
+
+fn record_transform_keyframe_trace(
+    trace: Option<&mut FrameRenderTrace>,
+    composition_id: &str,
+    layer_id: &str,
+    transform: &render_ir::Transform2D,
+    time: f64,
+) {
+    let Some(trace) = trace else {
+        return;
+    };
+    record_vec2_keyframe_trace(
+        trace,
+        composition_id,
+        layer_id,
+        "transform.position",
+        &transform.animation.position,
+        time,
+        transform.position,
+    );
+    record_vec2_keyframe_trace(
+        trace,
+        composition_id,
+        layer_id,
+        "transform.scale",
+        &transform.animation.scale,
+        time,
+        transform.scale,
+    );
+    record_scalar_keyframe_trace(
+        trace,
+        composition_id,
+        layer_id,
+        "transform.opacity",
+        &transform.animation.opacity,
+        time,
+        transform.opacity,
+    );
+    record_scalar_keyframe_trace(
+        trace,
+        composition_id,
+        layer_id,
+        "transform.reveal",
+        &transform.animation.reveal,
+        time,
+        100.0,
+    );
+}
+
+fn record_vec2_keyframe_trace(
+    trace: &mut FrameRenderTrace,
+    composition_id: &str,
+    layer_id: &str,
+    property: &'static str,
+    keyframes: &[Vec2Keyframe],
+    time: f64,
+    fallback: [f32; 2],
+) {
+    if keyframes.is_empty() {
+        return;
+    }
+    let sample = sample_vec2_keyframes(keyframes, time, fallback);
+    push_keyframe_trace_record(
+        trace,
+        composition_id,
+        layer_id,
+        property,
+        time,
+        json!(sample.value),
+        sample.diagnostics,
+    );
+}
+
+fn record_scalar_keyframe_trace(
+    trace: &mut FrameRenderTrace,
+    composition_id: &str,
+    layer_id: &str,
+    property: &'static str,
+    keyframes: &[ScalarKeyframe],
+    time: f64,
+    fallback: f32,
+) {
+    if keyframes.is_empty() {
+        return;
+    }
+    let sample = sample_scalar_keyframes(keyframes, time, fallback);
+    push_keyframe_trace_record(
+        trace,
+        composition_id,
+        layer_id,
+        property,
+        time,
+        json!(sample.value),
+        sample.diagnostics,
+    );
+}
+
+fn push_keyframe_trace_record(
+    trace: &mut FrameRenderTrace,
+    composition_id: &str,
+    layer_id: &str,
+    property: &'static str,
+    time: f64,
+    value: Value,
+    diagnostics: KeyframeDiagnostics,
+) {
+    trace.keyframes.push(KeyframeTraceRecord {
+        event: "temporal.keyframe_sample",
+        composition: composition_id.to_string(),
+        layer_id: layer_id.to_string(),
+        property,
+        sample_time: time,
+        value,
+        phase: diagnostics.phase,
+        interpolation: diagnostics.interpolation,
+        segment_index: diagnostics.segment_index,
+        key_start_time: diagnostics.key_start_time,
+        key_end_time: diagnostics.key_end_time,
+        normalized_time: diagnostics.normalized_time,
+        eased_progress: diagnostics.eased_progress,
+        hold: diagnostics.hold,
+        approximate: diagnostics.approximate,
+        ease: diagnostics.ease,
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
 fn record_transform_expression_trace(
     trace: Option<&mut FrameRenderTrace>,
     composition_id: &str,
@@ -1751,15 +2168,30 @@ fn record_transform_expression_trace(
         "fps": fps,
         "base_position": base_position,
         "sampled_position": sample.position,
+        "evaluator": {
+            "subset": "generated_named_position_expression",
+            "mode": "edge_wobble",
+            "target_type": "vector2",
+            "fingerprint": sample.source.as_str()
+        },
         "context": {
             "local_time": sample.local_time,
             "frame_duration": sample.frame_duration,
-            "duration": sample.layer_duration
+            "duration": sample.layer_duration,
+            "thisComp": {
+                "frameDuration": sample.frame_duration,
+                "fps": fps
+            },
+            "thisLayer": {
+                "inPoint": layer_start,
+                "outPoint": layer_start + layer_duration,
+                "startTime": layer_start
+            }
         },
         "expression": match expression {
             PositionExpression::EdgeWobble { intro, outro, amp, freq, .. } => json!({
                 "type": "edge_wobble",
-                "source": sample.source,
+                "source": sample.source.as_str(),
                 "intro": intro,
                 "outro": outro,
                 "amp": amp,
@@ -1771,55 +2203,228 @@ fn record_transform_expression_trace(
     }));
 }
 
+#[derive(Debug, Clone)]
+struct KeyframeEvaluation<T> {
+    value: T,
+    diagnostics: KeyframeDiagnostics,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct KeyframeDiagnostics {
+    phase: &'static str,
+    interpolation: &'static str,
+    segment_index: Option<usize>,
+    key_start_time: Option<f64>,
+    key_end_time: Option<f64>,
+    normalized_time: Option<f32>,
+    eased_progress: Option<f32>,
+    hold: bool,
+    approximate: bool,
+    ease: Option<render_ir::KeyframeEase>,
+}
+
 fn evaluate_vec2_keyframes(keyframes: &[Vec2Keyframe], time: f64, fallback: [f32; 2]) -> [f32; 2] {
+    sample_vec2_keyframes(keyframes, time, fallback).value
+}
+
+fn sample_vec2_keyframes(
+    keyframes: &[Vec2Keyframe],
+    time: f64,
+    fallback: [f32; 2],
+) -> KeyframeEvaluation<[f32; 2]> {
     if keyframes.is_empty() {
-        return fallback;
+        return KeyframeEvaluation {
+            value: fallback,
+            diagnostics: keyframe_static_diagnostics("empty_fallback"),
+        };
     }
     if time <= keyframes[0].time {
-        return keyframes[0].value;
+        return KeyframeEvaluation {
+            value: keyframes[0].value,
+            diagnostics: keyframe_edge_diagnostics("before_first", &keyframes[0]),
+        };
     }
-    for pair in keyframes.windows(2) {
+    for (segment_index, pair) in keyframes.windows(2).enumerate() {
         let a = &pair[0];
         let b = &pair[1];
         if time <= b.time {
-            if a.hold || b.time <= a.time {
-                return a.value;
+            let diagnostics = keyframe_segment_diagnostics(segment_index, a, b, time);
+            if diagnostics.interpolation == "hold" {
+                return KeyframeEvaluation {
+                    value: a.value,
+                    diagnostics,
+                };
             }
-            let t = eased_progress(
-                ((time - a.time) / (b.time - a.time)).clamp(0.0, 1.0) as f32,
-                a.ease,
-            );
-            return [
-                a.value[0] + (b.value[0] - a.value[0]) * t,
-                a.value[1] + (b.value[1] - a.value[1]) * t,
-            ];
+            let t = diagnostics.eased_progress.unwrap_or(0.0);
+            return KeyframeEvaluation {
+                value: [
+                    a.value[0] + (b.value[0] - a.value[0]) * t,
+                    a.value[1] + (b.value[1] - a.value[1]) * t,
+                ],
+                diagnostics,
+            };
         }
     }
-    keyframes.last().map(|key| key.value).unwrap_or(fallback)
+    let key = keyframes.last().unwrap();
+    KeyframeEvaluation {
+        value: key.value,
+        diagnostics: keyframe_edge_diagnostics("after_last", key),
+    }
 }
 
 fn evaluate_scalar_keyframes(keyframes: &[ScalarKeyframe], time: f64, fallback: f32) -> f32 {
+    sample_scalar_keyframes(keyframes, time, fallback).value
+}
+
+fn sample_scalar_keyframes(
+    keyframes: &[ScalarKeyframe],
+    time: f64,
+    fallback: f32,
+) -> KeyframeEvaluation<f32> {
     if keyframes.is_empty() {
-        return fallback;
+        return KeyframeEvaluation {
+            value: fallback,
+            diagnostics: keyframe_static_diagnostics("empty_fallback"),
+        };
     }
     if time <= keyframes[0].time {
-        return keyframes[0].value;
+        return KeyframeEvaluation {
+            value: keyframes[0].value,
+            diagnostics: keyframe_edge_diagnostics("before_first", &keyframes[0]),
+        };
     }
-    for pair in keyframes.windows(2) {
+    for (segment_index, pair) in keyframes.windows(2).enumerate() {
         let a = &pair[0];
         let b = &pair[1];
         if time <= b.time {
-            if a.hold || b.time <= a.time {
-                return a.value;
+            let diagnostics = keyframe_segment_diagnostics(segment_index, a, b, time);
+            if diagnostics.interpolation == "hold" {
+                return KeyframeEvaluation {
+                    value: a.value,
+                    diagnostics,
+                };
             }
-            let t = eased_progress(
-                ((time - a.time) / (b.time - a.time)).clamp(0.0, 1.0) as f32,
-                a.ease,
-            );
-            return a.value + (b.value - a.value) * t;
+            let t = diagnostics.eased_progress.unwrap_or(0.0);
+            return KeyframeEvaluation {
+                value: a.value + (b.value - a.value) * t,
+                diagnostics,
+            };
         }
     }
-    keyframes.last().map(|key| key.value).unwrap_or(fallback)
+    let key = keyframes.last().unwrap();
+    KeyframeEvaluation {
+        value: key.value,
+        diagnostics: keyframe_edge_diagnostics("after_last", key),
+    }
+}
+
+trait KeyframeLike {
+    fn time(&self) -> f64;
+    fn hold(&self) -> bool;
+    fn approximate(&self) -> bool;
+    fn ease(&self) -> Option<render_ir::KeyframeEase>;
+}
+
+impl KeyframeLike for Vec2Keyframe {
+    fn time(&self) -> f64 {
+        self.time
+    }
+
+    fn hold(&self) -> bool {
+        self.hold
+    }
+
+    fn approximate(&self) -> bool {
+        self.approximate
+    }
+
+    fn ease(&self) -> Option<render_ir::KeyframeEase> {
+        self.ease
+    }
+}
+
+impl KeyframeLike for ScalarKeyframe {
+    fn time(&self) -> f64 {
+        self.time
+    }
+
+    fn hold(&self) -> bool {
+        self.hold
+    }
+
+    fn approximate(&self) -> bool {
+        self.approximate
+    }
+
+    fn ease(&self) -> Option<render_ir::KeyframeEase> {
+        self.ease
+    }
+}
+
+fn keyframe_static_diagnostics(phase: &'static str) -> KeyframeDiagnostics {
+    KeyframeDiagnostics {
+        phase,
+        interpolation: "none",
+        segment_index: None,
+        key_start_time: None,
+        key_end_time: None,
+        normalized_time: None,
+        eased_progress: None,
+        hold: false,
+        approximate: false,
+        ease: None,
+    }
+}
+
+fn keyframe_edge_diagnostics<K: KeyframeLike>(phase: &'static str, key: &K) -> KeyframeDiagnostics {
+    KeyframeDiagnostics {
+        phase,
+        interpolation: "edge",
+        segment_index: None,
+        key_start_time: Some(key.time()),
+        key_end_time: Some(key.time()),
+        normalized_time: None,
+        eased_progress: None,
+        hold: key.hold(),
+        approximate: key.approximate(),
+        ease: key.ease(),
+    }
+}
+
+fn keyframe_segment_diagnostics<K: KeyframeLike>(
+    segment_index: usize,
+    a: &K,
+    b: &K,
+    time: f64,
+) -> KeyframeDiagnostics {
+    let interpolation = if a.hold() || b.time() <= a.time() {
+        "hold"
+    } else if a.ease().is_some() {
+        "bezier"
+    } else {
+        "linear"
+    };
+    let normalized_time = (b.time() > a.time())
+        .then(|| ((time - a.time()) / (b.time() - a.time())).clamp(0.0, 1.0) as f32);
+    let eased_progress = normalized_time.map(|t| {
+        if interpolation == "hold" {
+            0.0
+        } else {
+            eased_progress(t, a.ease())
+        }
+    });
+    KeyframeDiagnostics {
+        phase: "segment",
+        interpolation,
+        segment_index: Some(segment_index),
+        key_start_time: Some(a.time()),
+        key_end_time: Some(b.time()),
+        normalized_time,
+        eased_progress,
+        hold: a.hold(),
+        approximate: a.approximate(),
+        ease: a.ease(),
+    }
 }
 
 fn eased_progress(t: f32, ease: Option<render_ir::KeyframeEase>) -> f32 {
@@ -1877,6 +2482,8 @@ fn record_text_layout_trace(
     request: &TextLayoutRequest,
     raster_size: [u32; 2],
     raster_scale: f32,
+    layer_matrix: Mat3,
+    local_origin: [f32; 2],
     layout: Option<&TextLayoutResult>,
     render_path: &str,
 ) {
@@ -1885,7 +2492,8 @@ fn record_text_layout_trace(
     };
     let layout_telemetry = layout
         .map(|layout| {
-            serde_json::to_value(&layout.telemetry)
+            let telemetry = text_layout_trace_telemetry(layout, layer_matrix, local_origin);
+            serde_json::to_value(&telemetry)
                 .unwrap_or_else(|err| json!({ "serialization_error": err.to_string() }))
         })
         .unwrap_or_else(|| json!(null));
@@ -1907,6 +2515,80 @@ fn record_text_layout_trace(
         },
         "layout": layout_telemetry
     }));
+}
+
+fn text_layout_trace_telemetry(
+    layout: &TextLayoutResult,
+    layer_matrix: Mat3,
+    local_origin: [f32; 2],
+) -> text_engine::TextLayoutTelemetry {
+    let mut telemetry = layout.telemetry.clone();
+    for glyph in &mut telemetry.glyphs {
+        glyph.bbox = transform_layout_bbox(layer_matrix, local_origin, glyph.bbox);
+        glyph.cooltype_bbox_minmax = [
+            glyph.bbox[0],
+            glyph.bbox[1],
+            glyph.bbox[0] + glyph.bbox[2],
+            glyph.bbox[1] + glyph.bbox[3],
+        ];
+        glyph.bbox_center = transform_layout_point(layer_matrix, local_origin, glyph.bbox_center);
+        glyph.baseline =
+            transform_layout_point(layer_matrix, local_origin, [0.0, glyph.baseline])[1];
+    }
+    for line_box in &mut telemetry.line_boxes {
+        line_box.line_box = transform_layout_bbox(layer_matrix, local_origin, line_box.line_box);
+        line_box.glyph_bbox = line_box
+            .glyph_bbox
+            .map(|bbox| transform_layout_bbox(layer_matrix, local_origin, bbox));
+        line_box.baseline =
+            transform_layout_point(layer_matrix, local_origin, [0.0, line_box.baseline])[1];
+    }
+    telemetry.text_box_rect =
+        transform_layout_bbox(layer_matrix, local_origin, telemetry.text_box_rect);
+    telemetry
+}
+
+fn transform_layout_bbox(matrix: Mat3, local_origin: [f32; 2], bbox: [f32; 4]) -> [f32; 4] {
+    let x0 = bbox[0];
+    let y0 = bbox[1];
+    let x1 = bbox[0] + bbox[2];
+    let y1 = bbox[1] + bbox[3];
+    let corners = [
+        transform_layout_point(matrix, local_origin, [x0, y0]),
+        transform_layout_point(matrix, local_origin, [x1, y0]),
+        transform_layout_point(matrix, local_origin, [x1, y1]),
+        transform_layout_point(matrix, local_origin, [x0, y1]),
+    ];
+    let min_x = corners
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::INFINITY, f32::min);
+    let min_y = corners
+        .iter()
+        .map(|point| point[1])
+        .fold(f32::INFINITY, f32::min);
+    let max_x = corners
+        .iter()
+        .map(|point| point[0])
+        .fold(f32::NEG_INFINITY, f32::max);
+    let max_y = corners
+        .iter()
+        .map(|point| point[1])
+        .fold(f32::NEG_INFINITY, f32::max);
+    [
+        min_x,
+        min_y,
+        (max_x - min_x).max(0.0),
+        (max_y - min_y).max(0.0),
+    ]
+}
+
+fn transform_layout_point(matrix: Mat3, local_origin: [f32; 2], point: [f32; 2]) -> [f32; 2] {
+    let transformed = matrix.transform_point(Vec2::new(
+        local_origin[0] + point[0],
+        local_origin[1] + point[1],
+    ));
+    [transformed.x, transformed.y]
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2015,6 +2697,7 @@ fn record_rasterized_precomp_trace(
         "time": time,
         "source_time": source_time,
         "layer_matrix": layer_matrix.m,
+        "layer_matrix_report": matrix_report_json(layer_matrix),
         "raster_size": raster_size
     }));
 }
@@ -2041,6 +2724,11 @@ fn record_collapsed_precomp_trace(
         "time": time,
         "source_time": source_time,
         "parent_matrix": parent_matrix.m,
+        "parent_matrix_report": matrix_report_json(parent_matrix),
+        "deferred_raster_checkpoint": {
+            "status": "matrix_pushdown_only",
+            "blocker": "true text/vector deferred rasterization is not parity-locked by this trace"
+        },
         "flattened_layers": flattened_layers
     }));
 }
@@ -2068,8 +2756,15 @@ fn record_collapsed_text_raster_trace(
         "parent_matrix": parent_matrix.m,
         "child_matrix": child_matrix.m,
         "effective_matrix": effective_matrix.m,
+        "parent_matrix_report": matrix_report_json(parent_matrix),
+        "child_matrix_report": matrix_report_json(child_matrix),
+        "effective_matrix_report": matrix_report_json(effective_matrix),
         "effective_raster_scale": raster_scale,
         "raster_size": raster_size,
+        "deferred_raster_checkpoint": {
+            "status": "intermediate_text_raster",
+            "blocker": "text is rasterized to a scale-hint canvas before final sampling"
+        },
         "sharpness_probe": alpha_sharpness_probe(text_canvas)
     }));
 }
@@ -2768,7 +3463,7 @@ fn layout_character_unit_rects(
         .glyphs
         .iter()
         .filter(|glyph| glyph_char(text, glyph.char_index).is_some_and(|ch| !ch.is_whitespace()))
-        .filter_map(|glyph| rect_from_bbox(canvas, glyph.bbox))
+        .map(|glyph| rect_from_bbox(canvas, glyph.bbox))
         .collect::<Vec<_>>();
     with_unit_totals(rects)
 }
@@ -2810,7 +3505,7 @@ fn layout_grouped_unit_rects(
     groups.sort_by_key(|(key, _)| *key);
     let rects = groups
         .into_iter()
-        .filter_map(|(_, bounds)| {
+        .map(|(_, bounds)| {
             rect_from_bbox(
                 canvas,
                 [
@@ -2825,7 +3520,7 @@ fn layout_grouped_unit_rects(
     with_unit_totals(rects)
 }
 
-fn rect_from_bbox(canvas: &Canvas, bbox: [f32; 4]) -> Option<UnitRect> {
+fn rect_from_bbox(canvas: &Canvas, bbox: [f32; 4]) -> UnitRect {
     let x0 = bbox[0].floor().max(0.0).min(canvas.width as f32) as u32;
     let y0 = bbox[1].floor().max(0.0).min(canvas.height as f32) as u32;
     let x1 = (bbox[0] + bbox[2]).ceil().max(0.0).min(canvas.width as f32) as u32;
@@ -2833,14 +3528,14 @@ fn rect_from_bbox(canvas: &Canvas, bbox: [f32; 4]) -> Option<UnitRect> {
         .ceil()
         .max(0.0)
         .min(canvas.height as f32) as u32;
-    (x0 < x1 && y0 < y1).then_some(UnitRect {
+    UnitRect {
         x0,
         y0,
         x1,
         y1,
         index: 0,
         total: 0,
-    })
+    }
 }
 
 fn with_unit_totals(mut rects: Vec<UnitRect>) -> Vec<UnitRect> {
@@ -2977,6 +3672,179 @@ mod tests {
     }
 
     #[test]
+    fn keyframe_sample_reports_bezier_diagnostics_without_changing_value() {
+        let ease = render_ir::KeyframeEase {
+            x1: 0.42,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let keyframes = vec![
+            ScalarKeyframe {
+                time: 0.0,
+                value: 0.0,
+                hold: false,
+                approximate: true,
+                ease: Some(ease),
+            },
+            ScalarKeyframe {
+                time: 1.0,
+                value: 100.0,
+                hold: false,
+                approximate: false,
+                ease: None,
+            },
+        ];
+
+        let sample = sample_scalar_keyframes(&keyframes, 0.5, 25.0);
+        let evaluated = evaluate_scalar_keyframes(&keyframes, 0.5, 25.0);
+
+        assert_eq!(sample.value, evaluated);
+        assert_eq!(sample.diagnostics.phase, "segment");
+        assert_eq!(sample.diagnostics.interpolation, "bezier");
+        assert_eq!(sample.diagnostics.segment_index, Some(0));
+        assert_eq!(sample.diagnostics.key_start_time, Some(0.0));
+        assert_eq!(sample.diagnostics.key_end_time, Some(1.0));
+        assert_close(sample.diagnostics.normalized_time.unwrap() as f64, 0.5);
+        assert!(sample.diagnostics.eased_progress.unwrap() < 0.5);
+        assert_eq!(sample.diagnostics.ease.unwrap().x1, ease.x1);
+        assert!(sample.diagnostics.approximate);
+    }
+
+    #[test]
+    fn render_trace_records_transform_keyframe_sampling_passport() {
+        let ease = render_ir::KeyframeEase {
+            x1: 0.42,
+            y1: 0.0,
+            x2: 1.0,
+            y2: 1.0,
+        };
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 4,
+                height: 4,
+                fps: 10.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
+            },
+            compositions: Vec::new(),
+            assets: Vec::new(),
+            layers: vec![Layer::Solid {
+                id: "ease_probe".to_string(),
+                start: 0.0,
+                duration: 1.0,
+                color: [255, 255, 255, 255],
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+                transform: render_ir::Transform2D {
+                    animation: render_ir::Transform2DAnimation {
+                        position: vec![
+                            Vec2Keyframe {
+                                time: 0.0,
+                                value: [0.0, 0.0],
+                                hold: false,
+                                approximate: true,
+                                ease: Some(ease),
+                            },
+                            Vec2Keyframe {
+                                time: 1.0,
+                                value: [2.0, 0.0],
+                                hold: false,
+                                approximate: false,
+                                ease: None,
+                            },
+                        ],
+                        ..render_ir::Transform2DAnimation::default()
+                    },
+                    ..render_ir::Transform2D::default()
+                },
+                effects: Vec::new(),
+            }],
+        };
+        let mut footage = CheckerboardFootageProvider;
+
+        let (_frame, trace) = render_frame_with_footage_traced(&scene, 5, &mut footage).unwrap();
+
+        let record = trace
+            .keyframes
+            .iter()
+            .find(|record| record.property == "transform.position")
+            .unwrap();
+        assert_eq!(record.event, "temporal.keyframe_sample");
+        assert_eq!(record.layer_id, "ease_probe");
+        assert_eq!(record.interpolation, "bezier");
+        assert_eq!(record.segment_index, Some(0));
+        assert_close(record.normalized_time.unwrap() as f64, 0.5);
+        assert!(record.eased_progress.unwrap() < 0.5);
+        assert_eq!(record.ease.unwrap().x1, ease.x1);
+    }
+
+    #[test]
+    fn effect_debug_trace_reports_alpha_policy_and_intermediate_stats() {
+        let mut input = Canvas::transparent(5, 1);
+        input.set_pixel(2, 0, [255, 255, 255, 255]);
+
+        let blur = effect_debug_trace_json(
+            "ADBE Box Blur2",
+            &input,
+            &json!({ "radius": 1, "iterations": 2 }),
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(
+            blur["alpha_policy"]["canvas_storage"],
+            json!("straight_rgba8")
+        );
+        assert_eq!(blur["params"]["iterations_applied"], json!(2));
+        assert_eq!(blur["alpha_stats"]["input"]["nonzero_pixels"], json!(1));
+        assert!(
+            blur["alpha_stats"]["output"]["nonzero_pixels"]
+                .as_u64()
+                .unwrap()
+                > 1
+        );
+
+        let shadow = effect_debug_trace_json(
+            "ADBE Drop Shadow",
+            &input,
+            &json!({ "0002": 50, "0003": 180, "0004": 1, "0005": 2 }),
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(
+            shadow["alpha_policy"]["softness"],
+            json!("alpha_channel_only_box_blur_then_recolor")
+        );
+        assert_eq!(
+            shadow["alpha_stats"]["source_alpha"]["nonzero_pixels"],
+            json!(1)
+        );
+
+        let glow = effect_debug_trace_json(
+            "ADBE Glo2",
+            &input,
+            &json!({ "0001": "alpha channel", "0002": 1, "0003": 2, "0004": 1.0 }),
+            0.0,
+        )
+        .unwrap();
+        assert_eq!(
+            glow["alpha_policy"]["threshold_source"],
+            json!("alpha_channel")
+        );
+        assert_eq!(
+            glow["alpha_stats"]["threshold_source"]["nonzero_pixels"],
+            json!(1)
+        );
+    }
+
+    #[test]
     fn vec2_keyframes_respect_hold() {
         let keyframes = vec![
             Vec2Keyframe {
@@ -3002,6 +3870,20 @@ mod tests {
     }
 
     #[test]
+    fn source_frame_quantization_reports_floor_epsilon_policy() {
+        let quantized = source_frame_quantization(0.7, 10.0).unwrap();
+
+        assert_eq!(quantized.frame_id, 7);
+        assert_eq!(quantized.frame_rate, 10.0);
+        assert_close(quantized.frame_time, 0.7);
+        assert_close(quantized.subframe, 0.0);
+        assert_eq!(quantized.policy, "floor(source_time*frame_rate+1e-9)");
+
+        let near_boundary = source_frame_quantization((3.0 / 30.0) - 0.5e-12, 30.0).unwrap();
+        assert_eq!(near_boundary.frame_id, 3);
+    }
+
+    #[test]
     fn transform_canvas_applies_position() {
         let mut src = Canvas::transparent(2, 2);
         src.set_pixel(0, 0, [255, 0, 0, 255]);
@@ -3013,6 +3895,85 @@ mod tests {
         let dst = transform_canvas(&src, 4, 4, &transform, [0.0, 0.0]);
 
         assert_eq!(dst.pixel(2, 1), [255, 0, 0, 255]);
+    }
+
+    #[test]
+    fn matrix_report_normalizes_affine_components() {
+        let matrix = Mat3::translate(Vec2::new(5.0, -3.0))
+            .mul(Mat3::rotate_degrees(90.0))
+            .mul(Mat3::scale(Vec2::new(2.0, 3.0)));
+
+        let report = matrix_report(matrix);
+
+        assert_close_f32(report.translation[0], 5.0);
+        assert_close_f32(report.translation[1], -3.0);
+        assert_close_f32(report.scale[0], 2.0);
+        assert_close_f32(report.scale[1], 3.0);
+        assert_close_f32(report.scale_max, 3.0);
+        assert_close_f32(report.determinant, 6.0);
+        assert_close_f32(report.rotation_degrees, 90.0);
+        assert_close_f32(report.axis_dot, 0.0);
+        assert!(report.affine_2d);
+    }
+
+    #[test]
+    fn expression_trace_reports_named_subset_context() {
+        let mut transform = render_ir::Transform2D {
+            position: [2.0, 2.0],
+            ..render_ir::Transform2D::default()
+        };
+        transform.animation.expression = render_ir::Transform2DExpression {
+            position: Some(PositionExpression::EdgeWobble {
+                intro: 0.25,
+                outro: 0.25,
+                amp: 10.0,
+                freq: 2.0,
+                source: "unit_edge_wobble".to_string(),
+            }),
+        };
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 4,
+                height: 4,
+                fps: 4.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
+            },
+            compositions: Vec::new(),
+            assets: Vec::new(),
+            layers: vec![Layer::Solid {
+                id: "expr".to_string(),
+                start: 0.0,
+                duration: 1.0,
+                color: [255, 0, 0, 255],
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+                transform,
+                effects: Vec::new(),
+            }],
+        };
+        let mut footage = CheckerboardFootageProvider;
+
+        let (_frame, trace) = render_frame_with_footage_traced(&scene, 1, &mut footage).unwrap();
+
+        assert_eq!(trace.position_expressions.len(), 1);
+        let record = &trace.position_expressions[0];
+        assert_eq!(record["evaluator"]["mode"], json!("edge_wobble"));
+        assert_eq!(record["evaluator"]["target_type"], json!("vector2"));
+        assert_eq!(
+            record["evaluator"]["fingerprint"],
+            json!("unit_edge_wobble")
+        );
+        assert_eq!(record["context"]["thisComp"]["frameDuration"], json!(0.25));
+        assert_eq!(record["context"]["thisLayer"]["inPoint"], json!(0.0));
+        assert_eq!(record["context"]["thisLayer"]["outPoint"], json!(1.0));
     }
 
     #[test]
@@ -3165,6 +4126,50 @@ mod tests {
         assert_eq!(passport["characters"], json!(["a", "l", "l"]));
         assert_eq!(passport["glyph_run_indices"], json!([3, 4, 5]));
         assert_eq!(passport["word_indices"], json!([1, 1, 1]));
+    }
+
+    #[test]
+    fn layout_character_units_preserve_clipped_glyphs_for_selector_totals() {
+        let canvas = Canvas::transparent(10, 10);
+        let layout = text_engine::layout_text_stub(&TextLayoutRequest {
+            text: "ABCD".to_string(),
+            font_id: "missing".to_string(),
+            font_size: 10.0,
+            box_rect: Some([0.0, 0.0, 40.0, 10.0]),
+        });
+
+        let units = unit_rects(
+            &canvas,
+            "ABCD",
+            Some(&layout),
+            render_ir::TextSelectorBasedOn::Characters,
+        );
+
+        assert_eq!(units.len(), 4);
+        assert!(units.iter().all(|unit| unit.total == 4));
+        assert_eq!(units[2].index, 2);
+        assert_eq!(units[2].x0, canvas.width);
+        assert_eq!(units[2].x1, canvas.width);
+    }
+
+    #[test]
+    fn text_layout_trace_telemetry_reports_comp_coordinates() {
+        let layout = text_engine::layout_text_stub(&TextLayoutRequest {
+            text: "A".to_string(),
+            font_id: "missing".to_string(),
+            font_size: 10.0,
+            box_rect: Some([0.0, 0.0, 40.0, 20.0]),
+        });
+
+        let telemetry =
+            text_layout_trace_telemetry(&layout, Mat3::translate(Vec2::new(7.0, -3.0)), [2.0, 5.0]);
+
+        assert_eq!(telemetry.glyphs[0].bbox, [9.0, 2.0, 6.0, 10.0]);
+        assert_eq!(
+            telemetry.glyphs[0].cooltype_bbox_minmax,
+            [9.0, 2.0, 15.0, 12.0]
+        );
+        assert_eq!(telemetry.glyphs[0].bbox_center, [12.0, 7.0]);
     }
 
     #[test]
@@ -3325,6 +4330,12 @@ mod tests {
         assert_close(temporal.source_start.unwrap(), 0.4);
         assert_close(temporal.source_time.unwrap(), 0.7);
         assert_eq!(temporal.source_frame_id, Some(7));
+        let source_frame = temporal.source_frame.as_ref().unwrap();
+        assert_eq!(source_frame.frame_id, 7);
+        assert_eq!(source_frame.frame_rate, 10.0);
+        assert_close(source_frame.frame_time, 0.7);
+        assert_close(source_frame.subframe, 0.0);
+        assert_eq!(source_frame.policy, "floor(source_time*frame_rate+1e-9)");
         assert_eq!(temporal.posterize.unwrap().bucket, Some(1));
         assert_close(temporal.posterize.unwrap().bucket_time, 0.5);
     }
@@ -3510,6 +4521,151 @@ mod tests {
         assert_eq!(minimax_trace.param_time, 0.5);
         assert_eq!(minimax_trace.lower_stack_time, 0.0);
         assert!(minimax_trace.posterize.is_none());
+    }
+
+    #[test]
+    fn adjustment_stack_debug_records_geometry_minimax_and_turbulent_checkpoints() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 12,
+                height: 3,
+                fps: 10.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
+            },
+            compositions: Vec::new(),
+            assets: Vec::new(),
+            layers: vec![
+                Layer::Adjustment {
+                    id: "stk_adjustment".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    effects: vec![
+                        effect(
+                            "ADBE Geometry2",
+                            json!({ "0003": 96, "0004": 110, "0008": 92 }),
+                        ),
+                        posterize_effect(1.0),
+                        minimax_effect(json!({ "0001": 2, "0002": 1, "0003": 1 })),
+                        effect(
+                            "ADBE Turbulent Displace",
+                            json!({
+                                "0002": 24,
+                                "0003": 72,
+                                "0005": 2,
+                                "0006": {
+                                    "keyframes": [
+                                        { "t": 0.0, "v": 0.0 },
+                                        { "t": 1.0, "v": 90.0 }
+                                    ]
+                                }
+                            }),
+                        ),
+                    ],
+                },
+                Layer::Solid {
+                    id: "below".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    color: [255, 255, 255, 255],
+                    rect: Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 2.0,
+                        h: 2.0,
+                    },
+                    transform: render_ir::Transform2D::default(),
+                    effects: Vec::new(),
+                },
+            ],
+        };
+        let mut footage = CheckerboardFootageProvider;
+
+        let (_frame, trace) = render_frame_with_footage_traced(&scene, 5, &mut footage).unwrap();
+
+        let adjustment_order = trace
+            .adjustment_effects
+            .iter()
+            .map(|effect| effect.match_name.as_str())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            adjustment_order,
+            vec![
+                "ADBE Geometry2",
+                "ADBE Posterize Time",
+                "ADBE Minimax",
+                "ADBE Turbulent Displace"
+            ]
+        );
+        for record in &trace.adjustment_effects {
+            assert_eq!(record.comp_time, 0.5);
+            assert_eq!(record.lower_stack_time, 0.0);
+            assert!(!record.input_hash.is_empty());
+            assert!(!record.output_hash.is_empty());
+        }
+        assert_eq!(trace.adjustment_effects[0].param_time, 0.0);
+        assert_eq!(trace.adjustment_effects[1].param_time, 0.0);
+        assert_eq!(trace.adjustment_effects[2].param_time, 0.5);
+        assert_eq!(trace.adjustment_effects[3].param_time, 0.5);
+
+        let geometry = trace
+            .effect_debug
+            .iter()
+            .find(|record| record.match_name == "ADBE Geometry2")
+            .unwrap();
+        assert_eq!(geometry.application, "adjustment");
+        assert_eq!(geometry.effect_index, 0);
+        assert_eq!(geometry.effect_time, 0.0);
+        assert_eq!(
+            geometry.trace["schema"],
+            "ae-native-renderer.geometry2-debug.v1"
+        );
+        assert_eq!(geometry.trace["resolved"]["scale"], json!([110.0, 110.0]));
+        assert_eq!(geometry.trace["resolved"]["rotation"], json!(92.0));
+        assert_eq!(
+            geometry.trace["sampler_mode"],
+            "bilinear_transparent_out_of_bounds"
+        );
+        assert!(geometry.trace["samples"].as_array().unwrap().len() > 0);
+
+        let minimax = trace
+            .effect_debug
+            .iter()
+            .find(|record| record.match_name == "ADBE Minimax")
+            .unwrap();
+        assert_eq!(minimax.effect_index, 2);
+        assert_eq!(minimax.effect_time, 0.5);
+        assert_eq!(
+            minimax.trace["params"]["direction"],
+            "horizontal_and_vertical"
+        );
+        assert_eq!(minimax.trace["params"]["dont_shrink_edges"], false);
+
+        let turbulent = trace
+            .effect_debug
+            .iter()
+            .find(|record| record.match_name == "ADBE Turbulent Displace")
+            .unwrap();
+        assert_eq!(turbulent.application, "adjustment");
+        assert_eq!(turbulent.effect_index, 3);
+        assert_eq!(turbulent.effect_time, 0.5);
+        assert_eq!(
+            turbulent.trace["schema"],
+            "ae-native-renderer.turbulent-displace-field.v1"
+        );
+        assert_close(
+            turbulent.trace["resolved"]["evolution"].as_f64().unwrap(),
+            45.0,
+        );
+        assert_eq!(
+            turbulent.trace["ae_wrapper"]["kernel_path"],
+            "TurbulentDisplaceFracAllKernel"
+        );
+        assert!(turbulent.trace["field_hash"].as_str().unwrap().len() == 16);
+        assert!(turbulent.trace["samples"].as_array().unwrap().len() > 0);
     }
 
     #[test]
@@ -3746,6 +4902,13 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![Some(11); 4]
         );
+        for sample in &blur.samples {
+            let source_frame = sample.source_frame.as_ref().unwrap();
+            assert_eq!(source_frame.frame_id, 11);
+            assert_eq!(source_frame.frame_rate, 8.0);
+            assert_close(source_frame.frame_time, 1.375);
+            assert_close(source_frame.subframe, 0.0);
+        }
         assert_close_slice(&footage.requested_times, &[1.375; 4]);
 
         let summary = blur.weight_summary();
@@ -3823,9 +4986,23 @@ mod tests {
             }],
         };
 
-        let frame = render_frame(&scene, 0).unwrap();
+        let mut footage = CheckerboardFootageProvider;
+        let (frame, trace) = render_frame_with_footage_traced(&scene, 0, &mut footage).unwrap();
 
         assert_eq!(frame.pixel(2, 0), [255, 0, 0, 255]);
+        let collapsed_precomp = trace
+            .collapse
+            .iter()
+            .find(|record| record["mode"] == "collapse_supported_vectors")
+            .unwrap();
+        assert_eq!(
+            collapsed_precomp["parent_matrix_report"]["translation"],
+            json!([2.0, 0.0])
+        );
+        assert_eq!(
+            collapsed_precomp["deferred_raster_checkpoint"]["status"],
+            json!("matrix_pushdown_only")
+        );
     }
 
     fn posterize_effect(frame_rate: f32) -> EffectSpec {
@@ -3842,9 +5019,23 @@ mod tests {
         }
     }
 
+    fn effect(match_name: &str, params: serde_json::Value) -> EffectSpec {
+        EffectSpec {
+            match_name: match_name.to_string(),
+            params,
+        }
+    }
+
     fn assert_close(actual: f64, expected: f64) {
         assert!(
             (actual - expected).abs() < 1.0e-9,
+            "expected {expected}, got {actual}"
+        );
+    }
+
+    fn assert_close_f32(actual: f32, expected: f32) {
+        assert!(
+            (actual - expected).abs() < 1.0e-4,
             "expected {expected}, got {actual}"
         );
     }

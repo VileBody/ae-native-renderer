@@ -387,9 +387,20 @@ fn run_case(
                 "background_alpha_normalized": metric_json(background_alpha_normalized_metrics),
                 "foreground_rgb": metric_json(foreground_rgb_metrics),
                 "rgb_under_alpha_policy": metric_json(rgb_under_alpha_policy_metrics),
+                "rgb_straight_source_over_ae_background": metric_json(
+                    rgb_under_alpha_policy_metrics,
+                ),
                 "rgb_over_native_background": metric_json(rgb_over_native_background_metrics),
                 "rgb_over_ae_background": metric_json(rgb_over_ae_background_metrics)
             },
+            "alpha_policy_diagnostics": alpha_policy_diagnostics_json(
+                split_metrics.rgba,
+                split_metrics.rgb,
+                split_metrics.alpha,
+                background_alpha_normalized_metrics,
+                rgb_under_alpha_policy_metrics,
+                background_corner.rgb_matches_alpha_differs,
+            ),
             "background_corner": background_corner.to_json(),
             "effects_debug": effects_debug,
             "trace_sidecars": trace_sidecars,
@@ -456,9 +467,20 @@ fn run_case(
                 "background_alpha_normalized": metric_json(background_alpha_normalized_metrics),
                 "foreground_rgb": metric_json(foreground_rgb_metrics),
                 "rgb_under_alpha_policy": metric_json(rgb_under_alpha_policy_metrics),
+                "rgb_straight_source_over_ae_background": metric_json(
+                    rgb_under_alpha_policy_metrics,
+                ),
                 "rgb_over_native_background": metric_json(rgb_over_native_background_metrics),
                 "rgb_over_ae_background": metric_json(rgb_over_ae_background_metrics)
             },
+            "alpha_policy_diagnostics": alpha_policy_diagnostics_json(
+                rgba_metrics,
+                rgb_metrics,
+                alpha_metrics,
+                background_alpha_normalized_metrics,
+                rgb_under_alpha_policy_metrics,
+                !background_corner_alpha_diff_frames.is_empty(),
+            ),
             "background_corner": background_corner_summary,
             "text_passport": text_passport_report["summary"].clone(),
             "elapsed_ms": elapsed_ms(case_started)
@@ -577,6 +599,44 @@ fn background_corner_summary_json(rgb_matches_alpha_differs_frames: &[u32]) -> V
         } else {
             json!("At least one frame has matching native/AE background-corner RGB with differing alpha; use rgb or background_alpha_normalized metrics before formula tuning.")
         }
+    })
+}
+
+fn alpha_policy_diagnostics_json(
+    raw_rgba: testkit::DiffMetrics,
+    raw_rgb: testkit::DiffMetrics,
+    alpha: testkit::DiffMetrics,
+    background_alpha_normalized: testkit::DiffMetrics,
+    rgb_under_alpha_policy: testkit::DiffMetrics,
+    background_corner_alpha_only_mismatch: bool,
+) -> Value {
+    json!({
+        "schema": "m19.alpha_policy_diagnostics.v1",
+        "canvas_storage": "straight_rgba8",
+        "premult_contract_locked": testkit::RGB_ALPHA_METRIC_POLICY.flags.premult_contract_locked,
+        "premult_unpremultiply_applied": testkit::RGB_ALPHA_METRIC_POLICY
+            .flags
+            .premult_unpremultiply_applied,
+        "diagnostic_only": testkit::RGB_ALPHA_METRIC_POLICY.flags.diagnostic_only,
+        "rgb_under_alpha_policy_alias": "rgb_straight_source_over_ae_background",
+        "background_corner_alpha_only_mismatch": background_corner_alpha_only_mismatch,
+        "mean_abs_diff": {
+            "raw_rgba": raw_rgba.mean_abs_diff,
+            "raw_rgb": raw_rgb.mean_abs_diff,
+            "alpha": alpha.mean_abs_diff,
+            "background_alpha_normalized": background_alpha_normalized.mean_abs_diff,
+            "rgb_straight_source_over_ae_background": rgb_under_alpha_policy.mean_abs_diff,
+            "raw_rgba_minus_background_alpha_normalized": raw_rgba.mean_abs_diff
+                - background_alpha_normalized.mean_abs_diff,
+            "raw_rgb_minus_rgb_straight_source_over_ae_background": raw_rgb.mean_abs_diff
+                - rgb_under_alpha_policy.mean_abs_diff
+        },
+        "preferred_effect_tuning_metrics": [
+            "rgb_straight_source_over_ae_background",
+            "background_alpha_normalized",
+            "alpha"
+        ],
+        "guardrail": "Do not tune alpha-sensitive effects from raw RGBA alone while the premult/straight substrate is diagnostic-only."
     })
 }
 
@@ -1221,6 +1281,7 @@ fn write_trace_sidecars(
 ) -> Result<Value> {
     let adjustment_count = write_adjustment_trace_sidecar(case_dir, trace)?;
     let temporal_count = write_temporal_trace_sidecar(case_dir, trace)?;
+    let keyframe_count = write_keyframe_trace_sidecar(case_dir, trace)?;
     let text_layout_count = write_value_trace_sidecar(
         case_dir,
         "text_telemetry.jsonl",
@@ -1252,7 +1313,7 @@ fn write_trace_sidecars(
 
     Ok(json!({
         "adjustment_effects": trace_sidecar_ref(case_dir, "adjustment_effects.jsonl", adjustment_count),
-        "temporal_telemetry": trace_sidecar_ref(case_dir, "temporal_telemetry.jsonl", temporal_count),
+        "temporal_telemetry": trace_sidecar_ref(case_dir, "temporal_telemetry.jsonl", temporal_count + keyframe_count),
         "text_telemetry": trace_sidecar_ref(case_dir, "text_telemetry.jsonl", text_layout_count + text_selector_count),
         "expression_telemetry": trace_sidecar_ref(case_dir, "expression_telemetry.jsonl", expression_count),
         "collapse_telemetry": trace_sidecar_ref(case_dir, "collapse_telemetry.jsonl", collapse_count)
@@ -1330,6 +1391,25 @@ fn write_temporal_trace_sidecar(
     Ok(count)
 }
 
+fn write_keyframe_trace_sidecar(
+    case_dir: &Path,
+    trace: &render_core::layer_eval::FrameRenderTrace,
+) -> Result<usize> {
+    let mut count = 0;
+    for record in &trace.keyframes {
+        append_trace_json_line(
+            &case_dir.join("temporal_telemetry.jsonl"),
+            &json!({
+                "frame": trace.frame,
+                "time": trace.time,
+                "record": keyframe_trace_record_json(record)
+            }),
+        )?;
+        count += 1;
+    }
+    Ok(count)
+}
+
 fn temporal_trace_record_json(record: &render_core::layer_eval::TemporalTraceRecord) -> Value {
     json!({
         "event": record.event,
@@ -1344,6 +1424,7 @@ fn temporal_trace_record_json(record: &render_core::layer_eval::TemporalTraceRec
         "source_start": record.source_start,
         "source_time": record.source_time,
         "source_frame_id": record.source_frame_id,
+        "source_frame": record.source_frame.as_ref().map(source_frame_quantization_json),
         "adjustment_lower_stack_time": record.adjustment_lower_stack_time,
         "posterize": record.posterize.map(|posterize| json!({
             "frame_rate": posterize.frame_rate,
@@ -1353,7 +1434,46 @@ fn temporal_trace_record_json(record: &render_core::layer_eval::TemporalTraceRec
     })
 }
 
+fn keyframe_trace_record_json(record: &render_core::layer_eval::KeyframeTraceRecord) -> Value {
+    json!({
+        "event": record.event,
+        "composition": record.composition,
+        "layer_id": record.layer_id,
+        "property": record.property,
+        "sample_time": record.sample_time,
+        "value": record.value,
+        "phase": record.phase,
+        "interpolation": record.interpolation,
+        "segment_index": record.segment_index,
+        "key_start_time": record.key_start_time,
+        "key_end_time": record.key_end_time,
+        "normalized_time": record.normalized_time,
+        "eased_progress": record.eased_progress,
+        "hold": record.hold,
+        "approximate": record.approximate,
+        "ease": record.ease.map(|ease| json!({
+            "x1": ease.x1,
+            "y1": ease.y1,
+            "x2": ease.x2,
+            "y2": ease.y2
+        }))
+    })
+}
+
+fn source_frame_quantization_json(
+    frame: &render_core::layer_eval::SourceFrameQuantization,
+) -> Value {
+    json!({
+        "frame_id": frame.frame_id,
+        "frame_rate": frame.frame_rate,
+        "frame_time": frame.frame_time,
+        "subframe": frame.subframe,
+        "policy": frame.policy
+    })
+}
+
 fn motion_blur_trace_json(record: &render_core::layer_eval::MotionBlurTrace) -> Value {
+    let weight_summary = record.weight_summary();
     json!({
         "event": "temporal.motion_blur",
         "composition": record.composition,
@@ -1362,18 +1482,31 @@ fn motion_blur_trace_json(record: &render_core::layer_eval::MotionBlurTrace) -> 
         "frame_duration": record.frame_duration,
         "shutter_open": record.shutter_open,
         "shutter_close": record.shutter_close,
+        "shutter_duration": record.shutter_close - record.shutter_open,
         "shutter_angle": record.shutter_angle,
         "shutter_phase": record.shutter_phase,
         "requested_samples": record.requested_samples,
         "effective_samples": record.effective_samples,
         "divisor": record.divisor,
+        "weight_summary": {
+            "active_samples": weight_summary.active_samples,
+            "contributing_samples": weight_summary.contributing_samples,
+            "total_weight": weight_summary.total_weight
+        },
         "samples": record.samples.iter().map(|sample| json!({
             "sample_index": sample.sample_index,
             "sample_time": sample.sample_time,
+            "shutter_offset": sample.sample_time - record.shutter_open,
+            "shutter_fraction": if record.shutter_close > record.shutter_open {
+                Some((sample.sample_time - record.shutter_open) / (record.shutter_close - record.shutter_open))
+            } else {
+                None
+            },
             "layer_time": sample.layer_time,
             "posterized_time": sample.posterized_time,
             "source_time": sample.source_time,
             "source_frame_id": sample.source_frame_id,
+            "source_frame": sample.source_frame.as_ref().map(source_frame_quantization_json),
             "active": sample.active,
             "opacity": sample.opacity,
             "weight": sample.weight
@@ -2497,6 +2630,57 @@ mod tests {
         assert!(stats.max_abs_delta >= 2.0);
         let first = stats.first_mismatch.unwrap();
         assert!(first["path"].as_str().unwrap().contains("glyphs"));
+    }
+
+    #[test]
+    fn alpha_policy_diagnostics_names_straight_premult_assumptions() {
+        let raw_rgba = testkit::DiffMetrics {
+            max_abs_diff: 10,
+            mean_abs_diff: 4.0,
+            rmse_abs_diff: 5.0,
+            changed_pixels: 2,
+            total_pixels: 4,
+        };
+        let raw_rgb = testkit::DiffMetrics {
+            mean_abs_diff: 3.0,
+            ..raw_rgba
+        };
+        let alpha = testkit::DiffMetrics {
+            mean_abs_diff: 7.0,
+            ..raw_rgba
+        };
+        let background_alpha_normalized = testkit::DiffMetrics {
+            mean_abs_diff: 1.5,
+            ..raw_rgba
+        };
+        let rgb_under_alpha_policy = testkit::DiffMetrics {
+            mean_abs_diff: 2.0,
+            ..raw_rgba
+        };
+
+        let diagnostics = alpha_policy_diagnostics_json(
+            raw_rgba,
+            raw_rgb,
+            alpha,
+            background_alpha_normalized,
+            rgb_under_alpha_policy,
+            true,
+        );
+
+        assert_eq!(diagnostics["canvas_storage"], json!("straight_rgba8"));
+        assert_eq!(
+            diagnostics["rgb_under_alpha_policy_alias"],
+            json!("rgb_straight_source_over_ae_background")
+        );
+        assert_eq!(diagnostics["premult_unpremultiply_applied"], json!(false));
+        assert_eq!(
+            diagnostics["mean_abs_diff"]["raw_rgba_minus_background_alpha_normalized"],
+            json!(2.5)
+        );
+        assert_eq!(
+            diagnostics["background_corner_alpha_only_mismatch"],
+            json!(true)
+        );
     }
 
     #[test]
