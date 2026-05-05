@@ -1,25 +1,24 @@
 /*
-AE Native Renderer Glow Mask Discriminator Probe Pack Builder
+AE Native Renderer Glow Probe Chunk Builder
 
-Run from After Effects:
-  File > Scripts > Run Script File... > build_glow_mask_discriminator_project.jsx
-
-The script creates procedural source comps, one label-free comp per probe case,
-and render-queue entries for PNG sequence export. The outputs are probes, not
-goldens, until rendered in AE and measured.
+This file is loaded by small entrypoint JSX files. Set GLOW_PROBE_CHUNK to one
+of: radius, mask, intensity, composite, all.
 */
 
-(function buildGlowMaskDiscriminatorProbeProject() {
+(function buildGlowProbeChunkProject() {
+    var CHUNK = "all";
+    if (typeof GLOW_PROBE_CHUNK !== "undefined" && GLOW_PROBE_CHUNK) {
+        CHUNK = String(GLOW_PROBE_CHUNK);
+    }
+
     resetProjectAndCaches();
 
-    app.beginUndoGroup("Build Glow Mask Discriminator Probe Pack");
+    app.beginUndoGroup("Build Glow Probe Chunk: " + CHUNK);
 
     var SCRIPT_FILE = new File($.fileName);
     var PACK_DIR = SCRIPT_FILE.parent.parent;
     var PNG_DIR = new Folder(PACK_DIR.fsName + "/ae_probe_outputs/png");
-    var PREVIEW_DIR = new Folder(PACK_DIR.fsName + "/ae_probe_outputs/preview");
     ensureFolder(PNG_DIR);
-    ensureFolder(PREVIEW_DIR);
 
     var CFG = {
         width: 512,
@@ -58,12 +57,39 @@ goldens, until rendered in AE and measured.
         precomps: getOrCreateFolder("AE_PROBE_GLOW_MASK_DISCRIMINATOR/precomps")
     };
 
-    var sources = buildSources(CFG, folders);
-    var cases = buildCases(CFG, sources, folders);
-    var master = buildMasterReel(CFG, cases, folders);
-    enqueueCases(cases, master, PNG_DIR, PREVIEW_DIR);
+    var sources = {};
+    var cases = [];
 
+    if (isChunk("mask")) {
+        sources.maskSamples = buildMaskSamples(CFG, folders);
+        addMaskCases(CFG, sources, folders, cases);
+    }
+    if (isChunk("radius")) {
+        sources.impulse = buildImpulse(CFG, folders);
+        addRadiusCases(CFG, sources, folders, cases);
+    }
+    if (isChunk("intensity")) {
+        if (!sources.impulse) {
+            sources.impulse = buildImpulse(CFG, folders);
+        }
+        addIntensityCases(CFG, sources, folders, cases);
+    }
+    if (isChunk("composite")) {
+        sources.compositeImpulse = buildCompositeImpulse(CFG, folders);
+        addCompositeCases(CFG, sources, folders, cases);
+    }
+
+    if (cases.length <= 0) {
+        throw new Error("No Glow probe cases for chunk: " + CHUNK);
+    }
+
+    enqueueCases(cases, PNG_DIR);
+    purgeCaches();
     app.endUndoGroup();
+
+    function isChunk(name) {
+        return CHUNK === "all" || CHUNK === name;
+    }
 
     function resetProjectAndCaches() {
         purgeCaches();
@@ -84,75 +110,69 @@ goldens, until rendered in AE and measured.
         }
     }
 
-    function buildSources(cfg, folders) {
-        return {
-            maskSamples: buildMaskSamples(cfg, folders),
-            impulse: buildImpulse(cfg, folders),
-            compositeImpulse: buildCompositeImpulse(cfg, folders)
-        };
+    function addMaskCases(cfg, sources, folders, cases) {
+        cases.push(createCase(cfg, folders, "GMD_SRC_MASK_SAMPLES", "Source RGBA split samples without Glow", function (comp) {
+            placeComp(comp, sources.maskSamples, [256, 256], [100, 100]);
+        }));
+        cases.push(createCase(cfg, folders, "GMD_MASK_DEFAULT", "Glow mask discriminator default based-on property", function (comp) {
+            var layer = placeComp(comp, sources.maskSamples, [256, 256], [100, 100]);
+            addGlow(layer, cfg.threshold, cfg.maskRadius, cfg.maskIntensity, null);
+        }));
+        cases.push(createCase(cfg, folders, "GMD_MASK_BASEDON_1", "Glow mask discriminator based-on enum 1", function (comp) {
+            var layer = placeComp(comp, sources.maskSamples, [256, 256], [100, 100]);
+            addGlow(layer, cfg.threshold, cfg.maskRadius, cfg.maskIntensity, 1);
+        }));
+        cases.push(createCase(cfg, folders, "GMD_MASK_BASEDON_2", "Glow mask discriminator based-on enum 2", function (comp) {
+            var layer = placeComp(comp, sources.maskSamples, [256, 256], [100, 100]);
+            addGlow(layer, cfg.threshold, cfg.maskRadius, cfg.maskIntensity, 2);
+        }));
     }
 
-    function buildCases(cfg, sources, folders) {
-        var cases = [
-            createCase("GMD_SRC_MASK_SAMPLES", "Source RGBA split samples without Glow", function (comp) {
-                placeComp(comp, sources.maskSamples, [256, 256], [100, 100]);
-            }),
-            createCase("GMD_MASK_DEFAULT", "Glow mask discriminator default based-on property", function (comp) {
-                var layer = placeComp(comp, sources.maskSamples, [256, 256], [100, 100]);
-                addGlow(layer, cfg.threshold, cfg.maskRadius, cfg.maskIntensity, null);
-            }),
-            createCase("GMD_MASK_BASEDON_1", "Glow mask discriminator based-on enum 1", function (comp) {
-                var layer = placeComp(comp, sources.maskSamples, [256, 256], [100, 100]);
-                addGlow(layer, cfg.threshold, cfg.maskRadius, cfg.maskIntensity, 1);
-            }),
-            createCase("GMD_MASK_BASEDON_2", "Glow mask discriminator based-on enum 2", function (comp) {
-                var layer = placeComp(comp, sources.maskSamples, [256, 256], [100, 100]);
-                addGlow(layer, cfg.threshold, cfg.maskRadius, cfg.maskIntensity, 2);
-            })
-        ];
-
+    function addRadiusCases(cfg, sources, folders, cases) {
         for (var r = 0; r < cfg.radiusSweep.length; r++) {
             (function (radiusCase) {
-                cases.push(createCase("GMD_RADIUS_" + radiusCase.id, "Glow radius impulse radius " + radiusCase.value, function (comp) {
+                cases.push(createCase(cfg, folders, "GMD_RADIUS_" + radiusCase.id, "Glow radius impulse radius " + radiusCase.value, function (comp) {
                     var layer = placeComp(comp, sources.impulse, [256, 256], [100, 100]);
                     addGlow(layer, cfg.threshold, radiusCase.value, 1, null);
                 }));
             })(cfg.radiusSweep[r]);
         }
+    }
 
+    function addIntensityCases(cfg, sources, folders, cases) {
         for (var i = 0; i < cfg.intensitySweep.length; i++) {
             (function (intensityCase) {
-                cases.push(createCase("GMD_INTENSITY_" + intensityCase.id, "Glow intensity impulse intensity " + intensityCase.value, function (comp) {
+                cases.push(createCase(cfg, folders, "GMD_INTENSITY_" + intensityCase.id, "Glow intensity impulse intensity " + intensityCase.value, function (comp) {
                     var layer = placeComp(comp, sources.impulse, [256, 256], [100, 100]);
                     addGlow(layer, cfg.threshold, cfg.intensityRadius, intensityCase.value, null);
                 }));
             })(cfg.intensitySweep[i]);
         }
+    }
 
-        cases.push(createCase("GMD_COMP_TRANSPARENT", "Glow composite on transparent background", function (comp) {
+    function addCompositeCases(cfg, sources, folders, cases) {
+        cases.push(createCase(cfg, folders, "GMD_COMP_TRANSPARENT", "Glow composite on transparent background", function (comp) {
             var layer = placeComp(comp, sources.compositeImpulse, [256, 256], [100, 100]);
             addGlow(layer, cfg.threshold, cfg.compositeRadius, 1, null);
         }));
-        cases.push(createCase("GMD_COMP_BLACK", "Glow composite on opaque black background", function (comp) {
+        cases.push(createCase(cfg, folders, "GMD_COMP_BLACK", "Glow composite on opaque black background", function (comp) {
             addSolidLayer(comp, "opaque_black_background", [0, 0, 0], [256, 256], cfg.width, cfg.height, 100);
             var layer = placeComp(comp, sources.compositeImpulse, [256, 256], [100, 100]);
             addGlow(layer, cfg.threshold, cfg.compositeRadius, 1, null);
         }));
-        cases.push(createCase("GMD_COMP_BLACK_50A", "Glow composite on semitransparent black background", function (comp) {
+        cases.push(createCase(cfg, folders, "GMD_COMP_BLACK_50A", "Glow composite on semitransparent black background", function (comp) {
             addSolidLayer(comp, "half_alpha_black_background", [0, 0, 0], [256, 256], cfg.width, cfg.height, 50);
             var layer = placeComp(comp, sources.compositeImpulse, [256, 256], [100, 100]);
             addGlow(layer, cfg.threshold, cfg.compositeRadius, 1, null);
         }));
+    }
 
-        return cases;
-
-        function createCase(id, title, builder) {
-            var comp = app.project.items.addComp(id + "__" + title, cfg.width, cfg.height, 1, cfg.duration, cfg.fps);
-            comp.parentFolder = folders.cases;
-            comp.bgColor = cfg.bg;
-            builder(comp);
-            return { id: id, title: title, comp: comp };
-        }
+    function createCase(cfg, folders, id, title, builder) {
+        var comp = app.project.items.addComp(id + "__" + title, cfg.width, cfg.height, 1, cfg.duration, cfg.fps);
+        comp.parentFolder = folders.cases;
+        comp.bgColor = cfg.bg;
+        builder(comp);
+        return { id: id, title: title, comp: comp };
     }
 
     function buildMaskSamples(cfg, folders) {
@@ -249,39 +269,7 @@ goldens, until rendered in AE and measured.
         }
     }
 
-    function buildMasterReel(cfg, cases, folders) {
-        var duration = cases.length * cfg.duration;
-        var comp = app.project.items.addComp("master_glow_mask_discriminator_probe_reel", cfg.width, cfg.height, 1, duration, cfg.fps);
-        comp.parentFolder = folders.root;
-        comp.bgColor = cfg.bg;
-        for (var i = 0; i < cases.length; i++) {
-            var layer = comp.layers.add(cases[i].comp);
-            layer.name = cases[i].id;
-            layer.startTime = i * cfg.duration;
-            layer.inPoint = i * cfg.duration;
-            layer.outPoint = (i + 1) * cfg.duration;
-            addMasterSlate(comp, cases[i].id, cases[i].title, i * cfg.duration, cfg.duration);
-        }
-        return comp;
-    }
-
-    function addMasterSlate(comp, id, title, startTime, duration) {
-        var layer = comp.layers.addText(id + "  " + title);
-        layer.name = "case_slate";
-        layer.startTime = startTime;
-        layer.inPoint = startTime;
-        layer.outPoint = startTime + Math.min(0.45, duration);
-        setLayerPosition(layer, [18, 32]);
-        var docProp = layer.property("ADBE Text Properties").property("ADBE Text Document");
-        var doc = docProp.value;
-        doc.fontSize = 18;
-        doc.fillColor = [1, 1, 1];
-        doc.applyFill = true;
-        docProp.setValue(doc);
-        setLayerOpacity(layer, 80);
-    }
-
-    function enqueueCases(cases, master, pngDir, previewDir) {
+    function enqueueCases(cases, pngDir) {
         for (var i = 0; i < cases.length; i++) {
             var caseDir = new Folder(pngDir.fsName + "/" + cases[i].id);
             ensureFolder(caseDir);
@@ -293,9 +281,6 @@ goldens, until rendered in AE and measured.
             }
             om.file = new File(caseDir.fsName + "/" + cases[i].id + "_[#####].png");
         }
-        var masterRq = app.project.renderQueue.items.add(master);
-        var masterOm = masterRq.outputModule(1);
-        masterOm.file = new File(previewDir.fsName + "/master_glow_mask_discriminator_probe_reel.mov");
     }
 
     function setLayerPosition(layer, value) {

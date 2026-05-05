@@ -8,6 +8,8 @@ use serde_json::Value;
 #[derive(Debug, Default)]
 pub struct Glow;
 
+const AE_GLOW_IR_GAUSSIAN_RADIUS_SCALE: f32 = 0.4;
+
 impl Effect for Glow {
     fn match_name(&self) -> &'static str {
         "ADBE Glo2"
@@ -21,7 +23,7 @@ impl Effect for Glow {
     ) -> anyhow::Result<Canvas> {
         let params = GlowParams::from_json(params, ctx.time);
         let threshold = params.threshold.clamp(0.0, 255.0);
-        let radius = blur_radius(params.radius / 2.0);
+        let radius = glow_kernel_radius(params.radius);
         let intensity = params.intensity.max(0.0);
 
         let source = glow_source(input, threshold, params.based_on);
@@ -145,6 +147,7 @@ pub struct GlowDebugParams {
     pub based_on_raw_number: Option<i64>,
     pub threshold: f32,
     pub radius: f32,
+    pub ir_gaussian_radius: f32,
     pub intensity: f32,
     pub kernel_radius: u32,
 }
@@ -178,7 +181,8 @@ pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugT
     let based_on_resolution = GlowBasedOn::resolve(params);
     let params = GlowParams::from_json(params, time);
     let threshold = params.threshold.clamp(0.0, 255.0);
-    let kernel_radius = blur_radius(params.radius / 2.0);
+    let ir_gaussian_radius = glow_ir_gaussian_radius(params.radius);
+    let kernel_radius = blur_radius(ir_gaussian_radius);
     let intensity = params.intensity.max(0.0);
     let source = glow_source(input, threshold, params.based_on);
     let blurred = blur_canvas(&source, kernel_radius);
@@ -195,6 +199,7 @@ pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugT
             based_on_raw_number: based_on_resolution.raw_number,
             threshold: params.threshold,
             radius: params.radius,
+            ir_gaussian_radius,
             intensity: params.intensity,
             kernel_radius,
         },
@@ -213,6 +218,14 @@ pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugT
             final_output: canvas_alpha_stats(&output),
         },
     }
+}
+
+fn glow_ir_gaussian_radius(radius: f32) -> f32 {
+    radius * AE_GLOW_IR_GAUSSIAN_RADIUS_SCALE
+}
+
+fn glow_kernel_radius(radius: f32) -> u32 {
+    blur_radius(glow_ir_gaussian_radius(radius))
 }
 
 fn glow_source(input: &Canvas, threshold: f32, based_on: GlowBasedOn) -> Canvas {
@@ -460,14 +473,23 @@ mod tests {
     }
 
     #[test]
-    fn glow_radius_uses_shared_ceil_quantization_after_half_mapping() {
+    fn glow_radius_uses_ae_ir_gaussian_radius_scale_before_quantization() {
         let mut input = Canvas::transparent(3, 1);
         input.set_pixel(1, 0, [255, 255, 255, 255]);
 
-        let trace = glow_debug_trace(&input, &json!({ "0002": 0, "0003": 0.5, "0004": 1.0 }), 0.0);
+        let small = glow_debug_trace(&input, &json!({ "0002": 0, "0003": 0.5, "0004": 1.0 }), 0.0);
+        let large = glow_debug_trace(
+            &input,
+            &json!({ "0002": 0, "0003": 10.0, "0004": 1.0 }),
+            0.0,
+        );
 
-        assert_eq!(trace.params.radius, 0.5);
-        assert_eq!(trace.params.kernel_radius, 1);
+        assert_eq!(small.params.radius, 0.5);
+        assert!((small.params.ir_gaussian_radius - 0.2).abs() < 0.000_001);
+        assert_eq!(small.params.kernel_radius, 1);
+        assert_eq!(large.params.radius, 10.0);
+        assert_eq!(large.params.ir_gaussian_radius, 4.0);
+        assert_eq!(large.params.kernel_radius, 4);
     }
 
     #[test]

@@ -11,6 +11,12 @@
   },
   "builder": {
     "jsx": "jsx/build_glow_mask_discriminator_project.jsx",
+    "chunked_jsx": {
+      "radius": "jsx/build_glow_radius_probe_project.jsx",
+      "mask": "jsx/build_glow_mask_probe_project.jsx",
+      "intensity": "jsx/build_glow_intensity_probe_project.jsx",
+      "composite": "jsx/build_glow_composite_probe_project.jsx"
+    },
     "procedural_assets": [
       "SRC_mask_samples_rgba_split",
       "SRC_impulse_1px",

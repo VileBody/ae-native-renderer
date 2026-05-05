@@ -1539,6 +1539,7 @@ fn effect_debug_trace_json(
                     "based_on_raw_number": trace.params.based_on_raw_number,
                     "threshold": trace.params.threshold,
                     "radius": trace.params.radius,
+                    "ir_gaussian_radius": trace.params.ir_gaussian_radius,
                     "intensity": trace.params.intensity,
                     "kernel_radius": trace.params.kernel_radius
                 },
@@ -1548,7 +1549,7 @@ fn effect_debug_trace_json(
                     "based_on_param_source": trace.params.based_on_param_source,
                     "based_on_raw_number": trace.params.based_on_raw_number,
                     "blur_input": "thresholded_straight_rgba8",
-                    "blur_kernel": "separable_box_average",
+                    "blur_kernel": "ae_ir_gaussian_radius_scale_0_4_then_native_box_approximation",
                     "intensity_scale": "straight_rgba8_channels",
                     "composite": "straight_rgba8_normal_source_over",
                     "composite_policy": "native_approximation_pending_ir_composite_and_m19",

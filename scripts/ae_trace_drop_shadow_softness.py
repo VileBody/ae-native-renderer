@@ -24,6 +24,7 @@ DEFAULT_SERVER_ID = "6849259"
 DEFAULT_SSH_HOST = "ae85"
 DEFAULT_REMOTE_PYTHON = r"C:\Python314\python.exe"
 DEFAULT_PACK = Path("fixtures/ae_probe_pack/shadow_blur_discriminator")
+DEFAULT_ENTRY_SCRIPT = "jsx/build_shadow_blur_discriminator_project.jsx"
 DEFAULT_CASES = ["SHBL_SOFT_001", "SHBL_SOFT_008", "SHBL_SOFT_018", "SHBL_SOFT_032"]
 
 
@@ -1700,14 +1701,14 @@ def fetch_remote_text_if_exists_ssh(host: str, remote_path: str) -> str:
         return ""
 
 
-def run_case(case_id: str, job_id: str, node: str) -> None:
+def run_case(case_id: str, job_id: str, node: str, pack: Path, entry_script: str) -> None:
     subprocess.run(
         [
             sys.executable,
             "scripts/ae_remote_pack.py",
-            str(DEFAULT_PACK),
+            str(pack),
             "--entry-script",
-            "jsx/build_shadow_blur_discriminator_project.jsx",
+            entry_script,
             "--node",
             node,
             "--job-id",
@@ -1824,6 +1825,8 @@ def main() -> int:
     ap.add_argument("--s3-env", default=str(DEFAULT_S3_ENV))
     ap.add_argument("--bucket", default="")
     ap.add_argument("--prefix", default="ae_dynamic_traces/drop_shadow_softness")
+    ap.add_argument("--pack", default=str(DEFAULT_PACK), help="AE probe pack directory to render")
+    ap.add_argument("--entry-script", default=DEFAULT_ENTRY_SCRIPT, help="JSX path relative to --pack")
     ap.add_argument("--case", action="append", default=[])
     ap.add_argument("--duration", type=int, default=90)
     ap.add_argument("--max-events", type=int, default=80)
@@ -1841,6 +1844,12 @@ def main() -> int:
     args = ap.parse_args()
 
     case_ids = args.case or DEFAULT_CASES
+    pack = Path(args.pack).expanduser().resolve()
+    entry_script = args.entry_script.strip()
+    if not pack.is_dir():
+        raise RuntimeError(f"pack dir not found: {pack}")
+    if not entry_script:
+        raise RuntimeError("--entry-script is required")
     stamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_dir = Path(args.out_dir or f"target/dynamic_tools_85/drop_shadow_softness_{stamp}").resolve()
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -1894,9 +1903,9 @@ def main() -> int:
             )
         tail_proc = start_remote_tail_ssh(args.ssh_host, remote_log) if args.live_tail and args.transport == "ssh" else None
         time.sleep(3.0)
-        job_id = f"drop_shadow_soft_trace_{case_id}_{stamp}"
+        job_id = f"ae_trace_{case_id}_{stamp}"
         try:
-            run_case(case_id, job_id, args.node)
+            run_case(case_id, job_id, args.node, pack, entry_script)
         except Exception:
             if args.transport == "ssh":
                 capture_failure_screenshot_ssh(args.ssh_host, out_dir, f"{job_id}_failure")
