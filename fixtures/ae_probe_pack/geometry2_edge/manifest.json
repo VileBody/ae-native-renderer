@@ -1,0 +1,148 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "geometry2_edge_sampler_probe_v1",
+  "purpose": "After Effects ADBE Geometry2 evidence for pixel-center convention, edge/out-of-bounds policy, and Sampling 0012 Bilinear/Bicubic behavior.",
+  "composition": {
+    "width": 64,
+    "height": 64,
+    "fps": 30,
+    "duration_seconds": 0.03333333333333333,
+    "pixel_aspect": 1.0,
+    "bits_per_channel": 8,
+    "background": [0, 0, 0]
+  },
+  "effect": {
+    "match_name": "ADBE Geometry2",
+    "properties_to_set": [
+      { "index": 1, "payload_key": "0001", "match_name": "ADBE Geometry2-0001", "role": "Anchor Point" },
+      { "index": 2, "payload_key": "0002", "match_name": "ADBE Geometry2-0002", "role": "Position" },
+      { "index": 3, "payload_key": "0003", "match_name": "ADBE Geometry2-0011", "role": "Uniform Scale" },
+      { "index": 4, "payload_key": "0004", "match_name": "ADBE Geometry2-0003", "role": "Scale Height" },
+      { "index": 5, "payload_key": "0005", "match_name": "ADBE Geometry2-0004", "role": "Scale Width" },
+      { "index": 8, "payload_key": "0008", "match_name": "ADBE Geometry2-0007", "role": "Rotation" },
+      { "index": 12, "payload_key": "0012", "match_name": "ADBE Geometry2-0012", "role": "Sampling" }
+    ],
+    "sampling_values": [
+      { "value": 1, "label": "Bilinear" },
+      { "value": 2, "label": "Bicubic" }
+    ]
+  },
+  "assets": {
+    "generator": "scripts/measure_geometry2_edge_probe.py --generate-assets",
+    "asset_manifest": "assets/primitives/assets_manifest.json",
+    "primitives": [
+      {
+        "id": "coord_ramp",
+        "path": "assets/primitives/coord_ramp_64.png",
+        "width": 64,
+        "height": 64,
+        "channels": "R=x*4, G=y*4, B=32/224 parity, A=255"
+      },
+      {
+        "id": "checker_1px",
+        "path": "assets/primitives/checker_1px_64.png",
+        "width": 64,
+        "height": 64,
+        "channels": "1px black/white checker, A=255"
+      },
+      {
+        "id": "edge_impulse",
+        "path": "assets/primitives/edge_impulse_64.png",
+        "width": 64,
+        "height": 64,
+        "channels": "single-pixel impulses at corners, center, and edge midpoints"
+      },
+      {
+        "id": "alpha_hidden_rgb_border",
+        "path": "assets/primitives/alpha_hidden_rgb_border_64.png",
+        "width": 64,
+        "height": 64,
+        "channels": "transparent 1px border with nonzero hidden RGB; opaque coordinate interior"
+      }
+    ]
+  },
+  "case_matrix": {
+    "sources": ["coord_ramp", "checker_1px", "edge_impulse", "alpha_hidden_rgb_border"],
+    "transforms": [
+      {
+        "id": "IDENTITY",
+        "title": "identity transform",
+        "anchor": [32, 32],
+        "position": [32, 32],
+        "scale": [100, 100],
+        "rotation": 0
+      },
+      {
+        "id": "SUBPIXEL_RIGHT_0_5",
+        "title": "subpixel translate +0.5 output x, probes source x near -0.5",
+        "anchor": [32, 32],
+        "position": [32.5, 32],
+        "scale": [100, 100],
+        "rotation": 0
+      },
+      {
+        "id": "SUBPIXEL_LEFT_0_5",
+        "title": "subpixel translate -0.5 output x, probes source x near width - 0.5",
+        "anchor": [32, 32],
+        "position": [31.5, 32],
+        "scale": [100, 100],
+        "rotation": 0
+      },
+      {
+        "id": "EDGE_LEFT_1_0",
+        "title": "translate -1.0 output x, probes source x near width",
+        "anchor": [32, 32],
+        "position": [31, 32],
+        "scale": [100, 100],
+        "rotation": 0
+      },
+      {
+        "id": "SCALE_90",
+        "title": "scale 90 percent, expands inverse UV beyond both horizontal edges",
+        "anchor": [32, 32],
+        "position": [32, 32],
+        "scale": [90, 90],
+        "rotation": 0
+      },
+      {
+        "id": "ROTATE_5",
+        "title": "small +5 degree rotation around center",
+        "anchor": [32, 32],
+        "position": [32, 32],
+        "scale": [100, 100],
+        "rotation": 5
+      }
+    ],
+    "sampling": [
+      { "id": "Q1_BILINEAR", "value": 1, "label": "Bilinear" },
+      { "id": "Q2_BICUBIC", "value": 2, "label": "Bicubic" }
+    ],
+    "case_id_format": "G2E_<SOURCE>_<TRANSFORM>_<SAMPLING_ID>"
+  },
+  "uv_targets": {
+    "x": [-0.5, 0, 0.5, 63, 63.5, 64],
+    "y": [-0.5, 0, 0.5, 63, 63.5, 64],
+    "notes": [
+      "The transform set places these UVs on or near output edge sample rows/columns.",
+      "The measurement script records both integer-center and half-pixel-center predictions."
+    ]
+  },
+  "render_outputs": {
+    "png_sequences": "ae_goldens/png8/<case_id>/<case_id>_[#####].png",
+    "property_dump": "ae_goldens/metadata/geometry2_edge_property_dump.json",
+    "builder_log": "ae_goldens/logs/geometry2_edge_builder_log.txt",
+    "measurement_json": "ae_goldens/metadata/geometry2_edge_measurements.json",
+    "measurement_csv": "ae_goldens/metadata/geometry2_edge_samples.csv"
+  },
+  "measurement_requirements": {
+    "outputs": ["json", "csv"],
+    "must_report": [
+      "inferred_pixel_center",
+      "oob_policy_candidates",
+      "edge_samples",
+      "quality_branch_evidence",
+      "hidden_rgb_evidence",
+      "per-case PNG path"
+    ]
+  }
+}

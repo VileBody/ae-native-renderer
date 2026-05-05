@@ -180,8 +180,8 @@ fn resolve_drop_shadow_debug_params(params: DropShadowParams) -> DropShadowDebug
 fn drop_shadow_offset(direction_degrees: f32, distance: f32) -> (i32, i32) {
     let direction = direction_degrees.to_radians();
     (
-        (-direction.cos() * distance).trunc() as i32,
         (direction.sin() * distance).trunc() as i32,
+        (-direction.cos() * distance).trunc() as i32,
     )
 }
 
@@ -288,7 +288,7 @@ mod tests {
                 &json!({
                     "0001": [0, 0, 0, 1],
                     "0002": 255,
-                    "0003": 180,
+                    "0003": 90,
                     "0004": 1,
                     "0005": 0,
                     "0006": true
@@ -324,9 +324,17 @@ mod tests {
     }
 
     #[test]
+    fn ae_probe_cardinal_directions_start_at_up_and_rotate_clockwise() {
+        assert_eq!(drop_shadow_offset(0.0, 23.0), (0, -23));
+        assert_eq!(drop_shadow_offset(90.0, 23.0), (23, 0));
+        assert_eq!(drop_shadow_offset(180.0, 23.0), (0, 23));
+        assert_eq!(drop_shadow_offset(270.0, 23.0), (-23, 0));
+    }
+
+    #[test]
     fn offset_uses_truncation_for_fractional_distances() {
-        assert_eq!(drop_shadow_offset(180.0, 1.9), (1, 0));
-        assert_eq!(drop_shadow_offset(270.0, 1.9), (0, -1));
+        assert_eq!(drop_shadow_offset(30.0, 23.0), (11, -19));
+        assert_eq!(drop_shadow_offset(315.0, 23.0), (-16, -16));
     }
 
     #[test]
@@ -350,15 +358,15 @@ mod tests {
 
     #[test]
     fn debug_trace_reports_shadow_alpha_intermediates() {
-        let mut input = Canvas::transparent(5, 1);
-        input.set_pixel(1, 0, [255, 255, 255, 255]);
+        let mut input = Canvas::transparent(5, 3);
+        input.set_pixel(1, 1, [255, 255, 255, 255]);
 
         let trace = drop_shadow_debug_trace(
             &input,
             &json!({
                 "0001": [0, 0, 0, 1],
                 "0002": 50,
-                "0003": 180,
+                "0003": 90,
                 "0004": 1,
                 "0005": 2,
                 "0006": false

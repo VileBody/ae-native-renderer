@@ -1,0 +1,111 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "minimax_enum_radius_edge_v1",
+  "purpose": "Runnable After Effects probe pack for ADBE Minimax operation enum, channel enum, direction, fractional radius quantization, and edge/boundary behavior.",
+  "composition": {
+    "width": 128,
+    "height": 128,
+    "fps": 1,
+    "duration_seconds": 1.0,
+    "baseline_bits_per_channel": 8,
+    "notes": [
+      "The JSX sets app.project.bitsPerChannel = 8 for the baseline render.",
+      "For 16/32 bpc follow-up runs, duplicate the generated project or change bitsPerChannel to 16 or 32 if the installed AE output module preserves that depth for PNG/TIFF."
+    ]
+  },
+  "effect": {
+    "match_name": "ADBE Minimax",
+    "properties_to_dump": [
+      { "index": 1, "param": "0001", "expected_role": "operation enum" },
+      { "index": 2, "param": "0002", "expected_role": "radius" },
+      { "index": 3, "param": "0003", "expected_role": "channel enum" },
+      { "index": 4, "param": "0004", "expected_role": "direction enum" },
+      { "index": 5, "param": "0005", "expected_role": "edge/boundary policy" }
+    ]
+  },
+  "sources": [
+    {
+      "id": "impulse_dot",
+      "path": "assets/primitives/impulse_dot.png",
+      "description": "Opaque black field with one white center impulse."
+    },
+    {
+      "id": "ramp_steps",
+      "path": "assets/primitives/ramp_steps.png",
+      "description": "R horizontal ramp, G vertical ramp, B 16px checker steps, A opaque."
+    },
+    {
+      "id": "rgba_lanes",
+      "path": "assets/primitives/rgba_lanes.png",
+      "description": "Separate R/G/B vertical lanes plus an alpha notch lane for channel enum probing."
+    },
+    {
+      "id": "orientation_impulses",
+      "path": "assets/primitives/orientation_impulses.png",
+      "description": "Horizontal red and vertical green one-pixel impulse lines."
+    },
+    {
+      "id": "boundary_corner",
+      "path": "assets/primitives/boundary_corner.png",
+      "description": "Bright frame touching all image edges plus an interior block."
+    }
+  ],
+  "render_outputs": {
+    "png_sequences": "ae_goldens/png/<case_id>/<case_id>_[#####].png",
+    "metadata_dump": "ae_goldens/metadata/minimax_enum_radius_edge_property_dump.json",
+    "measurement_json": "ae_goldens/metadata/minimax_enum_radius_edge_measurements.json",
+    "measurement_csv": "ae_goldens/metadata/minimax_enum_radius_edge_measurements.csv",
+    "semantic_csv": "ae_goldens/metadata/minimax_enum_radius_edge_semantics.csv"
+  },
+  "analysis": {
+    "channel_lanes": [
+      { "id": "r_lane", "channel": "r", "roi": [14, 14, 25, 113] },
+      { "id": "g_lane", "channel": "g", "roi": [34, 14, 45, 113] },
+      { "id": "b_lane", "channel": "b", "roi": [54, 14, 65, 113] },
+      { "id": "a_notch_lane", "channel": "a", "roi": [74, 14, 85, 113] }
+    ],
+    "radius_values": [0.25, 0.49, 0.5, 0.51, 1.49, 1.5, 1.51],
+    "operation_values": [1, 2, 3, 4],
+    "channel_values": [1, 2, 3, 4, 5, 6],
+    "direction_values": [1, 2, 3],
+    "boundary_values": [0, 1]
+  },
+  "cases": [
+    { "id": "MMER_PRE_IMPULSE", "role": "pre_reference", "source_id": "impulse_dot", "effect_params": null },
+    { "id": "MMER_PRE_RAMP", "role": "pre_reference", "source_id": "ramp_steps", "effect_params": null },
+    { "id": "MMER_PRE_LANES", "role": "pre_reference", "source_id": "rgba_lanes", "effect_params": null },
+    { "id": "MMER_PRE_ORIENT", "role": "pre_reference", "source_id": "orientation_impulses", "effect_params": null },
+    { "id": "MMER_PRE_BOUNDARY", "role": "pre_reference", "source_id": "boundary_corner", "effect_params": null },
+
+    { "id": "MMER_OP1_IMPULSE_R8", "role": "operation_probe", "source_id": "impulse_dot", "effect_params": { "0001": 1, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_OP2_IMPULSE_R8", "role": "operation_probe", "source_id": "impulse_dot", "effect_params": { "0001": 2, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_OP3_IMPULSE_R8", "role": "operation_probe", "source_id": "impulse_dot", "effect_params": { "0001": 3, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_OP4_IMPULSE_R8", "role": "operation_probe", "source_id": "impulse_dot", "effect_params": { "0001": 4, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_OP1_RAMP_R8", "role": "operation_probe", "source_id": "ramp_steps", "effect_params": { "0001": 1, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_OP2_RAMP_R8", "role": "operation_probe", "source_id": "ramp_steps", "effect_params": { "0001": 2, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_OP3_RAMP_R8", "role": "operation_probe", "source_id": "ramp_steps", "effect_params": { "0001": 3, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_OP4_RAMP_R8", "role": "operation_probe", "source_id": "ramp_steps", "effect_params": { "0001": 4, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+
+    { "id": "MMER_CH1_LANES_R6", "role": "channel_probe", "source_id": "rgba_lanes", "effect_params": { "0001": 2, "0002": 6, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_CH2_LANES_R6", "role": "channel_probe", "source_id": "rgba_lanes", "effect_params": { "0001": 2, "0002": 6, "0003": 2, "0004": 1, "0005": 0 } },
+    { "id": "MMER_CH3_LANES_R6", "role": "channel_probe", "source_id": "rgba_lanes", "effect_params": { "0001": 2, "0002": 6, "0003": 3, "0004": 1, "0005": 0 } },
+    { "id": "MMER_CH4_LANES_R6", "role": "channel_probe", "source_id": "rgba_lanes", "effect_params": { "0001": 2, "0002": 6, "0003": 4, "0004": 1, "0005": 0 } },
+    { "id": "MMER_CH5_LANES_R6", "role": "channel_probe", "source_id": "rgba_lanes", "effect_params": { "0001": 2, "0002": 6, "0003": 5, "0004": 1, "0005": 0 } },
+    { "id": "MMER_CH6_LANES_R6", "role": "channel_probe", "source_id": "rgba_lanes", "effect_params": { "0001": 2, "0002": 6, "0003": 6, "0004": 1, "0005": 0 } },
+
+    { "id": "MMER_DIR1_ORIENT_R8", "role": "direction_probe", "source_id": "orientation_impulses", "effect_params": { "0001": 2, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_DIR2_ORIENT_R8", "role": "direction_probe", "source_id": "orientation_impulses", "effect_params": { "0001": 2, "0002": 8, "0003": 1, "0004": 2, "0005": 0 } },
+    { "id": "MMER_DIR3_ORIENT_R8", "role": "direction_probe", "source_id": "orientation_impulses", "effect_params": { "0001": 2, "0002": 8, "0003": 1, "0004": 3, "0005": 0 } },
+
+    { "id": "MMER_RAD025_IMPULSE", "role": "radius_probe", "source_id": "impulse_dot", "effect_params": { "0001": 2, "0002": 0.25, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_RAD049_IMPULSE", "role": "radius_probe", "source_id": "impulse_dot", "effect_params": { "0001": 2, "0002": 0.49, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_RAD050_IMPULSE", "role": "radius_probe", "source_id": "impulse_dot", "effect_params": { "0001": 2, "0002": 0.5, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_RAD051_IMPULSE", "role": "radius_probe", "source_id": "impulse_dot", "effect_params": { "0001": 2, "0002": 0.51, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_RAD149_IMPULSE", "role": "radius_probe", "source_id": "impulse_dot", "effect_params": { "0001": 2, "0002": 1.49, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_RAD150_IMPULSE", "role": "radius_probe", "source_id": "impulse_dot", "effect_params": { "0001": 2, "0002": 1.5, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_RAD151_IMPULSE", "role": "radius_probe", "source_id": "impulse_dot", "effect_params": { "0001": 2, "0002": 1.51, "0003": 1, "0004": 1, "0005": 0 } },
+
+    { "id": "MMER_EDGE0_BOUNDARY_R8", "role": "boundary_probe", "source_id": "boundary_corner", "effect_params": { "0001": 2, "0002": 8, "0003": 1, "0004": 1, "0005": 0 } },
+    { "id": "MMER_EDGE1_BOUNDARY_R8", "role": "boundary_probe", "source_id": "boundary_corner", "effect_params": { "0001": 2, "0002": 8, "0003": 1, "0004": 1, "0005": 1 } }
+  ]
+}

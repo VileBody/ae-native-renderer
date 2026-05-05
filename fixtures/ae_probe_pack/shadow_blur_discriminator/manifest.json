@@ -1,0 +1,105 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "shadow_blur_discriminator_v1",
+  "purpose": "Runnable After Effects probe pack for discriminating Drop Shadow direction, softness blur mapping, alpha-only shadow generation, and colored translucent shadow compositing against Box Blur candidates.",
+  "composition": {
+    "width": 512,
+    "height": 512,
+    "fps": 30,
+    "duration_seconds": 1.0,
+    "bits_per_channel": 8,
+    "source_nominal_bbox": [216, 224, 295, 287]
+  },
+  "builder": {
+    "jsx": "jsx/build_shadow_blur_discriminator_project.jsx",
+    "requires_generated_assets": true,
+    "asset_generation_command": "python3 scripts/measure_shadow_blur_discriminator.py --pack . --generate-assets",
+    "external_assets": [
+      {
+        "id": "noisy_rgb_under_alpha",
+        "path": "assets/noisy_rgb_under_alpha.png",
+        "purpose": "Tests whether Drop Shadow blurs alpha only when transparent and partially transparent pixels carry unrelated RGB noise."
+      }
+    ]
+  },
+  "render_outputs": {
+    "png_sequences": "ae_goldens/png/<case_id>/<case_id>_[#####].png",
+    "metadata_dump": "ae_goldens/metadata/shadow_blur_discriminator_property_dump.json",
+    "measurement_json": "ae_goldens/metadata/shadow_blur_discriminator_measurements.json",
+    "measurement_csv": "ae_goldens/metadata/shadow_blur_discriminator_measurements.csv",
+    "required_channels": "RGB + Alpha, straight/unmatted when available",
+    "frames_to_export": [0]
+  },
+  "effects": {
+    "drop_shadow": {
+      "match_name": "ADBE Drop Shadow",
+      "properties": [
+        { "index": 1, "param": "0001", "role": "color" },
+        { "index": 2, "param": "0002", "role": "opacity" },
+        { "index": 3, "param": "0003", "role": "direction degrees" },
+        { "index": 4, "param": "0004", "role": "distance" },
+        { "index": 5, "param": "0005", "role": "softness" },
+        { "index": 6, "param": "0006", "role": "shadow only" }
+      ]
+    },
+    "box_blur": {
+      "match_name": "ADBE Box Blur2",
+      "candidate_models": [
+        "radius = softness * 1.4, iterations = 1",
+        "radius = ceil(softness / 2.71), iterations = 3"
+      ]
+    }
+  },
+  "measurement_requirements": {
+    "bbox_offset": "Compare alpha bbox center against the matching source bbox.",
+    "alpha_spread_radius": "Expansion from shifted source bbox at alpha thresholds >1, >10, >64, >128.",
+    "per_channel_checks": [
+      "RGBA stats over alpha support",
+      "RGB stats where alpha is low",
+      "count of nonzero RGB in fully transparent pixels"
+    ],
+    "composite_overlap_samples": [
+      "source_center",
+      "shadow_projected_center",
+      "source_shadow_overlap",
+      "source_left_only",
+      "shadow_edge"
+    ],
+    "box_blur_pair_comparisons": "MAE/RMSE RGBA comparisons for Drop Shadow softness 8/12/18 against both Box Blur candidate families."
+  },
+  "cases": [
+    { "id": "SHBL_SRC_HARD_ALPHA", "family": "source", "role": "hard alpha source" },
+    { "id": "SHBL_SRC_RGB_NOISE_ALPHA", "family": "source", "role": "RGB noise under alpha source" },
+    { "id": "SHBL_SRC_TRANSLUCENT_COLOR", "family": "source", "role": "colored translucent source" },
+    { "id": "SHBL_DIR_000", "family": "direction_sweep", "direction": 0, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_030", "family": "direction_sweep", "direction": 30, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_045", "family": "direction_sweep", "direction": 45, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_090", "family": "direction_sweep", "direction": 90, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_120", "family": "direction_sweep", "direction": 120, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_135", "family": "direction_sweep", "direction": 135, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_180", "family": "direction_sweep", "direction": 180, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_210", "family": "direction_sweep", "direction": 210, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_225", "family": "direction_sweep", "direction": 225, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_270", "family": "direction_sweep", "direction": 270, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_300", "family": "direction_sweep", "direction": 300, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_DIR_315", "family": "direction_sweep", "direction": 315, "distance": 23, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_SOFT_000", "family": "softness_sweep", "direction": 135, "distance": 19, "softness": 0, "shadow_only": 1 },
+    { "id": "SHBL_SOFT_001", "family": "softness_sweep", "direction": 135, "distance": 19, "softness": 1, "shadow_only": 1 },
+    { "id": "SHBL_SOFT_002", "family": "softness_sweep", "direction": 135, "distance": 19, "softness": 2, "shadow_only": 1 },
+    { "id": "SHBL_SOFT_004", "family": "softness_sweep", "direction": 135, "distance": 19, "softness": 4, "shadow_only": 1 },
+    { "id": "SHBL_SOFT_008", "family": "softness_sweep", "direction": 135, "distance": 19, "softness": 8, "shadow_only": 1 },
+    { "id": "SHBL_SOFT_012", "family": "softness_sweep", "direction": 135, "distance": 19, "softness": 12, "shadow_only": 1 },
+    { "id": "SHBL_SOFT_018", "family": "softness_sweep", "direction": 135, "distance": 19, "softness": 18, "shadow_only": 1 },
+    { "id": "SHBL_SOFT_032", "family": "softness_sweep", "direction": 135, "distance": 19, "softness": 32, "shadow_only": 1 },
+    { "id": "SHBL_BB_S08_R11P2_I1", "family": "box_blur_candidate", "softness": 8, "box_radius": 11.2, "box_iterations": 1 },
+    { "id": "SHBL_BB_S08_R03_I3_DIV271", "family": "box_blur_candidate", "softness": 8, "box_radius": 3, "box_iterations": 3 },
+    { "id": "SHBL_BB_S12_R16P8_I1", "family": "box_blur_candidate", "softness": 12, "box_radius": 16.8, "box_iterations": 1 },
+    { "id": "SHBL_BB_S12_R05_I3_DIV271", "family": "box_blur_candidate", "softness": 12, "box_radius": 5, "box_iterations": 3 },
+    { "id": "SHBL_BB_S18_R25P2_I1", "family": "box_blur_candidate", "softness": 18, "box_radius": 25.2, "box_iterations": 1 },
+    { "id": "SHBL_BB_S18_R07_I3_DIV271", "family": "box_blur_candidate", "softness": 18, "box_radius": 7, "box_iterations": 3 },
+    { "id": "SHBL_NOISE_DSH_SHONLY", "family": "alpha_only_rgb_noise", "softness": 12, "shadow_only": 1 },
+    { "id": "SHBL_NOISE_BOX_RGBA", "family": "alpha_only_rgb_noise", "box_radius": 5, "box_iterations": 3 },
+    { "id": "SHBL_COLOR_SHONLY_1", "family": "colored_translucent_composite", "direction": 315, "distance": 18, "softness": 8, "shadow_only": 1 },
+    { "id": "SHBL_COLOR_SHONLY_0", "family": "colored_translucent_composite", "direction": 315, "distance": 18, "softness": 8, "shadow_only": 0 }
+  ]
+}

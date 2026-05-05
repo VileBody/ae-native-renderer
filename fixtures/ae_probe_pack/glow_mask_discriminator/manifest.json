@@ -1,0 +1,295 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "glow_mask_discriminator_probe_pack_m11",
+  "purpose": "Runnable After Effects probe compositions and measurement script for discriminating Glow source mask, radius, intensity, and RGB/alpha compositing behavior. This pack contains no AE goldens.",
+  "composition": {
+    "width": 512,
+    "height": 512,
+    "fps": 30,
+    "case_duration_seconds": 1.0,
+    "master_comp": "master_glow_mask_discriminator_probe_reel"
+  },
+  "builder": {
+    "jsx": "jsx/build_glow_mask_discriminator_project.jsx",
+    "procedural_assets": [
+      "SRC_mask_samples_rgba_split",
+      "SRC_impulse_1px",
+      "SRC_composite_impulse"
+    ],
+    "external_assets": []
+  },
+  "measurement": {
+    "script": "scripts/measure_glow_mask_discriminator.py",
+    "default_input": "ae_probe_outputs/png/<case_id>/<case_id>_[#####].png",
+    "default_output_dir": "measurements",
+    "outputs": [
+      "glow_mask_discriminator_measurements.json",
+      "mask_samples.csv",
+      "radius_profile.csv",
+      "intensity_scale.csv",
+      "rgb_alpha_split.csv",
+      "composite_samples.csv"
+    ]
+  },
+  "render_outputs": {
+    "individual_png_sequences": "ae_probe_outputs/png/<case_id>/<case_id>_[#####].png",
+    "master_preview": "ae_probe_outputs/preview/master_glow_mask_discriminator_probe_reel.mov",
+    "required_channels": "RGB + Alpha, straight/unmatted when available",
+    "frames_to_export": [0]
+  },
+  "effect_params": {
+    "mask_discriminator": {
+      "match_name": "ADBE Glo2",
+      "threshold": 120,
+      "radius": 0,
+      "intensity": 1,
+      "based_on_variants": [
+        "property 0001 absent",
+        "0001 = 1",
+        "0001 = 2"
+      ]
+    },
+    "radius_impulse_sweep": {
+      "match_name": "ADBE Glo2",
+      "threshold": 120,
+      "radius_values": [0, 0.5, 1, 2, 5, 10],
+      "intensity": 1,
+      "based_on": "default"
+    },
+    "intensity_impulse_sweep": {
+      "match_name": "ADBE Glo2",
+      "threshold": 120,
+      "radius": 5,
+      "intensity_values": [0, 0.5, 1, 1.25, 2],
+      "based_on": "default"
+    },
+    "composite_discriminator": {
+      "match_name": "ADBE Glo2",
+      "threshold": 120,
+      "radius": 10,
+      "intensity": 1,
+      "backgrounds": ["transparent", "black", "black_50pct_alpha"]
+    }
+  },
+  "sample_points": {
+    "mask_samples": [
+      {
+        "id": "bright_high_alpha",
+        "xy": [96, 160],
+        "rgb": [190, 190, 190],
+        "alpha": 255,
+        "luma_threshold_pass": true,
+        "alpha_threshold_pass": true
+      },
+      {
+        "id": "bright_low_alpha",
+        "xy": [200, 160],
+        "rgb": [190, 190, 190],
+        "alpha": 89,
+        "luma_threshold_pass": true,
+        "alpha_threshold_pass": false
+      },
+      {
+        "id": "dark_high_alpha",
+        "xy": [304, 160],
+        "rgb": [41, 41, 41],
+        "alpha": 255,
+        "luma_threshold_pass": false,
+        "alpha_threshold_pass": true
+      },
+      {
+        "id": "dark_low_alpha",
+        "xy": [408, 160],
+        "rgb": [41, 41, 41],
+        "alpha": 89,
+        "luma_threshold_pass": false,
+        "alpha_threshold_pass": false
+      },
+      {
+        "id": "luma_119_opaque",
+        "xy": [200, 320],
+        "rgb": [119, 119, 119],
+        "alpha": 255,
+        "luma_threshold_pass": false,
+        "alpha_threshold_pass": true
+      },
+      {
+        "id": "luma_120_opaque",
+        "xy": [304, 320],
+        "rgb": [120, 120, 120],
+        "alpha": 255,
+        "luma_threshold_pass": true,
+        "alpha_threshold_pass": true
+      },
+      {
+        "id": "mid_128_high_alpha",
+        "xy": [408, 320],
+        "rgb": [128, 128, 128],
+        "alpha": 255,
+        "luma_threshold_pass": true,
+        "alpha_threshold_pass": true
+      }
+    ],
+    "impulse_center": [256, 256],
+    "radius_profile_distances_px": [0, 1, 2, 3, 4, 5, 6, 8, 10, 12, 16, 20, 24, 32],
+    "intensity_probe_distances_px": [4, 5, 6, 8, 10]
+  },
+  "cases": [
+    {
+      "id": "GMD_SRC_MASK_SAMPLES",
+      "title": "Source RGBA split samples without Glow",
+      "effect": "None",
+      "stage": "source_rgba",
+      "comp": "GMD_SRC_MASK_SAMPLES__Source RGBA split samples without Glow",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_mask_samples_rgba_split"],
+      "desired_output": "ae_probe_outputs/png/GMD_SRC_MASK_SAMPLES/GMD_SRC_MASK_SAMPLES_[#####].png",
+      "question": "What exact rendered RGB and alpha values are present before Glow thresholding?"
+    },
+    {
+      "id": "GMD_MASK_DEFAULT",
+      "title": "Glow mask discriminator default based-on property",
+      "effect": "Glow",
+      "stage": "mask_pass_fail",
+      "comp": "GMD_MASK_DEFAULT__Glow mask discriminator default based-on property",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_mask_samples_rgba_split"],
+      "desired_output": "ae_probe_outputs/png/GMD_MASK_DEFAULT/GMD_MASK_DEFAULT_[#####].png",
+      "question": "With threshold=120 radius=0 intensity=1 and property 0001 absent, which RGBA samples produce Glow output?"
+    },
+    {
+      "id": "GMD_MASK_BASEDON_1",
+      "title": "Glow mask discriminator based-on enum 1",
+      "effect": "Glow",
+      "stage": "mask_pass_fail",
+      "comp": "GMD_MASK_BASEDON_1__Glow mask discriminator based-on enum 1",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_mask_samples_rgba_split"],
+      "desired_output": "ae_probe_outputs/png/GMD_MASK_BASEDON_1/GMD_MASK_BASEDON_1_[#####].png",
+      "question": "With threshold=120 radius=0 intensity=1 and 0001=1, which samples pass?"
+    },
+    {
+      "id": "GMD_MASK_BASEDON_2",
+      "title": "Glow mask discriminator based-on enum 2",
+      "effect": "Glow",
+      "stage": "mask_pass_fail",
+      "comp": "GMD_MASK_BASEDON_2__Glow mask discriminator based-on enum 2",
+      "frames": [0],
+      "expected_assets": ["procedural:SRC_mask_samples_rgba_split"],
+      "desired_output": "ae_probe_outputs/png/GMD_MASK_BASEDON_2/GMD_MASK_BASEDON_2_[#####].png",
+      "question": "With threshold=120 radius=0 intensity=1 and 0001=2, which samples pass?"
+    },
+    {
+      "id": "GMD_RADIUS_R0",
+      "title": "Glow radius impulse radius 0",
+      "effect": "Glow",
+      "stage": "radius_profile",
+      "radius": 0,
+      "desired_output": "ae_probe_outputs/png/GMD_RADIUS_R0/GMD_RADIUS_R0_[#####].png"
+    },
+    {
+      "id": "GMD_RADIUS_R0P5",
+      "title": "Glow radius impulse radius 0.5",
+      "effect": "Glow",
+      "stage": "radius_profile",
+      "radius": 0.5,
+      "desired_output": "ae_probe_outputs/png/GMD_RADIUS_R0P5/GMD_RADIUS_R0P5_[#####].png"
+    },
+    {
+      "id": "GMD_RADIUS_R1",
+      "title": "Glow radius impulse radius 1",
+      "effect": "Glow",
+      "stage": "radius_profile",
+      "radius": 1,
+      "desired_output": "ae_probe_outputs/png/GMD_RADIUS_R1/GMD_RADIUS_R1_[#####].png"
+    },
+    {
+      "id": "GMD_RADIUS_R2",
+      "title": "Glow radius impulse radius 2",
+      "effect": "Glow",
+      "stage": "radius_profile",
+      "radius": 2,
+      "desired_output": "ae_probe_outputs/png/GMD_RADIUS_R2/GMD_RADIUS_R2_[#####].png"
+    },
+    {
+      "id": "GMD_RADIUS_R5",
+      "title": "Glow radius impulse radius 5",
+      "effect": "Glow",
+      "stage": "radius_profile",
+      "radius": 5,
+      "desired_output": "ae_probe_outputs/png/GMD_RADIUS_R5/GMD_RADIUS_R5_[#####].png"
+    },
+    {
+      "id": "GMD_RADIUS_R10",
+      "title": "Glow radius impulse radius 10",
+      "effect": "Glow",
+      "stage": "radius_profile",
+      "radius": 10,
+      "desired_output": "ae_probe_outputs/png/GMD_RADIUS_R10/GMD_RADIUS_R10_[#####].png"
+    },
+    {
+      "id": "GMD_INTENSITY_I0",
+      "title": "Glow intensity impulse intensity 0",
+      "effect": "Glow",
+      "stage": "intensity_scale",
+      "intensity": 0,
+      "desired_output": "ae_probe_outputs/png/GMD_INTENSITY_I0/GMD_INTENSITY_I0_[#####].png"
+    },
+    {
+      "id": "GMD_INTENSITY_I0P5",
+      "title": "Glow intensity impulse intensity 0.5",
+      "effect": "Glow",
+      "stage": "intensity_scale",
+      "intensity": 0.5,
+      "desired_output": "ae_probe_outputs/png/GMD_INTENSITY_I0P5/GMD_INTENSITY_I0P5_[#####].png"
+    },
+    {
+      "id": "GMD_INTENSITY_I1",
+      "title": "Glow intensity impulse intensity 1",
+      "effect": "Glow",
+      "stage": "intensity_scale",
+      "intensity": 1,
+      "desired_output": "ae_probe_outputs/png/GMD_INTENSITY_I1/GMD_INTENSITY_I1_[#####].png"
+    },
+    {
+      "id": "GMD_INTENSITY_I1P25",
+      "title": "Glow intensity impulse intensity 1.25",
+      "effect": "Glow",
+      "stage": "intensity_scale",
+      "intensity": 1.25,
+      "desired_output": "ae_probe_outputs/png/GMD_INTENSITY_I1P25/GMD_INTENSITY_I1P25_[#####].png"
+    },
+    {
+      "id": "GMD_INTENSITY_I2",
+      "title": "Glow intensity impulse intensity 2",
+      "effect": "Glow",
+      "stage": "intensity_scale",
+      "intensity": 2,
+      "desired_output": "ae_probe_outputs/png/GMD_INTENSITY_I2/GMD_INTENSITY_I2_[#####].png"
+    },
+    {
+      "id": "GMD_COMP_TRANSPARENT",
+      "title": "Glow composite on transparent background",
+      "effect": "Glow",
+      "stage": "composite_rgb_alpha",
+      "background": "transparent",
+      "desired_output": "ae_probe_outputs/png/GMD_COMP_TRANSPARENT/GMD_COMP_TRANSPARENT_[#####].png"
+    },
+    {
+      "id": "GMD_COMP_BLACK",
+      "title": "Glow composite on opaque black background",
+      "effect": "Glow",
+      "stage": "composite_rgb_alpha",
+      "background": "black",
+      "desired_output": "ae_probe_outputs/png/GMD_COMP_BLACK/GMD_COMP_BLACK_[#####].png"
+    },
+    {
+      "id": "GMD_COMP_BLACK_50A",
+      "title": "Glow composite on semitransparent black background",
+      "effect": "Glow",
+      "stage": "composite_rgb_alpha",
+      "background": "black_50pct_alpha",
+      "desired_output": "ae_probe_outputs/png/GMD_COMP_BLACK_50A/GMD_COMP_BLACK_50A_[#####].png"
+    }
+  ]
+}

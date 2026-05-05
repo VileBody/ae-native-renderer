@@ -1,0 +1,32 @@
+[
+  {
+    "id": "impulse_dot",
+    "path": "assets/primitives/impulse_dot.png",
+    "width": 128,
+    "height": 128
+  },
+  {
+    "id": "ramp_steps",
+    "path": "assets/primitives/ramp_steps.png",
+    "width": 128,
+    "height": 128
+  },
+  {
+    "id": "rgba_lanes",
+    "path": "assets/primitives/rgba_lanes.png",
+    "width": 128,
+    "height": 128
+  },
+  {
+    "id": "orientation_impulses",
+    "path": "assets/primitives/orientation_impulses.png",
+    "width": 128,
+    "height": 128
+  },
+  {
+    "id": "boundary_corner",
+    "path": "assets/primitives/boundary_corner.png",
+    "width": 128,
+    "height": 128
+  }
+]

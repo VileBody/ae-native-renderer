@@ -1,0 +1,9 @@
+[
+  {
+    "id": "noisy_rgb_under_alpha",
+    "path": "assets/noisy_rgb_under_alpha.png",
+    "width": 128,
+    "height": 128,
+    "description": "Deterministic RGB noise in fully/partially transparent pixels plus a hard alpha island."
+  }
+]

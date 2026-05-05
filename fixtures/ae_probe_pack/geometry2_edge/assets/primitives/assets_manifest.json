@@ -1,0 +1,30 @@
+[
+  {
+    "id": "coord_ramp",
+    "path": "assets/primitives/coord_ramp_64.png",
+    "width": 64,
+    "height": 64,
+    "description": "R=x*4, G=y*4, B=32/224 parity, A=255."
+  },
+  {
+    "id": "checker_1px",
+    "path": "assets/primitives/checker_1px_64.png",
+    "width": 64,
+    "height": 64,
+    "description": "1px black/white checker, A=255."
+  },
+  {
+    "id": "edge_impulse",
+    "path": "assets/primitives/edge_impulse_64.png",
+    "width": 64,
+    "height": 64,
+    "description": "Single-pixel impulses at corners, center, and edge midpoints."
+  },
+  {
+    "id": "alpha_hidden_rgb_border",
+    "path": "assets/primitives/alpha_hidden_rgb_border_64.png",
+    "width": 64,
+    "height": 64,
+    "description": "Transparent 1px border with nonzero hidden RGB; opaque coordinate interior."
+  }
+]
