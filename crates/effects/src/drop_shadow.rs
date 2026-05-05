@@ -43,9 +43,7 @@ impl Effect for DropShadow {
                 if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
                     continue;
                 }
-                let alpha = (source[3] as f32 * opacity * (color[3] as f32 / 255.0))
-                    .round()
-                    .clamp(0.0, 255.0) as u8;
+                let alpha = (source[3] as f32 * opacity).round().clamp(0.0, 255.0) as u8;
                 let existing = shadow.pixel(sx as u32, sy as u32);
                 if alpha > existing[3] {
                     shadow.set_pixel(sx as u32, sy as u32, [color[0], color[1], color[2], alpha]);
@@ -270,10 +268,9 @@ fn raw_offset_shadow_canvas(
             if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
                 continue;
             }
-            let alpha =
-                (source[3] as f32 * resolved.opacity_normalized * (params.color[3] as f32 / 255.0))
-                    .round()
-                    .clamp(0.0, 255.0) as u8;
+            let alpha = (source[3] as f32 * resolved.opacity_normalized)
+                .round()
+                .clamp(0.0, 255.0) as u8;
             let existing = shadow.pixel(sx as u32, sy as u32);
             if alpha > existing[3] {
                 shadow.set_pixel(
@@ -288,11 +285,7 @@ fn raw_offset_shadow_canvas(
 }
 
 fn normalize_opacity(value: f32) -> f32 {
-    if value > 100.0 {
-        (value / 255.0).clamp(0.0, 1.0)
-    } else {
-        (value / 100.0).clamp(0.0, 1.0)
-    }
+    (value / 255.0).clamp(0.0, 1.0)
 }
 
 #[cfg(test)]
@@ -405,7 +398,7 @@ mod tests {
             }),
         );
 
-        assert_eq!(trace.params.opacity_normalized, 0.5);
+        assert!((trace.params.opacity_normalized - (50.0 / 255.0)).abs() < f32::EPSILON);
         assert_eq!(trace.params.blur_radius, 1);
         assert_eq!(trace.params.blur_iterations, 1);
         assert_eq!(trace.alpha.input.nonzero_pixels, 1);
@@ -417,5 +410,72 @@ mod tests {
         assert!(
             trace.alpha.final_output.nonzero_pixels >= trace.alpha.blurred_shadow.nonzero_pixels
         );
+    }
+
+    #[test]
+    fn ae_composite_probe_opacity_uses_raw_0_to_255_scale() {
+        assert_eq!(normalize_opacity(0.0), 0.0);
+        assert!((normalize_opacity(50.0) - (50.0 / 255.0)).abs() < f32::EPSILON);
+        assert!((normalize_opacity(100.0) - (100.0 / 255.0)).abs() < f32::EPSILON);
+        assert!((normalize_opacity(180.0) - (180.0 / 255.0)).abs() < f32::EPSILON);
+        assert_eq!(normalize_opacity(255.0), 1.0);
+    }
+
+    #[test]
+    fn color_alpha_is_not_part_of_ae_drop_shadow_color_property() {
+        let mut input = Canvas::transparent(1, 1);
+        input.set_pixel(0, 0, [255, 255, 255, 255]);
+
+        let opaque_color_alpha = raw_offset_shadow_canvas(
+            &input,
+            DropShadowParams {
+                color: [255, 0, 0, 255],
+                opacity: 100.0,
+                direction_degrees: 0.0,
+                distance: 0.0,
+                softness: 0.0,
+                shadow_only: true,
+            },
+            DropShadowDebugParams {
+                color: [255, 0, 0, 255],
+                opacity: 100.0,
+                opacity_normalized: normalize_opacity(100.0),
+                direction_degrees: 0.0,
+                distance: 0.0,
+                softness: 0.0,
+                shadow_only: true,
+                dx: 0,
+                dy: 0,
+                blur_radius: 0,
+                blur_iterations: 0,
+            },
+        );
+        let half_color_alpha = raw_offset_shadow_canvas(
+            &input,
+            DropShadowParams {
+                color: [255, 0, 0, 128],
+                opacity: 100.0,
+                direction_degrees: 0.0,
+                distance: 0.0,
+                softness: 0.0,
+                shadow_only: true,
+            },
+            DropShadowDebugParams {
+                color: [255, 0, 0, 128],
+                opacity: 100.0,
+                opacity_normalized: normalize_opacity(100.0),
+                direction_degrees: 0.0,
+                distance: 0.0,
+                softness: 0.0,
+                shadow_only: true,
+                dx: 0,
+                dy: 0,
+                blur_radius: 0,
+                blur_iterations: 0,
+            },
+        );
+
+        assert_eq!(opaque_color_alpha.pixel(0, 0), [255, 0, 0, 100]);
+        assert_eq!(half_color_alpha.pixel(0, 0), [255, 0, 0, 100]);
     }
 }

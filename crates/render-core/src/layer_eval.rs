@@ -1506,7 +1506,7 @@ fn effect_debug_trace_json(
                 "alpha_policy": {
                     "canvas_storage": "straight_rgba8",
                     "source_alpha": "input_alpha_channel",
-                    "shadow_mask": "offset_alpha_scaled_by_opacity_and_color_alpha",
+                    "shadow_mask": "offset_alpha_scaled_by_ae_raw_opacity_0_255",
                     "shadow_blur_alpha_option": "gf_set_blur_alpha_channel_only_confirmed",
                     "softness": "alpha_channel_only_box_blur_then_recolor",
                     "composite": "straight_rgba8_normal_source_over",

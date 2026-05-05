@@ -11,6 +11,9 @@
   },
   "builder": {
     "jsx": "jsx/build_glow_shadow_probe_project.jsx",
+    "chunked_jsx": {
+      "drop_shadow_composite": "jsx/build_drop_shadow_composite_probe_project.jsx"
+    },
     "procedural_assets": [
       "SRC_luma_ramp_16_steps",
       "SRC_alpha_split_probe",
@@ -26,6 +29,15 @@
     "master_preview": "ae_probe_outputs/preview/master_glow_shadow_probe_reel.mov",
     "required_channels": "RGB + Alpha, straight/unmatted when available",
     "frames_to_export": [0]
+  },
+  "measurement": {
+    "drop_shadow_composite_script": "scripts/measure_drop_shadow_composite_probe.py",
+    "drop_shadow_composite_default_input": "ae_probe_outputs/png/DSC_*",
+    "sample_points": {
+      "center": [256, 256],
+      "offset_right": [288, 256],
+      "background": [200, 256]
+    }
   },
   "effect_params": {
     "glow_eff_020_match": {
