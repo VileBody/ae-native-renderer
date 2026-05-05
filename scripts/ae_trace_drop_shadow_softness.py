@@ -254,12 +254,15 @@ const maxEvents = MAX_EVENTS_PLACEHOLDER;
 const broadCoverage = BROAD_COVERAGE_PLACEHOLDER;
 const maxGenericHooks = MAX_GENERIC_HOOKS_PLACEHOLDER;
 const processInfo = PROCESS_INFO_PLACEHOLDER;
+const stalkTransformRender = STALK_TRANSFORM_RENDER_PLACEHOLDER;
+const maxStalkRenderCalls = MAX_STALK_RENDER_CALLS_PLACEHOLDER;
 let eventCount = 0;
 let genericHookCount = 0;
 const installedHooks = {};
 const missingNotified = {};
 const genericCallCounts = {};
 const moduleSnapshots = {};
+let stalkRenderCallCount = 0;
 
 const WATCH_MODULES = [
   "GPUFoundation.DLL",
@@ -395,6 +398,13 @@ function dumpPfParamDef(p) {
   };
 }
 
+function dumpPfParamDefsFromArray(p, count) {
+  const paramPtrs = pointerArray(p, count);
+  return paramPtrs.map(function (entry) {
+    return {index: entry.index, ptr: entry.ptr, def: entry.ptr === null ? null : dumpPfParamDef(ptr(entry.ptr))};
+  });
+}
+
 function dumpPfWorldLike(p) {
   if (p === null || p === undefined || ptr(p).isNull()) {
     return null;
@@ -424,9 +434,7 @@ function dumpAeEffectCall(ctx, moduleName, exportName) {
     in_data_words: memoryWords(ptr(ctx.rdx), 24),
     out_data_words: memoryWords(ptr(ctx.r8), 16),
     params_array: paramPtrs,
-    param_defs: paramPtrs.slice(0, 12).map(function (entry) {
-      return {index: entry.index, ptr: entry.ptr, def: entry.ptr === null ? null : dumpPfParamDef(ptr(entry.ptr))};
-    }),
+    param_defs: dumpPfParamDefsFromArray(paramsPtr, 16),
     output_words: memoryWords(safeReadPointer(ctx.rsp.add(0x28)), 16),
     extra_words: memoryWords(safeReadPointer(ctx.rsp.add(0x30)), 12)
   };
@@ -451,6 +459,7 @@ function installEffectProcPointer(address, origin) {
   try {
     Interceptor.attach(p, {
       onEnter: function () {
+        this.stalked = maybeStartTransformRenderStalker(this.context, this.threadId, p);
         const seen = effectProcCallCounts[key] || 0;
         if (seen >= 80) {
           return;
@@ -468,6 +477,17 @@ function installEffectProcPointer(address, origin) {
         });
       },
       onLeave: function (retval) {
+        if (this.stalked) {
+          try {
+            Stalker.unfollow(this.threadId);
+            Stalker.flush();
+          } catch (e) {
+            meta("stalker_stop_error", {
+              thread_id: this.threadId,
+              error: String(e)
+            });
+          }
+        }
         emit("effect_proc_leave", {
           origin: origin,
           address: p.toString(),
@@ -491,6 +511,82 @@ function installEffectProcPointer(address, origin) {
       offset: loc.offset,
       error: String(e)
     });
+  }
+}
+
+function maybeStartTransformRenderStalker(ctx, threadId, procAddress) {
+  if (!stalkTransformRender) {
+    return false;
+  }
+  const loc = moduleOffset(procAddress);
+  if (loc.module !== "Transform.aex") {
+    return false;
+  }
+  let pfCmd = null;
+  try {
+    pfCmd = ptr(ctx.rcx).toInt32();
+  } catch (e) {
+    return false;
+  }
+  if (pfCmd !== 13) {
+    return false;
+  }
+  if (stalkRenderCallCount >= maxStalkRenderCalls) {
+    return false;
+  }
+  stalkRenderCallCount += 1;
+  const stalkIndex = stalkRenderCallCount;
+  try {
+    Stalker.follow(threadId, {
+      events: {call: true},
+      onCallSummary: function (summary) {
+        const items = [];
+        Object.keys(summary).forEach(function (target) {
+          const targetLoc = moduleOffset(ptr(target));
+          if (targetLoc.module === null || WATCH_MODULES.indexOf(targetLoc.module) === -1) {
+            return;
+          }
+          items.push({
+            module: targetLoc.module,
+            offset: targetLoc.offset,
+            addr: targetLoc.addr,
+            count: summary[target]
+          });
+        });
+        items.sort(function (a, b) {
+          if (b.count !== a.count) {
+            return b.count - a.count;
+          }
+          return (String(a.module) + String(a.offset)).localeCompare(String(b.module) + String(b.offset));
+        });
+        meta("stalker_call_summary", {
+          stalk_index: stalkIndex,
+          thread_id: threadId,
+          proc_module: loc.module,
+          proc_offset: loc.offset,
+          item_count: items.length,
+          items: items.slice(0, 120)
+        });
+      }
+    });
+    meta("stalker_started", {
+      stalk_index: stalkIndex,
+      thread_id: threadId,
+      proc_module: loc.module,
+      proc_offset: loc.offset,
+      pf_cmd: pfCmd
+    });
+    return true;
+  } catch (e) {
+    meta("stalker_start_error", {
+      stalk_index: stalkIndex,
+      thread_id: threadId,
+      proc_module: loc.module,
+      proc_offset: loc.offset,
+      pf_cmd: pfCmd,
+      error: String(e)
+    });
+    return false;
   }
 }
 
@@ -925,7 +1021,7 @@ function installEffectProcDiscoveryHooks() {
 }
 
 function installOffsetHooks() {
-  if (!broadCoverage || offsetHooks.length === 0) {
+  if (offsetHooks.length === 0) {
     return;
   }
   offsetHooks.forEach(function (target) {
@@ -941,6 +1037,13 @@ function installOffsetHooks() {
     try {
       Interceptor.attach(address, {
         onEnter: function () {
+          const isTransformWrapperRender =
+            target.module === "Transform.aex" &&
+            target.offset === "0x5b20" &&
+            safeReadS32(ptr(this.context.rdx)) === null &&
+            ptr(this.context.rdx).toInt32() === 13;
+          const stackParams = isTransformWrapperRender ? safeReadPointer(this.context.rsp.add(0x28)) : null;
+          const stackOutput = isTransformWrapperRender ? safeReadPointer(this.context.rsp.add(0x38)) : null;
           emit("offset_hook_enter", {
             offset_kind: target.kind,
             module: target.module,
@@ -961,6 +1064,8 @@ function installOffsetHooks() {
             rdx_world_like: dumpPfWorldLike(ptr(this.context.rdx)),
             r8_world_like: dumpPfWorldLike(ptr(this.context.r8)),
             r9_world_like: dumpPfWorldLike(ptr(this.context.r9)),
+            stack_0x28_param_defs: isTransformWrapperRender ? dumpPfParamDefsFromArray(stackParams, 16) : null,
+            stack_0x38_world_like: isTransformWrapperRender ? dumpPfWorldLike(stackOutput) : null,
             backtrace: backtrace(this.context)
           });
         }
@@ -1172,11 +1277,15 @@ def main() -> int:
     ap.add_argument("--broad-coverage", action="store_true")
     ap.add_argument("--generic-hook-limit", type=int, default=160)
     ap.add_argument("--offset-hook", action="append", default=[])
+    ap.add_argument("--stalk-transform-render", action="store_true")
+    ap.add_argument("--max-stalk-render-calls", type=int, default=4)
     args = ap.parse_args()
 
     script_text = JS.replace("MAX_EVENTS_PLACEHOLDER", str(args.max_events))
     script_text = script_text.replace("BROAD_COVERAGE_PLACEHOLDER", json.dumps(args.broad_coverage))
     script_text = script_text.replace("MAX_GENERIC_HOOKS_PLACEHOLDER", str(args.generic_hook_limit))
+    script_text = script_text.replace("STALK_TRANSFORM_RENDER_PLACEHOLDER", json.dumps(args.stalk_transform_render))
+    script_text = script_text.replace("MAX_STALK_RENDER_CALLS_PLACEHOLDER", str(args.max_stalk_render_calls))
     script_text = script_text.replace("STD_OPTIONS_PLACEHOLDER", json.dumps(STD_OPTIONS))
     script_text = script_text.replace("FAST_BOX_BLUR_PLACEHOLDER", json.dumps(FAST_BOX_BLUR))
     script_text = script_text.replace("SET_ALPHA_ONLY_PLACEHOLDER", json.dumps(SET_ALPHA_ONLY))
@@ -1397,6 +1506,8 @@ def remote_trace_args(
     broad_coverage: bool,
     generic_hook_limit: int,
     offset_hooks: list[dict[str, str]],
+    stalk_transform_render: bool,
+    max_stalk_render_calls: int,
 ) -> list[str]:
     args = [
         "-u",
@@ -1409,9 +1520,13 @@ def remote_trace_args(
         str(max_events),
         "--generic-hook-limit",
         str(generic_hook_limit),
+        "--max-stalk-render-calls",
+        str(max_stalk_render_calls),
     ]
     if broad_coverage:
         args.append("--broad-coverage")
+    if stalk_transform_render:
+        args.append("--stalk-transform-render")
     for hook in offset_hooks:
         args.extend(["--offset-hook", f"{hook['module']}:{hook['offset']}:{hook['kind']}"])
     return args
@@ -1540,6 +1655,8 @@ def start_remote_trace(
     broad_coverage: bool,
     generic_hook_limit: int,
     offset_hooks: list[dict[str, str]],
+    stalk_transform_render: bool,
+    max_stalk_render_calls: int,
 ) -> int:
     stdout_log = remote_log + ".stdout.txt"
     stderr_log = remote_log + ".stderr.txt"
@@ -1552,6 +1669,8 @@ def start_remote_trace(
             broad_coverage=broad_coverage,
             generic_hook_limit=generic_hook_limit,
             offset_hooks=offset_hooks,
+            stalk_transform_render=stalk_transform_render,
+            max_stalk_render_calls=max_stalk_render_calls,
         )
     )
     ps = "\n".join(
@@ -1580,6 +1699,8 @@ def start_remote_trace_foreground_ssh(
     broad_coverage: bool,
     generic_hook_limit: int,
     offset_hooks: list[dict[str, str]],
+    stalk_transform_render: bool,
+    max_stalk_render_calls: int,
 ) -> subprocess.Popen[str]:
     stdout_log = remote_log + ".stdout.txt"
     stderr_log = remote_log + ".stderr.txt"
@@ -1603,6 +1724,8 @@ def start_remote_trace_foreground_ssh(
             broad_coverage=broad_coverage,
             generic_hook_limit=generic_hook_limit,
             offset_hooks=offset_hooks,
+            stalk_transform_render=stalk_transform_render,
+            max_stalk_render_calls=max_stalk_render_calls,
         )
     )
     script = "\n".join(
@@ -1747,7 +1870,10 @@ def fetch_remote_text_if_exists_ssh(host: str, remote_path: str) -> str:
         return ""
 
 
-def run_case(case_id: str, job_id: str, node: str, pack: Path, entry_script: str) -> None:
+def run_cases(case_ids: list[str], job_id: str, node: str, pack: Path, entry_script: str) -> None:
+    case_args: list[str] = []
+    for case_id in case_ids:
+        case_args.extend(["--case", case_id])
     subprocess.run(
         [
             sys.executable,
@@ -1759,8 +1885,7 @@ def run_case(case_id: str, job_id: str, node: str, pack: Path, entry_script: str
             node,
             "--job-id",
             job_id,
-            "--case",
-            case_id,
+            *case_args,
             "--poll-interval-s",
             "5",
             "--timeout-s",
@@ -1768,6 +1893,10 @@ def run_case(case_id: str, job_id: str, node: str, pack: Path, entry_script: str
         ],
         check=True,
     )
+
+
+def run_case(case_id: str, job_id: str, node: str, pack: Path, entry_script: str) -> None:
+    run_cases([case_id], job_id, node, pack, entry_script)
 
 
 def capture_failure_screenshot_ssh(host: str, out_dir: Path, tag: str) -> None:
@@ -1818,6 +1947,7 @@ def summarize_case(case_id: str, events: list[dict[str, object]]) -> dict[str, o
     effect_proc_set = [e for e in events if e.get("kind") == "effect_proc_set_enter"]
     effect_proc_entries = [e for e in events if e.get("kind") == "effect_proc_enter"]
     offset_hooks = [e for e in events if e.get("kind") == "offset_hook_enter"]
+    stalker_summaries = [e for e in events if e.get("kind") == "stalker_call_summary"]
     generic = [e for e in events if e.get("kind") == "generic_export_enter"]
     ae_effect = [
         e
@@ -1849,6 +1979,8 @@ def summarize_case(case_id: str, events: list[dict[str, object]]) -> dict[str, o
         "effect_proc_count": len(effect_proc_entries),
         "offset_hook_enter": offset_hooks[:12],
         "offset_hook_count": len(offset_hooks),
+        "stalker_call_summary": stalker_summaries[:12],
+        "stalker_call_summary_count": len(stalker_summaries),
         "generic_export_enter": generic[:12],
         "generic_export_count": len(generic),
         "ae_effect_call_enter": ae_effect[:12],
@@ -1874,10 +2006,22 @@ def main() -> int:
     ap.add_argument("--pack", default=str(DEFAULT_PACK), help="AE probe pack directory to render")
     ap.add_argument("--entry-script", default=DEFAULT_ENTRY_SCRIPT, help="JSX path relative to --pack")
     ap.add_argument("--case", action="append", default=[])
+    ap.add_argument("--batch-cases", action="store_true", help="Render all selected cases inside one traced AE job")
     ap.add_argument("--duration", type=int, default=90)
     ap.add_argument("--max-events", type=int, default=80)
     ap.add_argument("--broad-coverage", action="store_true", help="Hook blur/composite-like exports in candidate AE modules")
     ap.add_argument("--generic-hook-limit", type=int, default=160, help="Maximum broad generic export hooks per process")
+    ap.add_argument(
+        "--stalk-transform-render",
+        action="store_true",
+        help="Collect Frida Stalker call summaries for Transform.aex PF_CMD_RENDER calls",
+    )
+    ap.add_argument(
+        "--max-stalk-render-calls",
+        type=int,
+        default=4,
+        help="Maximum Transform.aex PF_CMD_RENDER calls to stalk per traced process",
+    )
     ap.add_argument(
         "--offset-hook",
         action="append",
@@ -1918,7 +2062,9 @@ def main() -> int:
         install_remote_script_from_url_ssh(args.ssh_host, remote_script, script_url)
 
     summaries = []
-    for case_id in case_ids:
+    case_batches = [case_ids] if args.batch_cases else [[case_id] for case_id in case_ids]
+    for batch in case_batches:
+        case_id = "__".join(batch) if len(batch) > 1 else batch[0]
         remote_log = remote_root + f"\\{case_id}.jsonl"
         pid: int | None = None
         trace_proc: subprocess.Popen[str] | None = None
@@ -1934,6 +2080,8 @@ def main() -> int:
                 args.broad_coverage,
                 args.generic_hook_limit,
                 args.offset_hook,
+                args.stalk_transform_render,
+                args.max_stalk_render_calls,
             )
         else:
             trace_proc = start_remote_trace_foreground_ssh(
@@ -1946,12 +2094,14 @@ def main() -> int:
                 args.broad_coverage,
                 args.generic_hook_limit,
                 args.offset_hook,
+                args.stalk_transform_render,
+                args.max_stalk_render_calls,
             )
         tail_proc = start_remote_tail_ssh(args.ssh_host, remote_log) if args.live_tail and args.transport == "ssh" else None
         time.sleep(3.0)
         job_id = f"ae_trace_{case_id}_{stamp}"
         try:
-            run_case(case_id, job_id, args.node, pack, entry_script)
+            run_cases(batch, job_id, args.node, pack, entry_script)
         except Exception:
             if args.transport == "ssh":
                 capture_failure_screenshot_ssh(args.ssh_host, out_dir, f"{job_id}_failure")

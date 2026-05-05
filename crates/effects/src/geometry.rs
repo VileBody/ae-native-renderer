@@ -32,6 +32,39 @@ pub(crate) struct Geometry2Params {
     skew: f32,
     skew_axis: f32,
     pixel_aspect: f32,
+    sampler_mode: Geometry2SamplerMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Geometry2SamplerMode {
+    Bilinear,
+    Bicubic,
+}
+
+impl Geometry2SamplerMode {
+    fn from_sampling_value(value: f32) -> Self {
+        if !value.is_finite() {
+            return Self::Bilinear;
+        }
+        match value.round() as i32 {
+            2 => Self::Bicubic,
+            _ => Self::Bilinear,
+        }
+    }
+
+    fn sampling_value(self) -> i32 {
+        match self {
+            Self::Bilinear => 1,
+            Self::Bicubic => 2,
+        }
+    }
+
+    fn label(self) -> &'static str {
+        match self {
+            Self::Bilinear => GEOMETRY2_BILINEAR_SAMPLER_MODE,
+            Self::Bicubic => GEOMETRY2_BICUBIC_SAMPLER_MODE,
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -54,6 +87,7 @@ pub struct Geometry2PropertyMapping {
     pub payload_0005: Geometry2PropertyMappingEntry,
     pub payload_0008: Geometry2PropertyMappingEntry,
     pub payload_0009: Geometry2PropertyMappingEntry,
+    pub payload_0012: Geometry2PropertyMappingEntry,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,6 +110,7 @@ pub struct Geometry2ResolvedParams {
     pub skew: f32,
     pub skew_axis: f32,
     pub pixel_aspect: f32,
+    pub sampling: i32,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -98,6 +133,7 @@ impl Geometry2Params {
             skew: 0.0,
             skew_axis: 0.0,
             pixel_aspect: 1.0,
+            sampler_mode: Geometry2SamplerMode::Bilinear,
         }
     }
 
@@ -133,6 +169,12 @@ impl Geometry2Params {
             0.0,
         );
         transform.pixel_aspect = pixel_aspect_param(params, time);
+        transform.sampler_mode = Geometry2SamplerMode::from_sampling_value(scalar_param(
+            params,
+            &["sampling", "Sampling", "0012", "ADBE Geometry2-0012"],
+            time,
+            1.0,
+        ));
         transform
     }
 
@@ -154,6 +196,7 @@ impl Geometry2Params {
             skew: self.skew,
             skew_axis: self.skew_axis,
             pixel_aspect: self.pixel_aspect,
+            sampling: self.sampler_mode.sampling_value(),
         }
     }
 }
@@ -222,11 +265,11 @@ pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geomet
         .map(|[x, y]| {
             let source_uv = mapping.source_uv(x as f32, y as f32);
             let sample_xy = rounded_sample(input, source_uv);
-            let out_of_bounds = geometry2_out_of_bounds(input, source_uv);
+            let out_of_bounds = geometry2_out_of_bounds(input, source_uv, transform.sampler_mode);
             let sample_rgba = if out_of_bounds {
                 None
             } else {
-                Some(sample_geometry2_bilinear(input, source_uv))
+                Some(sample_geometry2(input, source_uv, transform.sampler_mode))
             };
             Geometry2Sample {
                 output_xy: [x, y],
@@ -237,7 +280,7 @@ pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geomet
             }
         })
         .collect();
-    let out_of_bounds_count = count_oob(input, mapping);
+    let out_of_bounds_count = count_oob(input, mapping, transform.sampler_mode);
 
     Geometry2DebugData {
         raw_params: params.clone(),
@@ -246,7 +289,7 @@ pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geomet
         forward_matrix: mapping.forward_matrix,
         inverse_matrix: mapping.inverse_matrix,
         samples,
-        sampler_mode: GEOMETRY2_SAMPLER_MODE,
+        sampler_mode: transform.sampler_mode.label(),
         edge_policy: "partial_footprint_transparent_out_of_bounds",
         out_of_bounds_count,
     }
@@ -294,6 +337,14 @@ fn geometry2_property_mapping(params: &Value) -> Geometry2PropertyMapping {
             "opacity_not_applied_by_current_native_geometry2",
             "Recorded so payload 0008 is not confused with matchName ADBE Geometry2-0008 opacity.",
         ),
+        payload_0012: geometry2_property_mapping_entry(
+            params,
+            "0012",
+            "ADBE Geometry2-0012",
+            "Sampling",
+            "sampler_mode",
+            "Frida CPU-wrapper dump confirmed PF_ParamDef index 12; low s32 value maps 1 to Bilinear and 2 to Bicubic.",
+        ),
     }
 }
 
@@ -328,10 +379,14 @@ fn transform_canvas(input: &Canvas, transform: Geometry2Params) -> Canvas {
     for y in 0..input.height {
         for x in 0..input.width {
             let source_uv = mapping.source_uv(x as f32, y as f32);
-            if geometry2_out_of_bounds(input, source_uv) {
+            if geometry2_out_of_bounds(input, source_uv, transform.sampler_mode) {
                 continue;
             }
-            output.set_pixel(x, y, sample_geometry2_bilinear(input, source_uv));
+            output.set_pixel(
+                x,
+                y,
+                sample_geometry2(input, source_uv, transform.sampler_mode),
+            );
         }
     }
 
@@ -533,21 +588,82 @@ fn sample_geometry2_bilinear(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
     out
 }
 
-fn geometry2_out_of_bounds(input: &Canvas, source_uv: (f32, f32)) -> bool {
-    input.width == 0
-        || input.height == 0
-        || source_uv.0 <= -1.0
-        || source_uv.1 <= -1.0
-        || source_uv.0 >= input.width as f32
-        || source_uv.1 >= input.height as f32
+fn sample_geometry2(input: &Canvas, source_uv: (f32, f32), mode: Geometry2SamplerMode) -> [u8; 4] {
+    match mode {
+        Geometry2SamplerMode::Bilinear => sample_geometry2_bilinear(input, source_uv),
+        Geometry2SamplerMode::Bicubic => sample_geometry2_bicubic(input, source_uv),
+    }
 }
 
-fn count_oob(input: &Canvas, mapping: Geometry2Mapping) -> u32 {
+fn sample_geometry2_bicubic(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
+    if input.width == 0 || input.height == 0 {
+        return [0, 0, 0, 0];
+    }
+    let x0 = source_uv.0.floor() as i32;
+    let y0 = source_uv.1.floor() as i32;
+    let tx = source_uv.0 - x0 as f32;
+    let ty = source_uv.1 - y0 as f32;
+    let wx = cubic_catmull_rom_weights(tx);
+    let wy = cubic_catmull_rom_weights(ty);
+    let mut out = [0_u8; 4];
+    for channel in 0..4 {
+        let mut accum = 0.0_f32;
+        for (ky, wy_value) in wy.into_iter().enumerate() {
+            for (kx, wx_value) in wx.into_iter().enumerate() {
+                let sx = x0 + kx as i32 - 1;
+                let sy = y0 + ky as i32 - 1;
+                if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
+                    continue;
+                }
+                accum += input.pixel(sx as u32, sy as u32)[channel] as f32 * wx_value * wy_value;
+            }
+        }
+        out[channel] = accum.round().clamp(0.0, 255.0) as u8;
+    }
+    out
+}
+
+fn cubic_catmull_rom_weights(t: f32) -> [f32; 4] {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    [
+        -0.5 * t + t2 - 0.5 * t3,
+        1.0 - 2.5 * t2 + 1.5 * t3,
+        0.5 * t + 2.0 * t2 - 1.5 * t3,
+        -0.5 * t2 + 0.5 * t3,
+    ]
+}
+
+fn geometry2_out_of_bounds(
+    input: &Canvas,
+    source_uv: (f32, f32),
+    mode: Geometry2SamplerMode,
+) -> bool {
+    if input.width == 0 || input.height == 0 {
+        return true;
+    }
+    match mode {
+        Geometry2SamplerMode::Bilinear => {
+            source_uv.0 <= -1.0
+                || source_uv.1 <= -1.0
+                || source_uv.0 >= input.width as f32
+                || source_uv.1 >= input.height as f32
+        }
+        Geometry2SamplerMode::Bicubic => {
+            source_uv.0 <= -2.0
+                || source_uv.1 <= -2.0
+                || source_uv.0 >= input.width as f32 + 1.0
+                || source_uv.1 >= input.height as f32 + 1.0
+        }
+    }
+}
+
+fn count_oob(input: &Canvas, mapping: Geometry2Mapping, mode: Geometry2SamplerMode) -> u32 {
     let mut count = 0;
     for y in 0..input.height {
         for x in 0..input.width {
             let source_uv = mapping.source_uv(x as f32, y as f32);
-            if geometry2_out_of_bounds(input, source_uv) {
+            if geometry2_out_of_bounds(input, source_uv, mode) {
                 count += 1;
             }
         }
@@ -621,7 +737,8 @@ fn nearly_eq(left: f32, right: f32) -> bool {
     (left - right).abs() < 0.001
 }
 
-const GEOMETRY2_SAMPLER_MODE: &str = "bilinear_partial_footprint_transparent";
+const GEOMETRY2_BILINEAR_SAMPLER_MODE: &str = "bilinear_partial_footprint_transparent";
+const GEOMETRY2_BICUBIC_SAMPLER_MODE: &str = "bicubic_catmull_rom_partial_footprint_transparent";
 
 #[cfg(test)]
 mod tests {
@@ -687,6 +804,7 @@ mod tests {
                 "0003": { "value": 82 },
                 "0004": { "value": 125 },
                 "0008": { "value": 80 },
+                "0012": { "value": 2 },
                 "rotation": { "value": 15 }
             }),
             0.0,
@@ -696,6 +814,7 @@ mod tests {
         assert_eq!(params.position, (3.0, 4.0));
         assert_eq!(params.scale, (125.0, 125.0));
         assert_eq!(params.rotation, 15.0);
+        assert_eq!(params.sampler_mode, Geometry2SamplerMode::Bicubic);
     }
 
     #[test]
@@ -822,6 +941,7 @@ mod tests {
                 skew: 0.0,
                 skew_axis: 0.0,
                 pixel_aspect: 1.0,
+                sampling: 1,
             }
         );
         assert_eq!(
@@ -832,7 +952,7 @@ mod tests {
             debug.inverse_matrix,
             [[1.0, 0.0, -1.0], [-0.0, 1.0, 0.0], [0.0, 0.0, 1.0]]
         );
-        assert_eq!(debug.sampler_mode, GEOMETRY2_SAMPLER_MODE);
+        assert_eq!(debug.sampler_mode, GEOMETRY2_BILINEAR_SAMPLER_MODE);
         assert_eq!(
             debug.edge_policy,
             "partial_footprint_transparent_out_of_bounds"
@@ -868,6 +988,7 @@ mod tests {
             "0003": 82,
             "0004": 120,
             "0008": 72,
+            "0012": 2,
             "rotation": 17
         });
 
@@ -912,6 +1033,20 @@ mod tests {
             "ADBE Geometry2-0008"
         );
         assert!(!debug.property_mapping.payload_0009.present);
+        assert_eq!(
+            debug.property_mapping.payload_0012.match_name,
+            "ADBE Geometry2-0012"
+        );
+        assert_eq!(
+            debug.property_mapping.payload_0012.native_role,
+            "sampler_mode"
+        );
+        assert_eq!(
+            debug.property_mapping.payload_0012.raw_value,
+            Some(json!(2))
+        );
+        assert_eq!(debug.resolved.sampling, 2);
+        assert_eq!(debug.sampler_mode, GEOMETRY2_BICUBIC_SAMPLER_MODE);
     }
 
     #[test]
@@ -932,10 +1067,58 @@ mod tests {
             sample_geometry2_bilinear(&input, (1.5, 0.0)),
             [50, 10, 0, 128]
         );
-        assert!(geometry2_out_of_bounds(&input, (-1.0, 0.0)));
-        assert!(!geometry2_out_of_bounds(&input, (-0.5, 0.0)));
-        assert!(!geometry2_out_of_bounds(&input, (1.5, 0.0)));
-        assert!(geometry2_out_of_bounds(&input, (2.0, 0.0)));
+        assert!(geometry2_out_of_bounds(
+            &input,
+            (-1.0, 0.0),
+            Geometry2SamplerMode::Bilinear
+        ));
+        assert!(!geometry2_out_of_bounds(
+            &input,
+            (-0.5, 0.0),
+            Geometry2SamplerMode::Bilinear
+        ));
+        assert!(!geometry2_out_of_bounds(
+            &input,
+            (1.5, 0.0),
+            Geometry2SamplerMode::Bilinear
+        ));
+        assert!(geometry2_out_of_bounds(
+            &input,
+            (2.0, 0.0),
+            Geometry2SamplerMode::Bilinear
+        ));
+    }
+
+    #[test]
+    fn geometry_sampling_0012_selects_bicubic_branch() {
+        let mut input = Canvas::transparent(4, 1);
+        input.set_pixel(0, 0, [0, 0, 0, 255]);
+        input.set_pixel(1, 0, [255, 0, 0, 255]);
+        input.set_pixel(2, 0, [0, 0, 0, 255]);
+        input.set_pixel(3, 0, [0, 0, 0, 255]);
+
+        assert_eq!(
+            sample_geometry2(&input, (1.5, 0.0), Geometry2SamplerMode::Bilinear),
+            [128, 0, 0, 255]
+        );
+        assert_eq!(
+            sample_geometry2(&input, (1.5, 0.0), Geometry2SamplerMode::Bicubic),
+            [143, 0, 0, 255]
+        );
+
+        let params = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "0012": {
+                    "keyframes": [
+                        { "t": 0.0, "v": 1.0 },
+                        { "t": 1.0, "v": 2.0 }
+                    ]
+                }
+            }),
+            1.0,
+        );
+        assert_eq!(params.sampler_mode, Geometry2SamplerMode::Bicubic);
     }
 
     #[test]

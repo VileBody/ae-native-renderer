@@ -1626,7 +1626,8 @@ fn effect_debug_trace_json(
                     "rotation": debug.resolved.rotation,
                     "skew": debug.resolved.skew,
                     "skew_axis": debug.resolved.skew_axis,
-                    "pixel_aspect": debug.resolved.pixel_aspect
+                    "pixel_aspect": debug.resolved.pixel_aspect,
+                    "sampling": debug.resolved.sampling
                 },
                 "forward_matrix": debug.forward_matrix,
                 "inverse_matrix": debug.inverse_matrix,
@@ -1717,7 +1718,8 @@ fn geometry2_property_mapping_json(mapping: &effects::geometry::Geometry2Propert
         "0004": geometry2_property_mapping_entry_json(&mapping.payload_0004),
         "0005": geometry2_property_mapping_entry_json(&mapping.payload_0005),
         "0008": geometry2_property_mapping_entry_json(&mapping.payload_0008),
-        "0009": geometry2_property_mapping_entry_json(&mapping.payload_0009)
+        "0009": geometry2_property_mapping_entry_json(&mapping.payload_0009),
+        "0012": geometry2_property_mapping_entry_json(&mapping.payload_0012)
     })
 }
 

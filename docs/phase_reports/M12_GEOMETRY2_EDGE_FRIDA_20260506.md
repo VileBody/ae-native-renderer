@@ -118,21 +118,46 @@ Not observed:
 - `gf_transform_operation_quality`
 - `gf_transform_operation_ctor`
 
+## CPU Sampler Follow-up
+
+After the first broad CPU trace, the Geometry2 CPU path was narrowed with three
+smaller AE85 jobs:
+
+| Trace | Local folder | S3 prefix | Result |
+| --- | --- | --- | --- |
+| render Stalker | `target/dynamic_tools_85/geometry2_cpu_sampler_stalker_trace_20260506` | `ae_dynamic_traces/geometry2_cpu_sampler_stalker/20260506_013443` | `Transform.aex+0x5f30` render calls `Transform.aex+0x5b20`. |
+| inner wrapper | `target/dynamic_tools_85/geometry2_cpu_sampler_inner_trace_20260506` | `ae_dynamic_traces/geometry2_cpu_sampler_inner/20260506_013703` | `+0x5b20` is a PF wrapper/dispatcher: `rdx=PF_Cmd`, `r8=in_data`, `r9=out_data`, stack `+0x28=params`, stack `+0x38=output`. |
+| param dump | `target/dynamic_tools_85/geometry2_param_dump_trace_20260506` | `ae_dynamic_traces/geometry2_param_dump/20260506_014212` | `PF_ParamDef[12]` is `Sampling`; its word offset `56` low `s32` is `1` for Bilinear and `2` for Bicubic. |
+
+The key correction is that AE `0012` was not invisible host state. It was just
+outside the first twelve-param dump and behind the `+0x5b20` wrapper ABI.
+
+Native now records and parses:
+
+- payload key `0012`
+- matchName `ADBE Geometry2-0012`
+- UI label `Sampling`
+- resolved values: `1 = Bilinear`, `2 = Bicubic`
+
+The native `0012 = 2` implementation currently uses a Catmull-Rom bicubic
+sampler with the same transparent partial-footprint edge model. That is a real
+branch implementation, not a parity claim; the remaining M12 tuning target is
+the exact AE cubic kernel/edge/raster rounding.
+
 ## Decision
 
 M12 advances from `implemented approximate` to `instrumented/testable`.
 
 The current native implementation now matches the isolated evidence for
 integer pixel center and partial-footprint transparent bilinear edges. Formula
-tuning is still not locked because AE `0012` Sampling does not appear as a
-normal PF parameter on the traced CPU path; it needs a deeper hook around the
-CPU sampler/quality state before changing bicubic/high-quality behavior.
+tuning is still not locked because AE bicubic/high-quality sampling needs its
+exact kernel and edge weighting fitted from isolated `0012 = 2` cases. The
+parameter identity itself is now mapped.
 
 ## Next
 
-1. Hook around `Transform.aex+0x5f30`, `+0x4440`, and `+0x4ab0` with smaller
-   one-case jobs and stack/register/memory snapshots.
-2. Add a coordinate-field probe that separates `0012 = 1` and `0012 = 2` on
-   non-edge subpixel samples, not only edge pixels.
-3. Tune `EFF_040` only after the `0012` branch is mapped to a concrete sampler
-   policy.
+1. Compare native `0012 = 2` against isolated AE coordinate-field cases and
+   fit the cubic kernel family/parameter, edge footprint, and rounding.
+2. Keep matrix tuning frozen while the residual diff is sampler-owned.
+3. Only after the isolated `0012 = 2` branch is stable, re-check composed
+   `EFF_040`/`STK_030` to see whether any stack-level adjustment remains.

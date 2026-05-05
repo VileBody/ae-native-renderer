@@ -21,7 +21,7 @@ Effect params accept both generated payload values (`{ "0001": { "value": ... } 
 | `ADBE Box Blur2` | `radius`, `iterations` | `0001` radius, `0002` iterations; iterations run repeated separable blur passes; `0002` is also accepted as a legacy radius fallback when no radius param is present |
 | `ADBE Drop Shadow` | `color`, `opacity`, `direction_degrees`, `distance`, `softness`, `shadow_only` | `0001` color, `0002` opacity as AE raw `0..255`, `0003` direction, `0004` distance, `0005` softness, `0006` shadow only |
 | `ADBE Glo2` | `based_on`, `threshold`, `radius`, `intensity` | `0001` glow based on (`1` color channels, `2` alpha channel; absent keeps combined legacy source), `0002` threshold, `0003` radius, `0004` intensity |
-| `ADBE Geometry2` | `anchor`, `position`, `scale`, `rotation`, `skew`, `skew_axis`, `pixelAspect` | AE property-index ids confirmed by `effect_property_dump.json`: `0001` anchor, `0002` position, `0003` uniform-scale checkbox, `0004` scale height, `0005` scale width, `0006` skew, `0007` skew axis, `0008` rotation, `0009` effect opacity slot, `0010` use comp shutter, `0011` shutter angle, `0012` sampling; native currently implements transform controls and ignores the Geometry2 opacity/shutter controls |
+| `ADBE Geometry2` | `anchor`, `position`, `scale`, `rotation`, `skew`, `skew_axis`, `pixelAspect`, `sampling` | AE property-index ids confirmed by `effect_property_dump.json` and Frida CPU wrapper dumps: `0001` anchor, `0002` position, `0003` uniform-scale checkbox, `0004` scale height, `0005` scale width, `0006` skew, `0007` skew axis, `0008` rotation, `0009` effect opacity slot, `0010` use comp shutter, `0011` shutter angle, `0012` sampling (`1` bilinear, `2` bicubic); native currently implements transform controls plus sampling mode and ignores the Geometry2 opacity/shutter controls |
 | `ADBE Minimax` | `operation`, `radius`, `channels`, `direction`, `dont_shrink_edges` | `0001` operation (`1` minimum, `2` maximum, `3` minimum then maximum, `4` maximum then minimum), `0002` radius, `0003` channels (`1` color, `2` alpha and color, `3` red, `4` green, `5` blue, `6` alpha), `0004` direction (`1` horizontal and vertical, `2` horizontal, `3` vertical), `0005` don't shrink edges |
 | `ADBE Turbulent Displace` | `displacement`, `amount`, `size`, `offset`, `complexity`, `evolution`, `random_seed`, `pinning`, `resize_layer` | `0001` displacement type, `0002` amount, `0003` size, `0004` offset, `0005` complexity, `0006` evolution, `0010` random seed, `0012` pinning, `0013` resize layer |
 | `ADBE Posterize Time` | `frame_rate` | `0001` frame rate; layer/source/effect time is quantized in `render-core`; the stateless canvas-stage effect remains pass-through |
@@ -42,9 +42,11 @@ tuning can ignore known background-alpha noise.
 confirmed the Geometry2 control indices above. Frida traces on the no-GPU AE85
 node show the relevant path as CPU `Transform.aex+0x5f30` plus
 `GPUFoundation.dll` matrix/bounds helpers, not the GPU motion/quality export
-path. The AE scripting `0012` Sampling property is therefore treated as hidden
-host/render-quality state until a deeper CPU sampler hook identifies the exact
-branch.
+path. A follow-up Frida dump of the `Transform.aex+0x5b20` wrapper confirmed
+`PF_ParamDef[12]` as `Sampling`; word offset `56` low `s32` carries `1` for
+Bilinear and `2` for Bicubic. Native dispatches on that value. The bicubic path
+is currently a Catmull-Rom implementation and still needs isolated AE kernel
+and edge-weight tuning before parity can be locked.
 
 `ADBE Minimax` implements the enum surface recovered from the AEX strings and
 CPU callbacks. The native pass model is one-dimensional horizontal/vertical
