@@ -145,6 +145,21 @@
       ]
     },
     {
+      "id": "drop_shadow_followup",
+      "area": "effects_shadow",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_blur_glow_minimax/Drop_Shadow",
+      "project": "Drop_Shadow",
+      "process": "Drop_Shadow.aex",
+      "notes": "Follow-up targets for M10 after round-two analysis: upstream direction/distance producer and local shadow/composite helpers.",
+      "targets": [
+        { "label": "DropShadow_direction_distance_producer_73a0", "address": "0x1800073a0" },
+        { "label": "DropShadow_core_candidate_5bb0_context", "address": "0x180005bb0" },
+        { "label": "DropShadow_core_candidate_6ca0_context", "address": "0x180006ca0" },
+        { "label": "DropShadow_candidate_8a70_context", "address": "0x180008a70" }
+      ]
+    },
+    {
       "id": "glow_aex",
       "area": "effects_glow",
       "enabled": true,
@@ -163,6 +178,25 @@
       ]
     },
     {
+      "id": "glow_aex_followup",
+      "area": "effects_glow",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_blur_glow_minimax/Glow",
+      "project": "Glow",
+      "process": "Glow.aex",
+      "notes": "Follow-up targets for M11 after round-two analysis: 8/16/32 bpc render bodies and Glow-local helpers likely to own threshold source, radius bounds, blur routing, and final effect composite.",
+      "targets": [
+        { "label": "Glow_render_8bpc_1810", "address": "0x180001810" },
+        { "label": "Glow_render_16bpc_13e0_context", "address": "0x1800013e0" },
+        { "label": "Glow_render_32bpc_1c40", "address": "0x180001c40" },
+        { "label": "Glow_helper_2610", "address": "0x180002610" },
+        { "label": "Glow_threshold_or_build_3690", "address": "0x180003690" },
+        { "label": "Glow_radius_bounds_4db0", "address": "0x180004db0" },
+        { "label": "Glow_blur_or_composite_71c0", "address": "0x1800071c0" },
+        { "label": "Glow_helper_8470", "address": "0x180008470" }
+      ]
+    },
+    {
       "id": "imagerenderer_gaussian_composite",
       "area": "effects_glow",
       "enabled": true,
@@ -177,6 +211,26 @@
         { "label": "IR_task_executor", "address": "0x1800a1650" },
         { "label": "IR_special_jump_table", "address": "0x18005cee0" },
         { "label": "IR_pixel_format_map", "address": "0x180079800" }
+      ]
+    },
+    {
+      "id": "imagerenderer_composite_workers",
+      "area": "effects_glow",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_blur_glow_minimax/ImageRenderer",
+      "project": "ImageRenderer",
+      "process": "ImageRenderer.dll",
+      "notes": "Follow-up targets for M11: concrete ImageRenderer composite workers selected by IR_composite_worker_select flags.",
+      "targets": [
+        { "label": "IR_composite_worker_select_context", "address": "0x1800769b0" },
+        { "label": "IR_composite_worker_757c0", "address": "0x1800757c0" },
+        { "label": "IR_composite_worker_754b0", "address": "0x1800754b0" },
+        { "label": "IR_composite_worker_75190", "address": "0x180075190" },
+        { "label": "IR_composite_worker_74d30", "address": "0x180074d30" },
+        { "label": "IR_composite_worker_74a00", "address": "0x180074a00" },
+        { "label": "IR_composite_worker_74590", "address": "0x180074590" },
+        { "label": "IR_composite_worker_74110", "address": "0x180074110" },
+        { "label": "IR_composite_worker_73b50", "address": "0x180073b50" }
       ]
     },
     {

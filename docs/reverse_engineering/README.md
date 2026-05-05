@@ -42,6 +42,8 @@ or audit without reopening the same binary.
   `docs/phase_reports/GHIDRA_EXTRACTION_BLOCKER_MODULES_ROUND2_20260505.md`.
   The current analysis summary for those bundles is
   `docs/phase_reports/GHIDRA_ANALYSIS_ROUND2_ORCHESTRATOR_SUMMARY_20260505.md`.
+  The current exhaustive information checklist is
+  `docs/phase_reports/REQUIRED_INFORMATION_MATRIX_20260505.md`.
   The current artifact intake checklist is
   `docs/phase_reports/ARTIFACT_INTAKE_20260505.md`.
 - `fixtures/conformance/`: small native scenes and manifest entries for

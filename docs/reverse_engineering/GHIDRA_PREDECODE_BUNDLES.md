@@ -72,8 +72,11 @@ The task manifest currently covers:
 | `blur_gpufoundation_kernels` | `effects_blur` | Shared GF blur kernels and alpha options. |
 | `box_blur_aex` | `effects_blur` | Box Blur wrapper and delayed `GF::FastBoxBlur` calls. |
 | `drop_shadow_aex` | `effects_shadow` | Offset, softness, shadow alpha/composite candidates. |
+| `drop_shadow_followup` | `effects_shadow` | M10 upstream direction/distance producer and local shadow helper context. |
 | `glow_aex` | `effects_glow` | Glow mask/render wrapper and IR routing. |
+| `glow_aex_followup` | `effects_glow` | M11 8/16/32 bpc bodies and Glow-local threshold/radius/composite helpers. |
 | `imagerenderer_gaussian_composite` | `effects_glow` | Real `IR_GaussianBlur` implementation and blend dispatch. |
+| `imagerenderer_composite_workers` | `effects_glow` | Concrete ImageRenderer composite worker bodies selected by the worker selector. |
 | `minimax_aex` | `effects_minimax` | 8/16/32 bpc callbacks, GPU path, comparators. |
 | `turbulent_displace_aex` | `effects_turbulent` | Param setup, lookup tables, 1D/all kernel dispatch. |
 | `basic_text_aex` | `text` | Text/glyph/CoolType candidates. |
