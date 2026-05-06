@@ -203,13 +203,16 @@ Control check: removing the native `rotation` alias and relying only on
 `11.966305`), so the previous `rotation=17` mapping remains the correct native
 recipe for these AE-generated cases.
 
+Follow-up M16 work resolved the `STK_031` adjustment-origin blocker by forcing
+Geometry2-on-adjustment to use comp origin `(0,0)`. `STK_031` now reports
+primary visible RGB mean `0.032308`, while `EFF_041` remains `0.043613`.
+
 ## Next
 
 Geometry2 is now past the parameter-mapping blocker and has a fitted bicubic
 branch plus an alpha-aware sampler wrapper. The isolated AE gate for `0012=2`
 is green on the M19-visible metric.
 
-The remaining composed-scene blocker belongs to `M16`: AE adjustment-layer
-Geometry2 does not behave like applying the same effect to the already-rendered
-native canvas. Do not retune Geometry2 sampling/matrix math from `STK_031`
-pixels until the adjustment/canvas contract is isolated.
+Do not retune Geometry2 sampling/matrix math from remaining composed stack
+pixels. After the M16 origin fix, `STK_030` residuals should be routed to
+Minimax, Turbulent Displace, Posterize Time, or high-frequency sampler stress.

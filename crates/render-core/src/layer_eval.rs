@@ -1365,10 +1365,11 @@ fn apply_adjustment_effects_to_canvas(
         };
 
         let param_time = adjustment_effect_param_time(effect_index, routing);
+        let params = adjustment_effect_params(&spec.match_name, &spec.params);
         let input_hash = trace.as_ref().map(|_| canvas_hash(&canvas));
-        let debug_trace = trace.as_ref().and_then(|_| {
-            effect_debug_trace_json(&spec.match_name, &canvas, &spec.params, param_time)
-        });
+        let debug_trace = trace
+            .as_ref()
+            .and_then(|_| effect_debug_trace_json(&spec.match_name, &canvas, &params, param_time));
         let started = Instant::now();
         canvas = effect.render(
             &canvas,
@@ -1376,7 +1377,7 @@ fn apply_adjustment_effects_to_canvas(
                 time: param_time,
                 fps,
             },
-            &spec.params,
+            &params,
         )?;
         let elapsed_ms = elapsed_ms(started);
         let output_hash = trace.as_ref().map(|_| canvas_hash(&canvas));
@@ -1417,6 +1418,19 @@ fn apply_adjustment_effects_to_canvas(
         }
     }
     Ok(canvas)
+}
+
+fn adjustment_effect_params(match_name: &str, params: &Value) -> Value {
+    if match_name != "ADBE Geometry2" {
+        return params.clone();
+    }
+    let mut adjusted = params.clone();
+    if let Some(object) = adjusted.as_object_mut() {
+        object.insert("__native_layer_space_origin".to_string(), json!([0.0, 0.0]));
+        adjusted
+    } else {
+        json!({ "__native_layer_space_origin": [0.0, 0.0] })
+    }
 }
 
 fn adjustment_effect_param_time(effect_index: usize, routing: AdjustmentTimeRouting) -> f64 {

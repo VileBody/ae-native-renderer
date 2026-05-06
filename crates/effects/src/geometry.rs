@@ -2,6 +2,8 @@ use crate::{param_f32_at, Effect};
 use raster_cpu::Canvas;
 use serde_json::Value;
 
+const NATIVE_LAYER_SPACE_ORIGIN_PARAM: &str = "__native_layer_space_origin";
+
 #[derive(Debug, Default)]
 pub struct Geometry2;
 
@@ -16,9 +18,11 @@ impl Effect for Geometry2 {
         _ctx: &crate::EffectContext,
         params: &Value,
     ) -> anyhow::Result<Canvas> {
+        let layer_origin = geometry2_layer_space_origin(input, params);
         Ok(transform_canvas(
             input,
             Geometry2Params::from_json(input, params, _ctx.time),
+            layer_origin,
         ))
     }
 }
@@ -259,7 +263,8 @@ impl Geometry2Mapping {
 
 pub fn geometry2_debug_data(input: &Canvas, params: &Value, time: f64) -> Geometry2DebugData {
     let transform = Geometry2Params::from_json(input, params, time);
-    let mapping = Geometry2Mapping::from_params(transform, layer_space_origin(input));
+    let layer_origin = geometry2_layer_space_origin(input, params);
+    let mapping = Geometry2Mapping::from_params(transform, layer_origin);
     let samples = geometry_probe_points(input)
         .into_iter()
         .map(|[x, y]| {
@@ -368,13 +373,17 @@ fn geometry2_property_mapping_entry(
     }
 }
 
-fn transform_canvas(input: &Canvas, transform: Geometry2Params) -> Canvas {
+fn transform_canvas(
+    input: &Canvas,
+    transform: Geometry2Params,
+    layer_origin: (f32, f32),
+) -> Canvas {
     if input.width == 0 || input.height == 0 || transform.is_identity() {
         return input.clone();
     }
 
     let mut output = Canvas::transparent(input.width, input.height);
-    let mapping = Geometry2Mapping::from_params(transform, layer_space_origin(input));
+    let mapping = Geometry2Mapping::from_params(transform, layer_origin);
 
     for y in 0..input.height {
         for x in 0..input.width {
@@ -551,6 +560,21 @@ fn layer_space_origin(input: &Canvas) -> (f32, f32) {
     } else {
         (min_x as f32, min_y as f32)
     }
+}
+
+fn geometry2_layer_space_origin(input: &Canvas, params: &Value) -> (f32, f32) {
+    if let Some(origin) = params
+        .get(NATIVE_LAYER_SPACE_ORIGIN_PARAM)
+        .and_then(Value::as_array)
+        .and_then(|values| {
+            let x = values.first()?.as_f64()? as f32;
+            let y = values.get(1)?.as_f64()? as f32;
+            Some((x, y))
+        })
+    {
+        return origin;
+    }
+    layer_space_origin(input)
 }
 
 fn rounded_sample(input: &Canvas, source_uv: (f32, f32)) -> Option<[u32; 2]> {
@@ -820,6 +844,51 @@ mod tests {
             .unwrap();
 
         assert_eq!(output.pixel(1, 2), [40, 50, 60, 255]);
+    }
+
+    #[test]
+    fn geometry_layer_origin_override_uses_comp_space_for_adjustments() {
+        let mut input = Canvas::transparent(512, 512);
+        input.set_pixel(128, 128, [10, 20, 30, 255]);
+        input.set_pixel(256, 256, [40, 50, 60, 255]);
+
+        let params = json!({
+            "0001": [256, 256],
+            "0002": [256, 256],
+            "0004": 120,
+            "0008": 72,
+            "0012": 2,
+            "rotation": 17
+        });
+        let native_layer_debug = geometry2_debug_data(&input, &params, 0.0);
+        let adjustment_debug = geometry2_debug_data(
+            &input,
+            &json!({
+                "0001": [256, 256],
+                "0002": [256, 256],
+                "0004": 120,
+                "0008": 72,
+                "0012": 2,
+                "rotation": 17,
+                "__native_layer_space_origin": [0, 0]
+            }),
+            0.0,
+        );
+
+        let native_center = native_layer_debug
+            .samples
+            .iter()
+            .find(|sample| sample.output_xy == [256, 256])
+            .unwrap();
+        let adjustment_center = adjustment_debug
+            .samples
+            .iter()
+            .find(|sample| sample.output_xy == [256, 256])
+            .unwrap();
+
+        assert!((native_center.source_uv[0] - 256.0).abs() > 1.0);
+        assert!((adjustment_center.source_uv[0] - 256.0).abs() < 0.001);
+        assert!((adjustment_center.source_uv[1] - 256.0).abs() < 0.001);
     }
 
     #[test]

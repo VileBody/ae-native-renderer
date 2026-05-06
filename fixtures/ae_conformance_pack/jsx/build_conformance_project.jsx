@@ -245,6 +245,125 @@ PNG sequences from the case comps are the golden source of truth.
                     "rotation": 17
                 });
             }),
+            createCase("ADJ_010", "adjustment no-op over centered coordinate field", function (comp) {
+                placeAsset(comp, assets.coordinate, 256, 256, 100);
+                addAdjustment(comp, "ADJ_noop_centered_coordinate");
+            }),
+            createCase("ADJ_011", "adjustment no-op over full-frame color bars", function (comp) {
+                placeAsset(comp, assets.colorBars, 256, 256, 200);
+                addAdjustment(comp, "ADJ_noop_full_color");
+            }),
+            createCase("ADJ_020", "Geometry2 identity adjustment over centered coordinate field", function (comp) {
+                placeAsset(comp, assets.coordinate, 256, 256, 100);
+                var adj = addAdjustment(comp, "ADJ_geometry2_identity_centered_coordinate");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [256, 256],
+                    "0004": 100
+                });
+            }),
+            createCase("ADJ_021", "Geometry2 identity adjustment over full-frame color bars", function (comp) {
+                placeAsset(comp, assets.colorBars, 256, 256, 200);
+                var adj = addAdjustment(comp, "ADJ_geometry2_identity_full_color");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [256, 256],
+                    "0004": 100
+                });
+            }),
+            createCase("ADJ_030", "Geometry2 translate adjustment over centered coordinate field", function (comp) {
+                placeAsset(comp, assets.coordinate, 256, 256, 100);
+                var adj = addAdjustment(comp, "ADJ_geometry2_translate_centered_coordinate");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [288, 256],
+                    "0004": 100
+                });
+            }),
+            createCase("ADJ_031", "Geometry2 translate adjustment over full-frame color bars", function (comp) {
+                placeAsset(comp, assets.colorBars, 256, 256, 200);
+                var adj = addAdjustment(comp, "ADJ_geometry2_translate_full_color");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [288, 256],
+                    "0004": 100
+                });
+            }),
+            createCase("ADJ_040", "Geometry2 rotate-scale adjustment over centered coordinate field", function (comp) {
+                placeAsset(comp, assets.coordinate, 256, 256, 100);
+                var adj = addAdjustment(comp, "ADJ_geometry2_rotate_scale_centered_coordinate");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [256, 256],
+                    "0004": 120,
+                    "0008": 72,
+                    "0012": 2,
+                    "rotation": 17
+                });
+            }),
+            createCase("ADJ_041", "Geometry2 rotate-scale adjustment over full-frame color bars", function (comp) {
+                placeAsset(comp, assets.colorBars, 256, 256, 200);
+                var adj = addAdjustment(comp, "ADJ_geometry2_rotate_scale_full_color");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [256, 256],
+                    "0004": 120,
+                    "0008": 72,
+                    "0012": 2,
+                    "rotation": 17
+                });
+            }),
+            createCase("ADJ_042", "Geometry2 rotate-scale adjustment over full-frame checker", function (comp) {
+                placeAsset(comp, assets.checker, 256, 256, 200);
+                var adj = addAdjustment(comp, "ADJ_geometry2_rotate_scale_full_checker");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [256, 256],
+                    "0004": 120,
+                    "0008": 72,
+                    "0012": 2,
+                    "rotation": 17
+                });
+            }),
+            createCase("ADJ_050", "Geometry2 rotate-scale adjustment over checker plus coordinate", function (comp) {
+                placeAsset(comp, assets.checker, 256, 256, 200);
+                placeAsset(comp, assets.coordinate, 256, 256, 100);
+                var adj = addAdjustment(comp, "ADJ_geometry2_rotate_scale_checker_coordinate");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [256, 256],
+                    "0004": 120,
+                    "0008": 72,
+                    "0012": 2,
+                    "rotation": 17
+                });
+            }),
+            createCase("ADJ_051", "Geometry2 rotate-scale adjustment over checker plus alpha square", function (comp) {
+                placeAsset(comp, assets.checker, 256, 256, 200);
+                placeAsset(comp, assets.alphaSquare, 256, 256, 100);
+                var adj = addAdjustment(comp, "ADJ_geometry2_rotate_scale_checker_alpha");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [256, 256],
+                    "0004": 120,
+                    "0008": 72,
+                    "0012": 2,
+                    "rotation": 17
+                });
+            }),
+            createCase("ADJ_052", "Geometry2 rotate-scale adjustment over checker plus premult probe", function (comp) {
+                placeAsset(comp, assets.checker, 256, 256, 200);
+                placeAsset(comp, assets.premultProbe, 256, 256, 100);
+                var adj = addAdjustment(comp, "ADJ_geometry2_rotate_scale_checker_premult");
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [256, 256],
+                    "0002": [256, 256],
+                    "0004": 120,
+                    "0008": 72,
+                    "0012": 2,
+                    "rotation": 17
+                });
+            }),
             createCase("GPH_010", "nested precomp and collapse-transform text sharpness", function (comp) {
                 var child = app.project.items.addComp("GPH_010_child_text", cfg.width, cfg.height, 1, cfg.duration, cfg.fps);
                 child.parentFolder = folders.precomps;
@@ -332,6 +451,12 @@ PNG sequences from the case comps are the golden source of truth.
         layer.inPoint = 0;
         layer.outPoint = comp.duration;
         return layer;
+    }
+
+    function addAdjustment(comp, name) {
+        var adj = comp.layers.addSolid([1, 1, 1], name, CFG.width, CFG.height, 1, comp.duration);
+        adj.adjustmentLayer = true;
+        return adj;
     }
 
     function addMasterSlate(comp, id, title, startTime, duration) {

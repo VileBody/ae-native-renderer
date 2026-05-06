@@ -224,9 +224,105 @@
       "id": "STK_031",
       "title": "Geometry2 bicubic adjustment-layer transform",
       "ladder": "stack",
-      "modules": ["M12", "M19"],
+      "modules": ["M12", "M16", "M19"],
       "frames_to_compare": [0],
       "assets": ["coordinate_field"]
+    },
+    {
+      "id": "ADJ_010",
+      "title": "adjustment no-op over centered coordinate field",
+      "ladder": "adjustment_contract",
+      "modules": ["M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["coordinate_field"]
+    },
+    {
+      "id": "ADJ_011",
+      "title": "adjustment no-op over full-frame color bars",
+      "ladder": "adjustment_contract",
+      "modules": ["M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["color_bars"]
+    },
+    {
+      "id": "ADJ_020",
+      "title": "Geometry2 identity adjustment over centered coordinate field",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["coordinate_field"]
+    },
+    {
+      "id": "ADJ_021",
+      "title": "Geometry2 identity adjustment over full-frame color bars",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["color_bars"]
+    },
+    {
+      "id": "ADJ_030",
+      "title": "Geometry2 translate adjustment over centered coordinate field",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["coordinate_field"]
+    },
+    {
+      "id": "ADJ_031",
+      "title": "Geometry2 translate adjustment over full-frame color bars",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["color_bars"]
+    },
+    {
+      "id": "ADJ_040",
+      "title": "Geometry2 rotate-scale adjustment over centered coordinate field",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["coordinate_field"]
+    },
+    {
+      "id": "ADJ_041",
+      "title": "Geometry2 rotate-scale adjustment over full-frame color bars",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["color_bars"]
+    },
+    {
+      "id": "ADJ_042",
+      "title": "Geometry2 rotate-scale adjustment over full-frame checker",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["checkerboard_16"]
+    },
+    {
+      "id": "ADJ_050",
+      "title": "Geometry2 rotate-scale adjustment over checker plus coordinate",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["checkerboard_16", "coordinate_field"]
+    },
+    {
+      "id": "ADJ_051",
+      "title": "Geometry2 rotate-scale adjustment over checker plus alpha square",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["checkerboard_16", "alpha_square"]
+    },
+    {
+      "id": "ADJ_052",
+      "title": "Geometry2 rotate-scale adjustment over checker plus premult probe",
+      "ladder": "adjustment_contract",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["checkerboard_16", "premult_probe"]
     },
     {
       "id": "GPH_010",

@@ -3270,6 +3270,87 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
                 json!({ "0001": [128, 128], "0002": [256, 256], "0003": 82, "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
             )]);
         }
+        "ADJ_010" => {
+            b.place("coordinate", "coordinate_field", 256.0, 256.0, 100.0, 100.0, vec![]);
+            b.adjustment(vec![]);
+        }
+        "ADJ_011" => {
+            b.place("color_bars", "color_bars", 256.0, 256.0, 200.0, 100.0, vec![]);
+            b.adjustment(vec![]);
+        }
+        "ADJ_020" => {
+            b.place("coordinate", "coordinate_field", 256.0, 256.0, 100.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [256, 256], "0004": 100 }),
+            )]);
+        }
+        "ADJ_021" => {
+            b.place("color_bars", "color_bars", 256.0, 256.0, 200.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [256, 256], "0004": 100 }),
+            )]);
+        }
+        "ADJ_030" => {
+            b.place("coordinate", "coordinate_field", 256.0, 256.0, 100.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [288, 256], "0004": 100 }),
+            )]);
+        }
+        "ADJ_031" => {
+            b.place("color_bars", "color_bars", 256.0, 256.0, 200.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [288, 256], "0004": 100 }),
+            )]);
+        }
+        "ADJ_040" => {
+            b.place("coordinate", "coordinate_field", 256.0, 256.0, 100.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [256, 256], "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
+            )]);
+        }
+        "ADJ_041" => {
+            b.place("color_bars", "color_bars", 256.0, 256.0, 200.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [256, 256], "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
+            )]);
+        }
+        "ADJ_042" => {
+            b.place("checker", "checkerboard_16", 256.0, 256.0, 200.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [256, 256], "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
+            )]);
+        }
+        "ADJ_050" => {
+            b.place("checker", "checkerboard_16", 256.0, 256.0, 200.0, 100.0, vec![]);
+            b.place("coordinate", "coordinate_field", 256.0, 256.0, 100.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [256, 256], "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
+            )]);
+        }
+        "ADJ_051" => {
+            b.place("checker", "checkerboard_16", 256.0, 256.0, 200.0, 100.0, vec![]);
+            b.place("alpha", "alpha_square", 256.0, 256.0, 100.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [256, 256], "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
+            )]);
+        }
+        "ADJ_052" => {
+            b.place("checker", "checkerboard_16", 256.0, 256.0, 200.0, 100.0, vec![]);
+            b.place("premult", "premult_probe", 256.0, 256.0, 100.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [256, 256], "0002": [256, 256], "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
+            )]);
+        }
         "GPH_010" => b.collapse_probe(),
         "CMP_010" => {
             b.place("checker", "checkerboard_16", 256.0, 256.0, 100.0, 100.0, vec![]);
