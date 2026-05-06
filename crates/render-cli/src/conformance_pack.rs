@@ -2140,7 +2140,7 @@ fn write_warps_fields_debug_sidecars(
     time: f64,
     case_dir: &Path,
 ) -> Result<Vec<String>> {
-    if !matches!(case.id.as_str(), "EFF_040" | "EFF_060") {
+    if !matches!(case.id.as_str(), "EFF_040" | "EFF_041" | "EFF_060") {
         return Ok(Vec::new());
     }
 
@@ -2183,7 +2183,7 @@ fn ensure_required_warps_fields_sidecar(
     frame: u32,
     paths: &[String],
 ) -> Result<()> {
-    if matches!(case.id.as_str(), "EFF_040" | "EFF_060") {
+    if matches!(case.id.as_str(), "EFF_040" | "EFF_041" | "EFF_060") {
         anyhow::ensure!(
             !paths.is_empty(),
             "{} frame {} did not write an isolated warps/fields debug sidecar",
@@ -2196,7 +2196,7 @@ fn ensure_required_warps_fields_sidecar(
 
 fn validate_warps_fields_sidecar(case: &PackCase, frame: u32, sidecar: &Value) -> Result<()> {
     match case.id.as_str() {
-        "EFF_040" => validate_geometry2_isolated_sidecar(case, frame, sidecar),
+        "EFF_040" | "EFF_041" => validate_geometry2_isolated_sidecar(case, frame, sidecar),
         "EFF_060" => validate_turbulent_isolated_sidecar(case, frame, sidecar),
         _ => Ok(()),
     }
@@ -2244,6 +2244,22 @@ fn validate_geometry2_isolated_sidecar(case: &PackCase, frame: u32, sidecar: &Va
         case.id,
         frame
     );
+    if case.id == "EFF_041" {
+        anyhow::ensure!(
+            sidecar["property_mapping"]["0012"]["present"]
+                .as_bool()
+                .unwrap_or(false),
+            "{} frame {} Geometry2 sidecar property_mapping.0012 is not present in raw params",
+            case.id,
+            frame
+        );
+        anyhow::ensure!(
+            sidecar["resolved"]["sampling"] == 2,
+            "{} frame {} Geometry2 sidecar did not resolve bicubic sampling=2",
+            case.id,
+            frame
+        );
+    }
     anyhow::ensure!(
         sidecar["forward_matrix"].as_array().map_or(0, Vec::len) == 3
             && sidecar["inverse_matrix"].as_array().map_or(0, Vec::len) == 3,
@@ -2623,7 +2639,7 @@ fn warps_fields_debug_json(
     input: &Canvas,
 ) -> Option<Value> {
     match (case.id.as_str(), spec.match_name.as_str()) {
-        ("EFF_040", "ADBE Geometry2") => {
+        ("EFF_040" | "EFF_041", "ADBE Geometry2") => {
             let debug = effects::geometry::geometry2_debug_data(input, &spec.params, time);
             Some(json!({
                 "schema": "ae-native-renderer.geometry2-debug.v1",
@@ -3079,6 +3095,18 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
                 json!({ "0001": [128, 128], "0002": [256, 256], "0003": 82, "0004": 120, "0008": 72, "rotation": 17 }),
             )],
         ),
+        "EFF_041" => b.place(
+            "geometry_bicubic",
+            "coordinate_field",
+            256.0,
+            256.0,
+            100.0,
+            100.0,
+            vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [128, 128], "0002": [256, 256], "0003": 82, "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
+            )],
+        ),
         "EFF_050" => b.place(
             "minimax",
             "alpha_square",
@@ -3234,6 +3262,13 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
                     json!({ "0002": 24, "0003": 72, "0005": 2, "0006": animated_scalar_param(0.0, 0.0, d, 180.0) }),
                 ),
             ]);
+        }
+        "STK_031" => {
+            b.place("coordinate_stack", "coordinate_field", 256.0, 256.0, 100.0, 100.0, vec![]);
+            b.adjustment(vec![effect(
+                "ADBE Geometry2",
+                json!({ "0001": [128, 128], "0002": [256, 256], "0003": 82, "0004": 120, "0008": 72, "0012": 2, "rotation": 17 }),
+            )]);
         }
         "GPH_010" => b.collapse_probe(),
         "CMP_010" => {

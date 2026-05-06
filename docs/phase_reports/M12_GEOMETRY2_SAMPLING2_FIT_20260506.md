@@ -167,12 +167,49 @@ visible metric: `rgb_straight_source_over_ae_background=0.054426`,
 The max delta is raw/foreground RGB under partial alpha and is not used as the
 primary formula-tuning gate.
 
+## Bicubic Conformance Gate
+
+Added durable conformance cases for the fitted `0012=2` branch:
+
+- `EFF_041`: isolated Geometry2 bicubic coordinate-field transform.
+- `STK_031`: the same Geometry2 bicubic transform applied through an
+  adjustment layer over the coordinate field.
+
+AE85 render job:
+
+```text
+python3 scripts/ae_remote_pack.py fixtures/ae_conformance_pack \
+  --entry-script jsx/build_conformance_project.jsx \
+  --node http://85.239.48.31:8000 \
+  --job-id ae_conformance_g2_bicubic_gate_20260506_142027 \
+  --case EFF_041 --case STK_031
+```
+
+Native conformance output:
+
+```text
+target/ae_agents/m12_geometry2_bicubic_gate_final_20260506_142027/report.json
+```
+
+Results:
+
+| Case | Primary visible RGB mean | Raw RGB mean | Note |
+| --- | ---: | ---: | --- |
+| `EFF_041` | `0.043613` | `0.102811` | Passes the isolated bicubic sampler gate; sidecar resolves `sampling=2`. |
+| `STK_031` | `8.511274` | `12.184315` | Exposes an adjustment/canvas semantics blocker, not a Geometry2 sampler blocker. |
+
+Control check: removing the native `rotation` alias and relying only on
+`0008=72` made both cases worse (`EFF_041` primary visible RGB mean
+`11.966305`), so the previous `rotation=17` mapping remains the correct native
+recipe for these AE-generated cases.
+
 ## Next
 
 Geometry2 is now past the parameter-mapping blocker and has a fitted bicubic
-branch plus an alpha-aware sampler wrapper. The remaining work is narrow:
+branch plus an alpha-aware sampler wrapper. The isolated AE gate for `0012=2`
+is green on the M19-visible metric.
 
-1. Re-render a composed scene that actually uses `0012=2` and check the native
-   delta drop.
-2. If `0012=2` still has residuals, tune only edge handling/alpha wrapper,
-   leaving matrix math frozen.
+The remaining composed-scene blocker belongs to `M16`: AE adjustment-layer
+Geometry2 does not behave like applying the same effect to the already-rendered
+native canvas. Do not retune Geometry2 sampling/matrix math from `STK_031`
+pixels until the adjustment/canvas contract is isolated.

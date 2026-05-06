@@ -125,6 +125,14 @@
       "assets": ["coordinate_field"]
     },
     {
+      "id": "EFF_041",
+      "title": "Geometry2 bicubic coordinate-field transform",
+      "ladder": "operator_static",
+      "modules": ["M12"],
+      "frames_to_compare": [0],
+      "assets": ["coordinate_field"]
+    },
+    {
       "id": "EFF_050",
       "title": "Minimax alpha-square morphology",
       "ladder": "operator_static",
@@ -211,6 +219,14 @@
       "modules": ["M12", "M13", "M14", "M15", "M16", "M19"],
       "frames_to_compare": [0, 1, 5, 10, 15, 20, 30, 45, 59],
       "assets": ["coordinate_field", "numbered_frames"]
+    },
+    {
+      "id": "STK_031",
+      "title": "Geometry2 bicubic adjustment-layer transform",
+      "ladder": "stack",
+      "modules": ["M12", "M19"],
+      "frames_to_compare": [0],
+      "assets": ["coordinate_field"]
     },
     {
       "id": "GPH_010",

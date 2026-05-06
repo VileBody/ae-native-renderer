@@ -139,6 +139,18 @@ PNG sequences from the case comps are the golden source of truth.
                     "rotation": 17
                 });
             }),
+            createCase("EFF_041", "Geometry2 bicubic coordinate-field transform", function (comp) {
+                var layer = placeAsset(comp, assets.coordinate, 256, 256, 100);
+                addEffect(layer, "ADBE Geometry2", {
+                    "0001": [128, 128],
+                    "0002": [256, 256],
+                    "0003": 82,
+                    "0004": 120,
+                    "0008": 72,
+                    "0012": 2,
+                    "rotation": 17
+                });
+            }),
             createCase("EFF_050", "Minimax alpha-square morphology", function (comp) {
                 var layer = placeAsset(comp, assets.alphaSquare, 256, 256, 70);
                 addEffect(layer, "ADBE Minimax", {
@@ -218,6 +230,20 @@ PNG sequences from the case comps are the golden source of truth.
                 addEffect(adj, "ADBE Minimax", { "0001": 2, "0002": 4, "0003": 1 });
                 var turb = addEffect(adj, "ADBE Turbulent Displace", { "0002": 24, "0003": 72, "0005": 2 });
                 setAnimatedEffectScalar(turb, "0006", 0, 0, cfg.duration, 180);
+            }),
+            createCase("STK_031", "Geometry2 bicubic adjustment-layer transform", function (comp) {
+                placeAsset(comp, assets.coordinate, 256, 256, 100);
+                var adj = comp.layers.addSolid([1, 1, 1], "ADJ_geometry2_bicubic", cfg.width, cfg.height, 1, cfg.duration);
+                adj.adjustmentLayer = true;
+                addEffect(adj, "ADBE Geometry2", {
+                    "0001": [128, 128],
+                    "0002": [256, 256],
+                    "0003": 82,
+                    "0004": 120,
+                    "0008": 72,
+                    "0012": 2,
+                    "rotation": 17
+                });
             }),
             createCase("GPH_010", "nested precomp and collapse-transform text sharpness", function (comp) {
                 var child = app.project.items.addComp("GPH_010_child_text", cfg.width, cfg.height, 1, cfg.duration, cfg.fps);
