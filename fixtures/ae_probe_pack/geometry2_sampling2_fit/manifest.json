@@ -1,0 +1,12 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "geometry2_sampling2_fit_probe_v1",
+  "effect_match_name": "ADBE Geometry2",
+  "entry_script": "jsx/build_geometry2_sampling2_fit_project.jsx",
+  "purpose": "Fit Geometry2 0012 Sampling=2 bicubic kernel/edge/rounding from isolated AE renders while tracing the CPU Transform.aex path with Frida.",
+  "expected_outputs": [
+    "ae_goldens/png8",
+    "ae_goldens/metadata/geometry2_sampling2_fit_property_dump.json",
+    "ae_goldens/logs/geometry2_sampling2_fit_builder_log.txt"
+  ]
+}

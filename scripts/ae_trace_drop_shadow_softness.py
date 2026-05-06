@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import base64
+import hashlib
 import json
 import os
 import ssl
@@ -2064,7 +2065,7 @@ def main() -> int:
     summaries = []
     case_batches = [case_ids] if args.batch_cases else [[case_id] for case_id in case_ids]
     for batch in case_batches:
-        case_id = "__".join(batch) if len(batch) > 1 else batch[0]
+        case_id = batch_case_label(batch)
         remote_log = remote_root + f"\\{case_id}.jsonl"
         pid: int | None = None
         trace_proc: subprocess.Popen[str] | None = None
@@ -2166,6 +2167,13 @@ def main() -> int:
     )
     print(json.dumps({"event": "done", "summary": str(summary_path)}, ensure_ascii=False, indent=2))
     return 0
+
+
+def batch_case_label(batch: list[str]) -> str:
+    if len(batch) == 1:
+        return batch[0]
+    digest = hashlib.sha1("\n".join(batch).encode("utf-8")).hexdigest()[:12]
+    return f"batch_{len(batch)}_{digest}"
 
 
 if __name__ == "__main__":

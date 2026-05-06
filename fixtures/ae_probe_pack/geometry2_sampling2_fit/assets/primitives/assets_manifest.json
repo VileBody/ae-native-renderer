@@ -1,0 +1,23 @@
+[
+  {
+    "id": "fit_texture",
+    "path": "assets/primitives/fit_texture_64.png",
+    "width": 64,
+    "height": 64,
+    "description": "Opaque deterministic high-frequency RGBA texture for cubic fitting."
+  },
+  {
+    "id": "impulse_grid",
+    "path": "assets/primitives/impulse_grid_64.png",
+    "width": 64,
+    "height": 64,
+    "description": "Transparent canvas with colored impulses every 8 px and at edges."
+  },
+  {
+    "id": "alpha_steps",
+    "path": "assets/primitives/alpha_steps_64.png",
+    "width": 64,
+    "height": 64,
+    "description": "Straight-RGBA texture with deterministic RGB and stepped alpha."
+  }
+]

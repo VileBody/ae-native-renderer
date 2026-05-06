@@ -139,10 +139,10 @@ Native now records and parses:
 - UI label `Sampling`
 - resolved values: `1 = Bilinear`, `2 = Bicubic`
 
-The native `0012 = 2` implementation currently uses a Catmull-Rom bicubic
-sampler with the same transparent partial-footprint edge model. That is a real
-branch implementation, not a parity claim; the remaining M12 tuning target is
-the exact AE cubic kernel/edge/raster rounding.
+The first native `0012 = 2` implementation used a Catmull-Rom bicubic sampler
+with the same transparent partial-footprint edge model. A later Sampling=2 fit
+pass (`docs/phase_reports/M12_GEOMETRY2_SAMPLING2_FIT_20260506.md`) replaced
+that with a Frida-gated Keys cubic kernel using `a=-0.7`.
 
 ## Decision
 
@@ -156,8 +156,7 @@ parameter identity itself is now mapped.
 
 ## Next
 
-1. Compare native `0012 = 2` against isolated AE coordinate-field cases and
-   fit the cubic kernel family/parameter, edge footprint, and rounding.
-2. Keep matrix tuning frozen while the residual diff is sampler-owned.
-3. Only after the isolated `0012 = 2` branch is stable, re-check composed
-   `EFF_040`/`STK_030` to see whether any stack-level adjustment remains.
+1. Add alpha-specific sampler cases, separate from opaque kernel fitting.
+2. Keep matrix tuning frozen while any residual diff is sampler/alpha-owned.
+3. Re-check composed `0012 = 2` scenes to see whether any stack-level
+   adjustment remains.

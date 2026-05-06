@@ -603,8 +603,8 @@ fn sample_geometry2_bicubic(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
     let y0 = source_uv.1.floor() as i32;
     let tx = source_uv.0 - x0 as f32;
     let ty = source_uv.1 - y0 as f32;
-    let wx = cubic_catmull_rom_weights(tx);
-    let wy = cubic_catmull_rom_weights(ty);
+    let wx = cubic_keys_weights(tx, GEOMETRY2_BICUBIC_KEYS_A);
+    let wy = cubic_keys_weights(ty, GEOMETRY2_BICUBIC_KEYS_A);
     let mut out = [0_u8; 4];
     for channel in 0..4 {
         let mut accum = 0.0_f32;
@@ -623,15 +623,24 @@ fn sample_geometry2_bicubic(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
     out
 }
 
-fn cubic_catmull_rom_weights(t: f32) -> [f32; 4] {
-    let t2 = t * t;
-    let t3 = t2 * t;
+fn cubic_keys_weights(t: f32, a: f32) -> [f32; 4] {
     [
-        -0.5 * t + t2 - 0.5 * t3,
-        1.0 - 2.5 * t2 + 1.5 * t3,
-        0.5 * t + 2.0 * t2 - 1.5 * t3,
-        -0.5 * t2 + 0.5 * t3,
+        cubic_keys_weight(1.0 + t, a),
+        cubic_keys_weight(t, a),
+        cubic_keys_weight(1.0 - t, a),
+        cubic_keys_weight(2.0 - t, a),
     ]
+}
+
+fn cubic_keys_weight(x: f32, a: f32) -> f32 {
+    let x = x.abs();
+    if x < 1.0 {
+        return (a + 2.0) * x * x * x - (a + 3.0) * x * x + 1.0;
+    }
+    if x < 2.0 {
+        return a * x * x * x - 5.0 * a * x * x + 8.0 * a * x - 4.0 * a;
+    }
+    0.0
 }
 
 fn geometry2_out_of_bounds(
@@ -738,7 +747,8 @@ fn nearly_eq(left: f32, right: f32) -> bool {
 }
 
 const GEOMETRY2_BILINEAR_SAMPLER_MODE: &str = "bilinear_partial_footprint_transparent";
-const GEOMETRY2_BICUBIC_SAMPLER_MODE: &str = "bicubic_catmull_rom_partial_footprint_transparent";
+const GEOMETRY2_BICUBIC_SAMPLER_MODE: &str = "bicubic_keys_a_-0.7_partial_footprint_transparent";
+const GEOMETRY2_BICUBIC_KEYS_A: f32 = -0.7;
 
 #[cfg(test)]
 mod tests {
@@ -1103,7 +1113,7 @@ mod tests {
         );
         assert_eq!(
             sample_geometry2(&input, (1.5, 0.0), Geometry2SamplerMode::Bicubic),
-            [143, 0, 0, 255]
+            [150, 0, 0, 255]
         );
 
         let params = Geometry2Params::from_json(

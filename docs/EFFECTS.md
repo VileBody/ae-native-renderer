@@ -44,9 +44,9 @@ node show the relevant path as CPU `Transform.aex+0x5f30` plus
 `GPUFoundation.dll` matrix/bounds helpers, not the GPU motion/quality export
 path. A follow-up Frida dump of the `Transform.aex+0x5b20` wrapper confirmed
 `PF_ParamDef[12]` as `Sampling`; word offset `56` low `s32` carries `1` for
-Bilinear and `2` for Bicubic. Native dispatches on that value. The bicubic path
-is currently a Catmull-Rom implementation and still needs isolated AE kernel
-and edge-weight tuning before parity can be locked.
+Bilinear and `2` for Bicubic. Native dispatches on that value. The 2026-05-06
+Sampling=2 fit pass selected a Keys cubic kernel with `a=-0.7`, transparent
+partial-footprint edges, and round quantization for the bicubic branch.
 
 `ADBE Minimax` implements the enum surface recovered from the AEX strings and
 CPU callbacks. The native pass model is one-dimensional horizontal/vertical
