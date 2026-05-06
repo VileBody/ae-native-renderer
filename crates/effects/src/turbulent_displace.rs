@@ -34,7 +34,10 @@ pub(crate) struct TurbulentDisplaceParams {
     pub offset: [f32; 2],
     pub complexity: f32,
     pub evolution: f32,
+    pub cycle_evolution: bool,
+    pub cycle_revolutions: f32,
     pub random_seed: f32,
+    pub antialiasing_best_quality: bool,
     pub pinning: f32,
     pub resize_layer: bool,
 }
@@ -67,6 +70,10 @@ pub struct TurbulentDisplaceAeWrapperTelemetry {
     pub size_fixed16: i32,
     pub offset_fixed16: [i32; 2],
     pub evolution_fixed16: i32,
+    pub cycle_evolution: bool,
+    pub cycle_revolutions_fixed16: i32,
+    pub random_seed_fixed16: i32,
+    pub antialiasing_best_quality: bool,
     pub complexity_octaves: u32,
     pub complexity_fraction: f32,
 }
@@ -79,10 +86,14 @@ pub struct TurbulentDisplaceFieldStateTelemetry {
     pub complexity_octaves: u32,
     pub complexity_fraction: f32,
     pub evolution_degrees: f32,
+    pub cycle_evolution: bool,
+    pub cycle_revolutions: f32,
+    pub antialiasing_best_quality: bool,
     pub phase_radians: f32,
     pub amplitude: f32,
     pub source_uv_convention: &'static str,
     pub hash_coverage: &'static str,
+    pub property_mapping_status: &'static str,
     pub tuning_guardrail: &'static str,
 }
 
@@ -94,7 +105,10 @@ pub struct TurbulentDisplaceResolvedParams {
     pub offset: [f32; 2],
     pub complexity: u32,
     pub evolution: f32,
+    pub cycle_evolution: bool,
+    pub cycle_revolutions: f32,
     pub random_seed: u32,
+    pub antialiasing_best_quality: bool,
     pub pinning: u32,
     pub resize_layer: bool,
     pub amplitude: f32,
@@ -146,10 +160,41 @@ impl TurbulentDisplaceParams {
                 time,
                 time as f32 * 45.0,
             ),
+            cycle_evolution: param_bool_any(
+                params,
+                &[
+                    "cycle_evolution",
+                    "cycleEvolution",
+                    "Cycle Evolution",
+                    "0008",
+                ],
+                false,
+            ),
+            cycle_revolutions: param_f32_any(
+                params,
+                &[
+                    "cycle_revolutions",
+                    "cycleRevolutions",
+                    "Cycle (in Revolutions)",
+                    "Cycle Revolutions",
+                    "0009",
+                ],
+                1.0,
+            ),
             random_seed: param_f32_any(
                 params,
                 &["random_seed", "randomSeed", "seed", "Random Seed", "0010"],
                 0.0,
+            ),
+            antialiasing_best_quality: param_bool_any(
+                params,
+                &[
+                    "antialiasing_best_quality",
+                    "antialiasingBestQuality",
+                    "Antialiasing for Best Quality",
+                    "0014",
+                ],
+                true,
             ),
             pinning: param_f32_any(params, &["pinning", "Pinning", "0012"], 3.0),
             resize_layer: param_bool_any(params, &["resize_layer", "Resize Layer", "0013"], false),
@@ -174,7 +219,10 @@ fn map_params_to_field_model(params: TurbulentDisplaceParams) -> TurbulentDispla
         offset: params.offset,
         complexity,
         evolution: params.evolution,
+        cycle_evolution: params.cycle_evolution,
+        cycle_revolutions: params.cycle_revolutions.max(0.0),
         random_seed,
+        antialiasing_best_quality: params.antialiasing_best_quality,
         pinning: params.pinning.round().clamp(0.0, 17.0) as u32,
         resize_layer: params.resize_layer,
         amplitude: amount * 0.25,
@@ -251,10 +299,14 @@ fn field_state_telemetry(
         complexity_octaves: ae_wrapper.complexity_octaves,
         complexity_fraction: ae_wrapper.complexity_fraction,
         evolution_degrees: resolved.evolution,
+        cycle_evolution: resolved.cycle_evolution,
+        cycle_revolutions: resolved.cycle_revolutions,
+        antialiasing_best_quality: resolved.antialiasing_best_quality,
         phase_radians: resolved.phase_radians,
         amplitude: resolved.amplitude,
         source_uv_convention: "source_uv = output_xy + displacement",
         hash_coverage: "full_frame_displacement_source_uv_sample_xy_oob",
+        property_mapping_status: "0008_cycle_evolution_0009_cycle_revolutions_0010_random_seed_0014_antialiasing_recorded",
         tuning_guardrail: "do_not_tune_from_final_png_only",
     }
 }
@@ -288,6 +340,10 @@ fn ae_wrapper_telemetry(
         size_fixed16: to_fixed16(params.size),
         offset_fixed16: [to_fixed16(params.offset[0]), to_fixed16(params.offset[1])],
         evolution_fixed16: to_fixed16(params.evolution),
+        cycle_evolution: params.cycle_evolution,
+        cycle_revolutions_fixed16: to_fixed16(params.cycle_revolutions),
+        random_seed_fixed16: to_fixed16(params.random_seed),
+        antialiasing_best_quality: params.antialiasing_best_quality,
         complexity_octaves,
         complexity_fraction: complexity - complexity_octaves as f32,
     }
@@ -594,7 +650,10 @@ mod tests {
                 "0004": { "value": [12, 24] },
                 "0005": { "value": 4 },
                 "0006": { "value": 90 },
+                "0008": { "value": 1 },
+                "0009": { "value": 2 },
                 "0010": { "value": 7 },
+                "0014": { "value": 0 },
                 "0012": { "value": 3 },
                 "0013": { "value": 1 }
             }),
@@ -607,7 +666,10 @@ mod tests {
         assert_eq!(params.offset, [12.0, 24.0]);
         assert_eq!(params.complexity, 4.0);
         assert_eq!(params.evolution, 90.0);
+        assert!(params.cycle_evolution);
+        assert_eq!(params.cycle_revolutions, 2.0);
         assert_eq!(params.random_seed, 7.0);
+        assert!(!params.antialiasing_best_quality);
         assert_eq!(params.pinning, 3.0);
         assert!(params.resize_layer);
     }
@@ -647,6 +709,9 @@ mod tests {
         assert_eq!(telemetry.resolved.size, 3.0);
         assert_eq!(telemetry.resolved.complexity, 2);
         assert_eq!(telemetry.resolved.evolution, 90.0);
+        assert!(!telemetry.resolved.cycle_evolution);
+        assert_eq!(telemetry.resolved.cycle_revolutions, 1.0);
+        assert!(telemetry.resolved.antialiasing_best_quality);
         assert_eq!(telemetry.resolved.amplitude, 4.0);
         assert_close(
             telemetry.resolved.phase_radians,
@@ -663,6 +728,10 @@ mod tests {
         assert_eq!(telemetry.ae_wrapper.amount_fixed16, 16 * 65_536);
         assert_eq!(telemetry.ae_wrapper.size_fixed16, 3 * 65_536);
         assert_eq!(telemetry.ae_wrapper.evolution_fixed16, 90 * 65_536);
+        assert!(!telemetry.ae_wrapper.cycle_evolution);
+        assert_eq!(telemetry.ae_wrapper.cycle_revolutions_fixed16, 65_536);
+        assert_eq!(telemetry.ae_wrapper.random_seed_fixed16, 0);
+        assert!(telemetry.ae_wrapper.antialiasing_best_quality);
         assert_eq!(telemetry.ae_wrapper.complexity_octaves, 2);
         assert_close(telemetry.ae_wrapper.complexity_fraction, 0.0);
         assert_eq!(
@@ -680,6 +749,13 @@ mod tests {
         assert_eq!(telemetry.field_state.complexity_octaves, 2);
         assert_close(telemetry.field_state.complexity_fraction, 0.0);
         assert_eq!(telemetry.field_state.evolution_degrees, 90.0);
+        assert!(!telemetry.field_state.cycle_evolution);
+        assert_eq!(telemetry.field_state.cycle_revolutions, 1.0);
+        assert!(telemetry.field_state.antialiasing_best_quality);
+        assert_eq!(
+            telemetry.field_state.property_mapping_status,
+            "0008_cycle_evolution_0009_cycle_revolutions_0010_random_seed_0014_antialiasing_recorded"
+        );
         assert_eq!(
             telemetry.field_state.tuning_guardrail,
             "do_not_tune_from_final_png_only"
@@ -785,7 +861,10 @@ mod tests {
             offset: [10.0, 20.0],
             complexity: 9.2,
             evolution: 450.0,
+            cycle_evolution: true,
+            cycle_revolutions: -2.0,
             random_seed: 7.0,
+            antialiasing_best_quality: false,
             pinning: 99.0,
             resize_layer: true,
         };
@@ -798,7 +877,10 @@ mod tests {
         assert_eq!(resolved.offset, [10.0, 20.0]);
         assert_eq!(resolved.complexity, 6);
         assert_eq!(resolved.evolution, 450.0);
+        assert!(resolved.cycle_evolution);
+        assert_eq!(resolved.cycle_revolutions, 0.0);
         assert_eq!(resolved.random_seed, 7);
+        assert!(!resolved.antialiasing_best_quality);
         assert_eq!(resolved.pinning, 17);
         assert!(resolved.resize_layer);
         assert_eq!(resolved.amplitude, 50.0);

@@ -78,8 +78,39 @@ cargo run -p render-cli -- conformance-pack \
 ```
 
 The runner maps every pack `case.id` to a deterministic native scene recipe,
-renders only `frames_to_compare`, copies the matching AE PNGs next to the native
-frames, and writes:
+renders only `frames_to_compare`, copies the matching AE PNGs next to the
+native frames, and writes `report.json` with raw RGBA metrics plus the
+M19-visible `rgb_straight_source_over_ae_background` metric.
+
+## Master Gate
+
+For roadmap decisions, use the master gate wrapper instead of reading individual
+case reports by hand:
+
+```bash
+python3 scripts/run_master_conformance_gate.py \
+  --out target/ae_agents/master_gate_$(date +%Y%m%d_%H%M%S)
+```
+
+The policy lives at:
+
+```text
+fixtures/ae_conformance_pack/master_gate_policy.json
+```
+
+The wrapper writes:
+
+```text
+<out>/dashboard.json
+<out>/dashboard.md
+```
+
+Status meanings are defined in `docs/MASTER_CONFORMANCE_GATE.md`. In short:
+`accepted` is a tight target pass, `approximate` is inside the current known
+guardrail, `tuning` is outside approximate but not a hard fail, and `regression`
+is a guardrail violation or temporal-contract failure.
+
+The conformance runner writes:
 
 ```text
 target/ae_conformance_native/report.json

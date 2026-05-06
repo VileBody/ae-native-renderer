@@ -23,7 +23,7 @@ Effect params accept both generated payload values (`{ "0001": { "value": ... } 
 | `ADBE Glo2` | `based_on`, `threshold`, `radius`, `intensity` | `0001` glow based on (`1` color channels, `2` alpha channel; absent keeps combined legacy source), `0002` threshold, `0003` radius, `0004` intensity |
 | `ADBE Geometry2` | `anchor`, `position`, `scale`, `rotation`, `skew`, `skew_axis`, `pixelAspect`, `sampling` | AE property-index ids confirmed by `effect_property_dump.json` and Frida CPU wrapper dumps: `0001` anchor, `0002` position, `0003` uniform-scale checkbox, `0004` scale height, `0005` scale width, `0006` skew, `0007` skew axis, `0008` rotation, `0009` effect opacity slot, `0010` use comp shutter, `0011` shutter angle, `0012` sampling (`1` bilinear, `2` bicubic); native currently implements transform controls plus sampling mode and ignores the Geometry2 opacity/shutter controls |
 | `ADBE Minimax` | `operation`, `radius`, `channels`, `direction`, `dont_shrink_edges` | `0001` operation (`1` minimum, `2` maximum, `3` minimum then maximum, `4` maximum then minimum), `0002` radius, `0003` channels (`1` color, `2` alpha and color, `3` red, `4` green, `5` blue, `6` alpha), `0004` direction (`1` horizontal and vertical, `2` horizontal, `3` vertical), `0005` don't shrink edges |
-| `ADBE Turbulent Displace` | `displacement`, `amount`, `size`, `offset`, `complexity`, `evolution`, `random_seed`, `pinning`, `resize_layer` | `0001` displacement type, `0002` amount, `0003` size, `0004` offset, `0005` complexity, `0006` evolution, `0010` random seed, `0012` pinning, `0013` resize layer |
+| `ADBE Turbulent Displace` | `displacement`, `amount`, `size`, `offset`, `complexity`, `evolution`, `cycle_evolution`, `cycle_revolutions`, `random_seed`, `antialiasing_best_quality`, `pinning`, `resize_layer` | `0001` displacement type, `0002` amount, `0003` size, `0004` offset, `0005` complexity, `0006` evolution, `0008` cycle evolution, `0009` cycle revolutions, `0010` random seed, `0012` pinning, `0013` resize layer, `0014` antialiasing for best quality |
 | `ADBE Posterize Time` | `frame_rate` | `0001` frame rate; layer/source/effect time is quantized in `render-core`; the stateless canvas-stage effect remains pass-through |
 
 Scalar numbered params support direct numbers, wrapped `value`, and the existing simple scalar keyframe shape where the renderer already evaluates it. Color params accept normalized `0..1` channels or byte `0..255` channels.
@@ -72,9 +72,11 @@ policy for stack telemetry.
 approximation, but its field telemetry now includes an AE-wrapper contract block
 from the Ghidra pass: inferred internal displacement mode, kernel path
 (`FracAll` vs `Frac1D`), fixed16 amount/size/offset/evolution, complexity
-integer/fraction split, and H/V lookup lengths. This is instrumentation for
-formula replacement/tuning, not a parity claim. The exact vector/sampler math is
-blocked by hidden `TurbulentDisplaceFracAllKernel` and
+integer/fraction split, H/V lookup lengths, and the previously missing control
+slots `0008`/`0009`/`0010`/`0014`. `0008` cycle evolution and `0009` cycle
+revolutions are recorded but do not yet change the native sine field. This is
+instrumentation for formula replacement/tuning, not a parity claim. The exact
+vector/sampler math is blocked by hidden `TurbulentDisplaceFracAllKernel` and
 `TurbulentDisplaceFrac1DKernel`; replacement work must use kernel extraction or
 coordinate-field probes, not final PNG pixels.
 

@@ -1,0 +1,59 @@
+{
+  "schema": "ae-native-renderer.master-conformance-gate-policy.v1",
+  "pack": "fixtures/ae_conformance_pack",
+  "primary_metric": "rgb_straight_source_over_ae_background",
+  "default_thresholds": {
+    "accepted_mean": 0.25,
+    "accepted_max": 16,
+    "approximate_mean": 5.0,
+    "approximate_max": 255,
+    "regression_mean": 15.0,
+    "regression_max": 255
+  },
+  "case_overrides": {
+    "PRI_010": { "accepted_mean": 0.01, "accepted_max": 0, "approximate_mean": 1.0, "approximate_max": 255, "regression_mean": 3.0 },
+    "CMP_010": { "accepted_mean": 0.01, "accepted_max": 0, "approximate_mean": 6.5, "approximate_max": 255, "regression_mean": 9.0 },
+    "TMP_020": { "accepted_mean": 0.01, "accepted_max": 0, "approximate_mean": 0.25, "regression_mean": 1.0 },
+    "EFF_010": { "accepted_mean": 0.25, "accepted_max": 32, "approximate_mean": 1.0, "regression_mean": 3.0 },
+    "EFF_020": { "accepted_mean": 0.25, "accepted_max": 64, "approximate_mean": 12.0, "regression_mean": 16.0 },
+    "EFF_040": { "accepted_mean": 0.25, "accepted_max": 80, "approximate_mean": 1.0, "regression_mean": 3.0 },
+    "EFF_041": { "accepted_mean": 0.25, "accepted_max": 80, "approximate_mean": 1.0, "regression_mean": 3.0 },
+    "EFF_050": { "accepted_mean": 0.25, "accepted_max": 32, "approximate_mean": 1.0, "regression_mean": 3.0 },
+    "EFF_060": { "accepted_mean": 0.25, "accepted_max": 96, "approximate_mean": 4.0, "regression_mean": 8.0 },
+    "STK_010": { "accepted_mean": 0.25, "accepted_max": 32, "approximate_mean": 1.0, "regression_mean": 3.0 },
+    "STK_030": { "accepted_mean": 0.25, "accepted_max": 128, "approximate_mean": 5.0, "regression_mean": 8.0 },
+    "STK_031": { "accepted_mean": 0.25, "accepted_max": 64, "approximate_mean": 1.0, "regression_mean": 3.0 },
+    "ADJ_040": { "accepted_mean": 0.25, "accepted_max": 96, "approximate_mean": 1.0, "regression_mean": 3.0 },
+    "GPH_010": { "accepted_mean": 0.25, "accepted_max": 64, "approximate_mean": 16.0, "regression_mean": 20.0 },
+    "TXT_010": { "accepted_mean": 0.25, "accepted_max": 96, "approximate_mean": 10.0, "regression_mean": 20.0 },
+    "TXT_020": { "accepted_mean": 0.25, "accepted_max": 96, "approximate_mean": 10.0, "regression_mean": 20.0 },
+    "TXT_030": { "accepted_mean": 0.25, "accepted_max": 96, "approximate_mean": 10.0, "regression_mean": 20.0 },
+    "TXT_040": { "accepted_mean": 0.25, "accepted_max": 96, "approximate_mean": 10.0, "regression_mean": 20.0 }
+  },
+  "gate_cases": [
+    { "id": "PRI_010", "role": "isolated", "modules": ["M01", "M19"], "templates": ["template_4th", "impulse_2nd", "scenes_3rd"] },
+    { "id": "CMP_010", "role": "isolated", "modules": ["M19"], "templates": ["template_4th", "impulse_2nd", "scenes_3rd"] },
+    { "id": "INT_020", "role": "isolated", "modules": ["M04"], "templates": ["template_4th", "impulse_2nd", "scenes_3rd"] },
+    { "id": "TMP_020", "role": "isolated", "modules": ["M15"], "templates": ["scenes_3rd"] },
+    { "id": "EFF_010", "role": "isolated", "modules": ["M10"], "templates": ["template_4th", "impulse_2nd"] },
+    { "id": "EFF_020", "role": "isolated", "modules": ["M11"], "templates": ["template_4th"] },
+    { "id": "EFF_040", "role": "isolated", "modules": ["M12"], "templates": ["scenes_3rd"] },
+    { "id": "EFF_041", "role": "isolated", "modules": ["M12"], "templates": ["scenes_3rd"] },
+    { "id": "EFF_050", "role": "isolated", "modules": ["M13"], "templates": ["scenes_3rd"] },
+    { "id": "EFF_060", "role": "isolated", "modules": ["M14"], "templates": ["scenes_3rd"] },
+    { "id": "TXT_010", "role": "isolated", "modules": ["M05", "M06"], "templates": ["template_4th"] },
+    { "id": "TXT_020", "role": "isolated", "modules": ["M05", "M06"], "templates": ["template_4th", "scenes_3rd"] },
+    { "id": "TXT_030", "role": "isolated", "modules": ["M05", "M07"], "templates": ["impulse_2nd"] },
+    { "id": "TXT_040", "role": "isolated", "modules": ["M08", "M09"], "templates": ["impulse_2nd"] },
+    { "id": "STK_010", "role": "composed_stack", "modules": ["M10", "M19"], "templates": ["template_4th", "impulse_2nd"] },
+    { "id": "STK_030", "role": "template_frame", "modules": ["M12", "M13", "M14", "M15", "M16", "M19"], "templates": ["scenes_3rd"] },
+    { "id": "STK_031", "role": "composed_stack", "modules": ["M12", "M16", "M19"], "templates": ["scenes_3rd"] },
+    { "id": "ADJ_040", "role": "composed_stack", "modules": ["M12", "M16", "M19"], "templates": ["scenes_3rd"] },
+    { "id": "GPH_010", "role": "template_frame", "modules": ["M17", "M05", "M19"], "templates": ["template_4th", "impulse_2nd"] }
+  ],
+  "template_dashboards": {
+    "template_4th": ["PRI_010", "CMP_010", "INT_020", "EFF_010", "EFF_020", "TXT_010", "TXT_020", "STK_010", "GPH_010"],
+    "impulse_2nd": ["PRI_010", "CMP_010", "INT_020", "EFF_010", "TXT_030", "TXT_040", "STK_010", "GPH_010"],
+    "scenes_3rd": ["PRI_010", "CMP_010", "INT_020", "TMP_020", "EFF_040", "EFF_041", "EFF_050", "EFF_060", "TXT_020", "STK_030", "STK_031", "ADJ_040"]
+  }
+}

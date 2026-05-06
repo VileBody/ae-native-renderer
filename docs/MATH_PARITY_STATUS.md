@@ -65,7 +65,7 @@ nearby AE math backlog. Template status is derived from this table.
 | `M11` | Glow | `instrumented/testable` | `template_4th` | Effect module, typed/numbered params, unit tests, effects conformance scaffold, time-aware params, straight-RGBA alpha-policy sidecar, threshold/blurred/scaled/final alpha stats, Frida-confirmed Glow radius route `IR_GaussianBlur(radius * 0.4)`, and native separable Gaussian approximation for the Glow blur stage. | Remaining work is effect-local Glow formula tuning: exact ImageRenderer recursive Gaussian coefficients/edge policy, `Glow Based On` default/enum threshold source, intensity clamp, and final IR composite/blend route. |
 | `M12` | Geometry2 | `reverse implemented (isolated sampler/matrix)` | `scenes_3rd` | Adjustment effect module with transform-like params, time-varying scalar support, matrix/sample debug data, adjustment-stack debug sidecars, isolated coordinate-field edge probe, integer pixel-center evidence, Frida CPU-path trace (`Transform.aex+0x5f30`), wrapper ABI trace (`Transform.aex+0x5b20`), confirmed `0012` Sampling mapping (`1` bilinear, `2` bicubic), fitted `0012=2` Keys cubic kernel (`a=-0.7`), AE-TIFF raw alpha loader, alpha-aware premultiplied-sample/unpremultiply wrapper, and durable `EFF_041` AE/native gate with primary visible RGB mean `0.043613`. | Keep Geometry2 matrix/sampling frozen; composed adjustment-layer residuals now route through `M16`, not M12 retuning. |
 | `M13` | Minimax | `instrumented/testable` | `scenes_3rd` | Effect module with AE operation/channel/direction enum surface, time-aware radius, AE discriminator probe for fractional radius/direction/channel/edge behavior, native `Don't Shrink Edges` edge policy, and stable isolated gate `EFF_050` primary visible RGB mean `0.073972`. | Commit durable goldens if needed, add deep internal-alpha edge probe, then GPU/CPU path parity only if template evidence shows divergence. |
-| `M14` | Turbulent Displace | `instrumented/testable` | `scenes_3rd` | Deterministic sine/noise displacement approximation, time-varying evolution param support, AE-wrapper telemetry from Ghidra for internal mode, `FracAll`/`Frac1D` path, fixed16 slots, complexity split, H/V lookup sizes, and adjustment-stack field sidecars. | Replace the approximate field with the recovered two-path AE-shaped state model, verify property indices `8/9/10/14`, add lookup hashes, then tune noise/evolution/octaves against AE field goldens. |
+| `M14` | Turbulent Displace | `instrumented/testable` | `scenes_3rd` | Deterministic sine/noise displacement approximation, time-varying evolution param support, AE-wrapper telemetry from Ghidra for internal mode, `FracAll`/`Frac1D` path, fixed16 amount/size/offset/evolution plus `0008` cycle evolution, `0009` cycle revolutions, `0010` random seed, `0014` antialiasing, complexity split, H/V lookup sizes, adjustment-stack field sidecars, and fresh round5 vector comparison (`mean_vector_error=13.700092`). | Replace the Python mirror with Rust field-sample export, then fit type-1 noise basis/origin before amount/size/displacement branch/evolution tuning. |
 | `M15` | Posterize Time true temporal behavior | `instrumented/testable` | `scenes_3rd` | Posterize Time quantizes layer/source/effect time above stateless canvas effects, including adjustment-layer lower-stack resampling; temporal telemetry includes source-frame quantization policy/time/subframe. Post-M16 batch keeps `TMP_020` exact and `STK_030` temporal contract green. | Add only boundary-stress AE micro-scenes if future payloads expose bucket-edge drift; current `STK_030` residual is not a Posterize blocker. |
 | `M16` | Adjustment layer pipeline and effect-stack order | `reverse implemented (Geometry2 origin routing)` | `scenes_3rd` | Adjustment layers apply known effects to accumulated canvas; per-effect input/output hashes, bucket/live param times, and Geometry2/Minimax/Turbulent debug checkpoints are logged for adjustment stacks. `ADJ_010..052` isolate the canvas contract. Geometry2-on-adjustment now forces comp/adjustment origin `(0,0)` instead of alpha-bounds origin: `STK_031` primary visible RGB mean dropped from `8.511274` to `0.032308`, and `ADJ_040` from `20.167969` to `0.087540`. | Keep this origin routing locked; route remaining `STK_030` residuals to `M13`/`M14`/`M15` and only revisit M16 for new effect classes or non-normal adjustment semantics. |
 | `M17` | Collapse transformations / text precomp graph | `instrumented/testable` | payload structure for `template_4th`, `impulse_2nd`; future nested cases | Nested graph validation, cycle detection, text/solid-only collapse, parent matrix composition, scale-aware collapsed text rasterization, collapse micro-scene scaffold. | AE collapsed/rasterized pair goldens, vector/text deferred-raster telemetry, wider nested-case coverage. |
@@ -84,6 +84,29 @@ Observed from the current imported scene snapshots in
 | `template_4th` | `M01`, `M02`, `M03`, `M04`, `M05`, `M06`, `M10`, `M11`, `M17`, `M19` | `implemented approximate` | All observed core modules exist natively. The weakest used modules are text/glyph layout, Range Selector reveal, transform/composite, and final AE effect tuning. `M10`/`M11` already have scaffolding, but no AE goldens. |
 | `impulse_2nd` | `M01`, `M02`, `M03`, `M04`, `M05`, `M07`, `M08`, `M10`, `M17`, `M19` | `implemented approximate` | Native output covers the observed feature set, but glyph animator math, generated bounce selector, blur animator, Drop Shadow, and compositing are still approximations without AE telemetry/goldens. |
 | `scenes_3rd` | `M01`, `M02`, `M03`, `M04`, `M05`, `M06`, `M09`, `M12`, `M13`, `M14`, `M15`, `M16`, `M19` | `implemented approximate` | All observed modules now have native behavior. The template is still below formula tuning because Posterize Time, Geometry2, Minimax, Turbulent Displace, adjustment ordering, expression motion, and compositing need AE telemetry/goldens. |
+
+## Master Gate Snapshot
+
+The current master gate policy is tracked in:
+
+```text
+fixtures/ae_conformance_pack/master_gate_policy.json
+docs/MASTER_CONFORMANCE_GATE.md
+```
+
+Latest run:
+
+```text
+target/ae_agents/p0_master_gate_m14_20260506/dashboard.md
+```
+
+Current dashboard:
+
+| Template | Gate status | Notes |
+| --- | --- | --- |
+| `template_4th` | `approximate` | Text/layout, Glow, Drop Shadow, collapse/text graph remain formula-tuning candidates. |
+| `impulse_2nd` | `approximate` | Point-Light glyph animator, expression selector, and Drop Shadow remain approximate. |
+| `scenes_3rd` | `approximate` | `TMP_020` is accepted; `STK_030` is still dominated by Turbulent Displace field parity. |
 
 ### Step 1 Component Passport
 
