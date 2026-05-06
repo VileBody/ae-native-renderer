@@ -1,6 +1,7 @@
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use media_gst::{VideoSink, VideoSource};
+use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fs::{self, File};
@@ -148,6 +149,12 @@ enum Command {
         threshold_max: Option<u8>,
         #[arg(long)]
         fail_on_diff: bool,
+    },
+    TurbulentSamples {
+        #[arg(long)]
+        request: PathBuf,
+        #[arg(long)]
+        out: Option<PathBuf>,
     },
     Job {
         #[arg(long)]
@@ -371,6 +378,9 @@ fn run() -> Result<(), CliExit> {
                 Ok(())
             }
         }
+        Command::TurbulentSamples { request, out } => {
+            turbulent_samples(request, out).map_err(CliExit::render)
+        }
         Command::Job {
             job_dir,
             payload,
@@ -403,6 +413,128 @@ fn run() -> Result<(), CliExit> {
             Ok(())
         }
     }
+}
+
+#[derive(Debug, Deserialize)]
+struct TurbulentSamplesRequest {
+    #[serde(default)]
+    schema: Option<String>,
+    width: u32,
+    height: u32,
+    frames: Vec<TurbulentSamplesFrameRequest>,
+}
+
+#[derive(Debug, Deserialize)]
+struct TurbulentSamplesFrameRequest {
+    #[serde(default)]
+    case_id: Option<String>,
+    frame: u32,
+    time: f64,
+    #[serde(default)]
+    params: Value,
+    points: Vec<[u32; 2]>,
+}
+
+fn turbulent_samples(request: PathBuf, out: Option<PathBuf>) -> anyhow::Result<()> {
+    let raw = fs::read_to_string(&request)
+        .with_context(|| format!("reading turbulent sample request {}", request.display()))?;
+    let parsed: TurbulentSamplesRequest =
+        serde_json::from_str(&raw).with_context(|| format!("parsing {}", request.display()))?;
+    anyhow::ensure!(parsed.width > 0, "turbulent sample width must be positive");
+    anyhow::ensure!(
+        parsed.height > 0,
+        "turbulent sample height must be positive"
+    );
+
+    let input = raster_cpu::Canvas::transparent(parsed.width, parsed.height);
+    let mut frames = Vec::with_capacity(parsed.frames.len());
+    for frame in parsed.frames {
+        let resolved = effects::turbulent_displace::turbulent_displace_resolved_params_for_input(
+            &input,
+            &frame.params,
+            frame.time,
+        );
+        let samples = effects::turbulent_displace::turbulent_displace_field_samples(
+            &input,
+            &frame.params,
+            frame.time,
+            &frame.points,
+        );
+        frames.push(json!({
+            "case_id": frame.case_id,
+            "frame": frame.frame,
+            "time": frame.time,
+            "params": frame.params,
+            "resolved": turbulent_resolved_params_json(resolved),
+            "sampler_mode": "nearest_round",
+            "sample_count": samples.len(),
+            "samples": samples.into_iter().map(turbulent_sample_json).collect::<Vec<_>>()
+        }));
+    }
+
+    let response = json!({
+        "schema": "ae-native-renderer.turbulent-native-samples.v1",
+        "request_schema": parsed.schema,
+        "width": parsed.width,
+        "height": parsed.height,
+        "frames": frames
+    });
+    let text = serde_json::to_string_pretty(&response)? + "\n";
+    if let Some(out) = out {
+        if let Some(parent) = out.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        fs::write(&out, text)?;
+        println!(
+            "turbulent-samples.done frames={} out={}",
+            response["frames"].as_array().map_or(0, Vec::len),
+            out.display()
+        );
+    } else {
+        print!("{text}");
+    }
+    Ok(())
+}
+
+fn turbulent_resolved_params_json(
+    resolved: effects::turbulent_displace::TurbulentDisplaceResolvedParams,
+) -> Value {
+    json!({
+        "displacement_type": resolved.displacement_type,
+        "amount": resolved.amount,
+        "size": resolved.size,
+        "offset": resolved.offset,
+        "complexity": resolved.complexity,
+        "evolution": resolved.evolution,
+        "cycle_evolution": resolved.cycle_evolution,
+        "cycle_revolutions": resolved.cycle_revolutions,
+        "random_seed": resolved.random_seed,
+        "antialiasing_best_quality": resolved.antialiasing_best_quality,
+        "pinning": resolved.pinning,
+        "resize_layer": resolved.resize_layer,
+        "amplitude": resolved.amplitude,
+        "phase_radians": resolved.phase_radians
+    })
+}
+
+fn turbulent_sample_json(
+    sample: effects::turbulent_displace::TurbulentDisplaceFieldSample,
+) -> Value {
+    let sampled_displacement = sample.sample_xy.map(|[sx, sy]| {
+        [
+            sx as i64 - sample.output_xy[0] as i64,
+            sy as i64 - sample.output_xy[1] as i64,
+        ]
+    });
+    json!({
+        "output_xy": sample.output_xy,
+        "noise": sample.noise,
+        "displacement": sample.displacement,
+        "source_uv": sample.source_uv,
+        "sample_xy": sample.sample_xy,
+        "sampled_displacement": sampled_displacement,
+        "out_of_bounds": sample.out_of_bounds
+    })
 }
 
 fn doctor() -> anyhow::Result<()> {

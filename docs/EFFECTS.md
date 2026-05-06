@@ -6,7 +6,7 @@ Initial first-party AE matchName support:
 ADBE Drop Shadow       approximate
 ADBE Glo2              approximate with traced radius route + native Gaussian blur
 ADBE Box Blur2         approximate
-ADBE Turbulent Displace approximate
+ADBE Turbulent Displace approximate with Rust-backed vector fit v1
 ADBE Posterize Time     temporal quantization in render-core
 ADBE Geometry2          approximate
 ADBE Minimax            approximate
@@ -68,17 +68,26 @@ window samples transparent black outside image bounds; with `0005 = 1`, the
 window clips to image bounds. `minimax_debug_trace` reports the resolved edge
 policy for stack telemetry.
 
-`ADBE Turbulent Displace` is still rendered by the deterministic native
-approximation, but its field telemetry now includes an AE-wrapper contract block
-from the Ghidra pass: inferred internal displacement mode, kernel path
-(`FracAll` vs `Frac1D`), fixed16 amount/size/offset/evolution, complexity
-integer/fraction split, H/V lookup lengths, and the previously missing control
-slots `0008`/`0009`/`0010`/`0014`. `0008` cycle evolution and `0009` cycle
-revolutions are recorded but do not yet change the native sine field. This is
-instrumentation for formula replacement/tuning, not a parity claim. The exact
-vector/sampler math is blocked by hidden `TurbulentDisplaceFracAllKernel` and
-`TurbulentDisplaceFrac1DKernel`; replacement work must use kernel extraction or
-coordinate-field probes, not final PNG pixels.
+`ADBE Turbulent Displace` is still approximate, but it is now in formula tuning
+rather than telemetry-only mode. Its field telemetry includes the AE-wrapper
+contract block from the Ghidra pass: inferred internal displacement mode, kernel
+path (`FracAll` vs `Frac1D`), fixed16 amount/size/offset/evolution, complexity
+integer/fraction split, H/V lookup lengths, and control slots
+`0008`/`0009`/`0010`/`0014`. The render path resolves missing `0004` Offset
+(Turbulence) to the input center, matching AE defaults, and the vector harness
+can now call `render-cli turbulent-samples` to export arbitrary Rust-native
+field samples for AE comparison.
+
+The current field model is `native_sine_turbulence_fit_v1`. It is a fitted
+native approximation, not a parity lock: Round 5 vector error improved from
+`13.700092` to `11.129620`, isolated `EFF_060` primary visible mean improved
+from `2.898929` to `1.424711`, and composed `STK_030` improved from `3.741755`
+to `3.424827` with zero master-gate regressions. `0008` cycle evolution and
+`0009` cycle revolutions are still recorded but do not yet alter the sine field.
+The exact vector/sampler math remains hidden behind
+`TurbulentDisplaceFracAllKernel` and `TurbulentDisplaceFrac1DKernel`; next
+tuning passes should continue from coordinate-field vectors, not final PNG
+pixels.
 
 ## Production/perf manifest
 
@@ -109,4 +118,4 @@ coordinate-field probes, not final PNG pixels.
 4. `ADBE Minimax` — AE enum/channel/direction/radius edge surface with remaining GPU/CPU and deep alpha probes.
 5. `ADBE Posterize Time` — temporal frame quantization above canvas effects.
 6. `ADBE Geometry2` — transform-like adjustment effect.
-7. `ADBE Turbulent Displace` — deterministic sine/noise displacement approximation with AE control slots and AE-wrapper telemetry for the recovered two-kernel contract.
+7. `ADBE Turbulent Displace` — Rust-sampled sine/noise displacement approximation with AE control slots, AE-wrapper telemetry, and fitted type-1 field constants.

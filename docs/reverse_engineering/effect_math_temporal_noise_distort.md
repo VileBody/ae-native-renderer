@@ -402,10 +402,10 @@ a simple axis swap or sign error.
      kernel shape.
 3. For Minimax, add impulse/ramp telemetry to choose neighborhood shape and
    edge policy before changing composed `EFF_050` behavior.
-4. For Turbulent Displace, expose a Rust/native vector telemetry CLI/API for
-   arbitrary sample points so AE decoded coordinate-field JSON can be compared
-   without maintaining Python mirrors.
-5. Fit Turbulent in this order:
+4. For Turbulent Displace, keep using `render-cli turbulent-samples` for
+   arbitrary-point Rust/native vector telemetry so AE decoded coordinate-field
+   JSON is compared against the real Rust implementation.
+5. Continue fitting Turbulent in this order:
    - sampler/pixel-center using `TD_SAMPLER_CHECK_*`;
    - amount scale/sign using `TD_AMOUNT_SWEEP_A010/A045/A100`;
    - size/frequency/origin using `TD_SIZE_SWEEP_*` and offset variants;

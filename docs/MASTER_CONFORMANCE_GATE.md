@@ -64,7 +64,7 @@ Outputs:
 Latest run:
 
 ```text
-target/ae_agents/p0_master_gate_m14_20260506/dashboard.md
+target/ae_agents/m14_sine_fit_v1_gate_20260506/dashboard.md
 ```
 
 Summary:
@@ -88,8 +88,8 @@ Notable module cases:
 
 ```text
 TMP_020 accepted, primary=0.000000
-EFF_060 approximate, primary=2.898929
-STK_030 approximate, primary=3.741755
+EFF_060 approximate, primary=1.424711
+STK_030 approximate, primary=3.424827
 EFF_050 approximate, primary=0.073972
 EFF_041 approximate, primary=0.043613
 ```

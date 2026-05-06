@@ -1,14 +1,9 @@
 #!/usr/bin/env python3
-"""Compare AE Turbulent Displace vector measurements to the native field model.
+"""Compare AE Turbulent Displace vector measurements to native field samples.
 
-This is a fitting/reporting harness, not a formula tuning patch. The native
-model below mirrors the current Rust implementation in
-`crates/effects/src/turbulent_displace.rs` so Round 5 AE measurements can be
-compared sample-by-sample without changing the effects crate.
-
-TODO: replace this Python mirror with a small native telemetry CLI/API that can
-emit arbitrary sample points from the Rust field model. Keeping the mirror here
-is deliberately scoped to measurement plumbing.
+The preferred path reads samples exported by `render-cli turbulent-samples`, so
+the comparison uses the same Rust code as rendering. The Python mirror remains
+only as a fallback for older reports and request-building utilities.
 """
 
 from __future__ import annotations
@@ -18,7 +13,7 @@ import csv
 import json
 import math
 import re
-from dataclasses import dataclass, asdict
+from dataclasses import asdict, dataclass
 from pathlib import Path
 from statistics import mean
 from typing import Any
@@ -53,6 +48,12 @@ SIGNED_PERMUTATION_CANDIDATES = [
     ("rot90_cw", [[0.0, 1.0], [-1.0, 0.0]]),
     ("swap_xy_flip_xy", [[0.0, -1.0], [-1.0, 0.0]]),
 ]
+
+TURBULENT_AMOUNT_SCALE = 0.050_208_46
+TURBULENT_COORD_SCALE = 4.188_871
+TURBULENT_NOISE_X_OFFSET = (-56.839_57, -17.358_797)
+TURBULENT_NOISE_Y_OFFSET = (23.922_977, -20.261_85)
+TURBULENT_NOISE_Y_PHASE = -2.724_936_9
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,9 @@ class NativeSample:
         x, y = self.output_xy
         sx, sy = self.sample_xy
         return float(sx - x), float(sy - y)
+
+
+NativeSampleMap = dict[tuple[str, int, int, int], dict[str, Any]]
 
 
 def clamp(value: float, lo: float, hi: float) -> float:
@@ -210,7 +214,7 @@ def resolve_params(params: FieldParams) -> ResolvedParams:
         random_seed=random_seed,
         pinning=int(clamp(round_away_from_zero(params.pinning), 0.0, 17.0)),
         resize_layer=params.resize_layer,
-        amplitude=amount * 0.25,
+        amplitude=amount * TURBULENT_AMOUNT_SCALE,
         phase_radians=phase_radians,
     )
 
@@ -235,19 +239,19 @@ def turbulence(x: float, y: float, phase: float, octaves: int) -> float:
 
 def field_noise(resolved: ResolvedParams, x: int, y: int) -> tuple[float, float]:
     seed = float(resolved.random_seed)
-    nx = (float(x) - resolved.offset[0]) / resolved.size
-    ny = (float(y) - resolved.offset[1]) / resolved.size
+    nx = (float(x) - resolved.offset[0]) / (resolved.size * TURBULENT_COORD_SCALE)
+    ny = (float(y) - resolved.offset[1]) / (resolved.size * TURBULENT_COORD_SCALE)
     return (
         turbulence(
-            nx + 17.0 + seed * 0.137,
-            ny + seed * 0.071,
+            nx + TURBULENT_NOISE_X_OFFSET[0] + seed * 0.137,
+            ny + TURBULENT_NOISE_X_OFFSET[1] + seed * 0.071,
             resolved.phase_radians,
             resolved.complexity,
         ),
         turbulence(
-            nx + seed * 0.113,
-            ny + 29.0 + seed * 0.193,
-            resolved.phase_radians + 1.7,
+            nx + TURBULENT_NOISE_Y_OFFSET[0] + seed * 0.113,
+            ny + TURBULENT_NOISE_Y_OFFSET[1] + seed * 0.193,
+            resolved.phase_radians + TURBULENT_NOISE_Y_PHASE,
             resolved.complexity,
         ),
     )
@@ -329,6 +333,54 @@ def native_sample(params: FieldParams, x: int, y: int) -> NativeSample:
         sample_xy=sample_xy,
         out_of_bounds=out_of_bounds,
     )
+
+
+def load_native_samples(path: Path | None) -> NativeSampleMap | None:
+    if path is None:
+        return None
+    report = json.loads(path.read_text())
+    samples: NativeSampleMap = {}
+    for frame in report.get("frames", []):
+        case_id = str(frame.get("case_id"))
+        frame_number = int(frame["frame"])
+        for sample in frame.get("samples", []):
+            x, y = sample["output_xy"]
+            samples[(case_id, frame_number, int(x), int(y))] = sample
+    return samples
+
+
+def native_sample_from_map(
+    native_samples: NativeSampleMap | None,
+    case_id: str,
+    frame: int,
+    x: int,
+    y: int,
+) -> dict[str, Any] | None:
+    if native_samples is None:
+        return None
+    return native_samples.get((case_id, frame, x, y))
+
+
+def native_sampled_displacement(
+    rust_sample: dict[str, Any] | None,
+    fallback_sample: NativeSample,
+) -> tuple[float, float] | None:
+    if rust_sample is None:
+        return fallback_sample.sampled_displacement
+    value = rust_sample.get("sampled_displacement")
+    if value is None:
+        return None
+    return float(value[0]), float(value[1])
+
+
+def native_field_displacement(
+    rust_sample: dict[str, Any] | None,
+    fallback_sample: NativeSample,
+) -> tuple[float, float]:
+    if rust_sample is None:
+        return fallback_sample.displacement
+    value = rust_sample.get("displacement") or [0.0, 0.0]
+    return float(value[0]), float(value[1])
 
 
 def case_params(case_id: str, frame: int) -> tuple[FieldParams | None, list[str]]:
@@ -421,6 +473,7 @@ def compare_frame(
     frame: dict[str, Any],
     samples: list[dict[str, Any]],
     include_parity_mismatches: bool,
+    native_samples: NativeSampleMap | None,
 ) -> dict[str, Any]:
     frame_number = int(frame["frame"])
     params, notes = case_params(case_id, frame_number)
@@ -450,7 +503,8 @@ def compare_frame(
         x = int(sample["output_x"])
         y = int(sample["output_y"])
         native = native_sample(params, x, y)
-        native_dxdy = native.sampled_displacement
+        rust_native = native_sample_from_map(native_samples, case_id, frame_number, x, y)
+        native_dxdy = native_sampled_displacement(rust_native, native)
         if native_dxdy is None:
             skipped_native_oob += 1
             continue
@@ -490,8 +544,8 @@ def compare_frame(
                 "ae_dy": ae_dy,
                 "native_sample_dx": native_dx,
                 "native_sample_dy": native_dy,
-                "native_field_dx": native.displacement[0],
-                "native_field_dy": native.displacement[1],
+                "native_field_dx": native_field_displacement(rust_native, native)[0],
+                "native_field_dy": native_field_displacement(rust_native, native)[1],
                 "vector_error": row["vector_error"],
                 "parity_match": bool(sample.get("parity_match", True)),
             }
@@ -560,6 +614,7 @@ def compare_measurements(
     args: argparse.Namespace,
 ) -> dict[str, Any]:
     measurements = json.loads(measurements_path.read_text())
+    native_samples = load_native_samples(args.native_samples)
     case_results = []
     for case in select_cases(measurements, args):
         case_id = case["case_id"]
@@ -571,6 +626,7 @@ def compare_measurements(
                     frame,
                     samples,
                     include_parity_mismatches=args.include_parity_mismatches,
+                    native_samples=native_samples,
                 )
             )
 
@@ -579,11 +635,19 @@ def compare_measurements(
         "schema": "ae-native-renderer.turbulent-native-vector-comparison.v2",
         "measurements": str(measurements_path),
         "native_model": {
-            "source": "Python mirror of crates/effects/src/turbulent_displace.rs",
+            "source": (
+                f"Rust render-cli turbulent-samples: {args.native_samples}"
+                if args.native_samples
+                else "Python mirror of crates/effects/src/turbulent_displace.rs"
+            ),
             "sampler": "nearest_round",
             "comparison_vector": "native sampled source offset vs AE decoded source offset",
             "analysis": "signed permutation scan tests axis swap/flip hypotheses without formula tuning",
-            "todo": "Replace mirror with an exported Rust telemetry API/CLI for arbitrary sample points.",
+            "todo": (
+                "Native Rust sample export is active for this report."
+                if args.native_samples
+                else "Pass --native-samples from export_turbulent_native_samples.py to remove the Python mirror."
+            ),
         },
         "selection": "all" if args.all_cases else [case["case_id"] for case in select_cases(measurements, args)],
         "include_parity_mismatches": args.include_parity_mismatches,
@@ -1015,6 +1079,12 @@ def main() -> None:
         type=Path,
         default=None,
         help="Optional flat CSV output with case metrics and signed-basis scan winners.",
+    )
+    parser.add_argument(
+        "--native-samples",
+        type=Path,
+        default=None,
+        help="Optional render-cli turbulent-samples JSON. When present, Python does not mirror native sample math.",
     )
     args = parser.parse_args()
 

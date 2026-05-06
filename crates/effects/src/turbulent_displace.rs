@@ -17,7 +17,7 @@ impl Effect for TurbulentDisplace {
         params: &Value,
     ) -> anyhow::Result<Canvas> {
         let params = TurbulentDisplaceParams::from_json(params, ctx.time);
-        let resolved = params.resolved();
+        let resolved = params.resolved_for_input(input);
         if resolved.amount <= f32::EPSILON || input.width == 0 || input.height == 0 {
             return Ok(input.clone());
         }
@@ -32,6 +32,7 @@ pub(crate) struct TurbulentDisplaceParams {
     pub amount: f32,
     pub size: f32,
     pub offset: [f32; 2],
+    pub offset_is_default: bool,
     pub complexity: f32,
     pub evolution: f32,
     pub cycle_evolution: bool,
@@ -134,6 +135,16 @@ struct TurbulentDisplaceFieldVector {
 
 impl TurbulentDisplaceParams {
     pub(crate) fn from_json(params: &Value, time: f64) -> Self {
+        let offset = param_point_any_optional(
+            params,
+            &[
+                "offset",
+                "Offset",
+                "Offset (Turbulence)",
+                "offset_turbulence",
+                "0004",
+            ],
+        );
         Self {
             displacement_type: param_f32_any(
                 params,
@@ -142,17 +153,8 @@ impl TurbulentDisplaceParams {
             ),
             amount: param_f32_any(params, &["amount", "Amount", "0002"], 0.0),
             size: param_f32_any(params, &["size", "Size", "0003"], 100.0),
-            offset: param_point_any(
-                params,
-                &[
-                    "offset",
-                    "Offset",
-                    "Offset (Turbulence)",
-                    "offset_turbulence",
-                    "0004",
-                ],
-                [0.0, 0.0],
-            ),
+            offset: offset.unwrap_or([0.0, 0.0]),
+            offset_is_default: offset.is_none(),
             complexity: param_f32_any(params, &["complexity", "Complexity", "0005"], 2.0),
             evolution: param_f32_at_any(
                 params,
@@ -202,21 +204,36 @@ impl TurbulentDisplaceParams {
     }
 
     fn resolved(self) -> TurbulentDisplaceResolvedParams {
-        map_params_to_field_model(self)
+        map_params_to_field_model(self, None)
+    }
+
+    fn resolved_for_input(self, input: &Canvas) -> TurbulentDisplaceResolvedParams {
+        map_params_to_field_model(
+            self,
+            Some([input.width as f32 * 0.5, input.height as f32 * 0.5]),
+        )
     }
 }
 
-fn map_params_to_field_model(params: TurbulentDisplaceParams) -> TurbulentDisplaceResolvedParams {
+fn map_params_to_field_model(
+    params: TurbulentDisplaceParams,
+    default_offset: Option<[f32; 2]>,
+) -> TurbulentDisplaceResolvedParams {
     let amount = params.amount.clamp(0.0, 200.0);
     let size = params.size.clamp(2.0, 1000.0);
     let complexity = params.complexity.round().clamp(1.0, 6.0) as u32;
     let random_seed = params.random_seed.round().clamp(0.0, u32::MAX as f32) as u32;
     let phase_radians = params.evolution.to_radians() + seed_phase(random_seed);
+    let offset = if params.offset_is_default {
+        default_offset.unwrap_or(params.offset)
+    } else {
+        params.offset
+    };
     TurbulentDisplaceResolvedParams {
         displacement_type: params.displacement_type.round().clamp(1.0, 9.0) as u32,
         amount,
         size,
-        offset: params.offset,
+        offset,
         complexity,
         evolution: params.evolution,
         cycle_evolution: params.cycle_evolution,
@@ -225,12 +242,12 @@ fn map_params_to_field_model(params: TurbulentDisplaceParams) -> TurbulentDispla
         antialiasing_best_quality: params.antialiasing_best_quality,
         pinning: params.pinning.round().clamp(0.0, 17.0) as u32,
         resize_layer: params.resize_layer,
-        amplitude: amount * 0.25,
+        amplitude: amount * TURBULENT_AMOUNT_SCALE,
         phase_radians,
     }
 }
 
-fn param_point_any(params: &Value, names: &[&str], default: [f32; 2]) -> [f32; 2] {
+fn param_point_any_optional(params: &Value, names: &[&str]) -> Option<[f32; 2]> {
     for name in names {
         let Some(value) = param_value(params, name) else {
             continue;
@@ -240,24 +257,24 @@ fn param_point_any(params: &Value, names: &[&str], default: [f32; 2]) -> [f32; 2
                 .first()
                 .and_then(Value::as_f64)
                 .map(|value| value as f32)
-                .unwrap_or(default[0]);
+                .unwrap_or(0.0);
             let y = values
                 .get(1)
                 .and_then(Value::as_f64)
                 .map(|value| value as f32)
-                .unwrap_or(default[1]);
-            return [x, y];
+                .unwrap_or(0.0);
+            return Some([x, y]);
         }
         if let Some(text) = value.as_str() {
             let mut parts = text.split(',').map(str::trim);
             if let (Some(x), Some(y)) = (parts.next(), parts.next()) {
                 if let (Ok(x), Ok(y)) = (x.parse::<f32>(), y.parse::<f32>()) {
-                    return [x, y];
+                    return Some([x, y]);
                 }
             }
         }
     }
-    default
+    None
 }
 
 pub fn turbulent_displace_field_telemetry(
@@ -266,7 +283,7 @@ pub fn turbulent_displace_field_telemetry(
     time: f64,
 ) -> TurbulentDisplaceFieldTelemetry {
     let raw = TurbulentDisplaceParams::from_json(params, time);
-    let resolved = raw.resolved();
+    let resolved = raw.resolved_for_input(input);
     let ae_wrapper = ae_wrapper_telemetry(input, raw);
     let field_state = field_state_telemetry(resolved, ae_wrapper);
     let samples = turbulent_probe_points(input)
@@ -288,12 +305,40 @@ pub fn turbulent_displace_field_telemetry(
     }
 }
 
+pub fn turbulent_displace_resolved_params(
+    params: &Value,
+    time: f64,
+) -> TurbulentDisplaceResolvedParams {
+    TurbulentDisplaceParams::from_json(params, time).resolved()
+}
+
+pub fn turbulent_displace_resolved_params_for_input(
+    input: &Canvas,
+    params: &Value,
+    time: f64,
+) -> TurbulentDisplaceResolvedParams {
+    TurbulentDisplaceParams::from_json(params, time).resolved_for_input(input)
+}
+
+pub fn turbulent_displace_field_samples(
+    input: &Canvas,
+    params: &Value,
+    time: f64,
+    points: &[[u32; 2]],
+) -> Vec<TurbulentDisplaceFieldSample> {
+    let resolved = TurbulentDisplaceParams::from_json(params, time).resolved_for_input(input);
+    points
+        .iter()
+        .map(|&[x, y]| field_sample(input, resolved, x, y))
+        .collect()
+}
+
 fn field_state_telemetry(
     resolved: TurbulentDisplaceResolvedParams,
     ae_wrapper: TurbulentDisplaceAeWrapperTelemetry,
 ) -> TurbulentDisplaceFieldStateTelemetry {
     TurbulentDisplaceFieldStateTelemetry {
-        model: "native_sine_turbulence_approximation",
+        model: "native_sine_turbulence_fit_v1",
         coordinate_space: "output_pixel_to_source_uv",
         dispatch_path: ae_wrapper.kernel_path,
         complexity_octaves: ae_wrapper.complexity_octaves,
@@ -413,19 +458,19 @@ fn field_vector(
 
 fn field_noise(resolved: TurbulentDisplaceResolvedParams, x: u32, y: u32) -> [f32; 2] {
     let seed = resolved.random_seed as f32;
-    let nx = (x as f32 - resolved.offset[0]) / resolved.size;
-    let ny = (y as f32 - resolved.offset[1]) / resolved.size;
+    let nx = (x as f32 - resolved.offset[0]) / (resolved.size * TURBULENT_COORD_SCALE);
+    let ny = (y as f32 - resolved.offset[1]) / (resolved.size * TURBULENT_COORD_SCALE);
     [
         turbulence(
-            nx + 17.0 + seed * 0.137,
-            ny + seed * 0.071,
+            nx + TURBULENT_NOISE_X_OFFSET[0] + seed * 0.137,
+            ny + TURBULENT_NOISE_X_OFFSET[1] + seed * 0.071,
             resolved.phase_radians,
             resolved.complexity,
         ),
         turbulence(
-            nx + seed * 0.113,
-            ny + 29.0 + seed * 0.193,
-            resolved.phase_radians + 1.7,
+            nx + TURBULENT_NOISE_Y_OFFSET[0] + seed * 0.113,
+            ny + TURBULENT_NOISE_Y_OFFSET[1] + seed * 0.193,
+            resolved.phase_radians + TURBULENT_NOISE_Y_PHASE,
             resolved.complexity,
         ),
     ]
@@ -551,6 +596,11 @@ fn field_hash_and_oob(input: &Canvas, resolved: TurbulentDisplaceResolvedParams)
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
 const TURBULENT_SAMPLER_MODE: &str = "nearest_round";
+const TURBULENT_AMOUNT_SCALE: f32 = 0.050_208_46;
+const TURBULENT_COORD_SCALE: f32 = 4.188_871;
+const TURBULENT_NOISE_X_OFFSET: [f32; 2] = [-56.839_57, -17.358_797];
+const TURBULENT_NOISE_Y_OFFSET: [f32; 2] = [23.922_977, -20.261_85];
+const TURBULENT_NOISE_Y_PHASE: f32 = -2.724_936_9;
 
 fn fnv_hash_u32(mut hash: u64, value: u32) -> u64 {
     for byte in value.to_le_bytes() {
@@ -712,7 +762,7 @@ mod tests {
         assert!(!telemetry.resolved.cycle_evolution);
         assert_eq!(telemetry.resolved.cycle_revolutions, 1.0);
         assert!(telemetry.resolved.antialiasing_best_quality);
-        assert_eq!(telemetry.resolved.amplitude, 4.0);
+        assert_close(telemetry.resolved.amplitude, 16.0 * TURBULENT_AMOUNT_SCALE);
         assert_close(
             telemetry.resolved.phase_radians,
             std::f32::consts::FRAC_PI_2,
@@ -734,10 +784,7 @@ mod tests {
         assert!(telemetry.ae_wrapper.antialiasing_best_quality);
         assert_eq!(telemetry.ae_wrapper.complexity_octaves, 2);
         assert_close(telemetry.ae_wrapper.complexity_fraction, 0.0);
-        assert_eq!(
-            telemetry.field_state.model,
-            "native_sine_turbulence_approximation"
-        );
+        assert_eq!(telemetry.field_state.model, "native_sine_turbulence_fit_v1");
         assert_eq!(
             telemetry.field_state.coordinate_space,
             "output_pixel_to_source_uv"
@@ -781,6 +828,31 @@ mod tests {
         );
         assert_close(center.source_uv[0], 2.0 + center.displacement[0]);
         assert_close(center.source_uv[1], 2.0 + center.displacement[1]);
+    }
+
+    #[test]
+    fn public_field_sample_export_matches_telemetry_samples() {
+        let input = Canvas::transparent(5, 5);
+        let params = json!({
+            "amount": 16,
+            "size": 3,
+            "complexity": 2,
+            "evolution": 90
+        });
+        let points = [[0, 0], [2, 2], [4, 4]];
+
+        let exported = turbulent_displace_field_samples(&input, &params, 0.0, &points);
+        let telemetry = turbulent_displace_field_telemetry(&input, &params, 0.0);
+
+        assert_eq!(exported.len(), points.len());
+        for sample in exported {
+            let expected = telemetry
+                .samples
+                .iter()
+                .find(|candidate| candidate.output_xy == sample.output_xy)
+                .unwrap();
+            assert_eq!(&sample, expected);
+        }
     }
 
     #[test]
@@ -859,6 +931,7 @@ mod tests {
             amount: 999.0,
             size: -12.0,
             offset: [10.0, 20.0],
+            offset_is_default: false,
             complexity: 9.2,
             evolution: 450.0,
             cycle_evolution: true,
@@ -883,7 +956,7 @@ mod tests {
         assert!(!resolved.antialiasing_best_quality);
         assert_eq!(resolved.pinning, 17);
         assert!(resolved.resize_layer);
-        assert_eq!(resolved.amplitude, 50.0);
+        assert_close(resolved.amplitude, 200.0 * TURBULENT_AMOUNT_SCALE);
         assert_close(
             resolved.phase_radians,
             450.0_f32.to_radians() + seed_phase(7),
@@ -981,38 +1054,38 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 0.0,
                 evolution: 0.0,
-                field_hash: 5288378514766893336,
-                out_of_bounds_count: 5233,
-                center_displacement: [10.146056, -0.62947536],
-                center_source_uv: [266.14606, 255.37053],
-                center_sample_xy: [266, 255],
+                field_hash: 17573069606585102633,
+                out_of_bounds_count: 1036,
+                center_displacement: [1.7744263, -1.8303294],
+                center_source_uv: [257.7744, 254.16968],
+                center_sample_xy: [258, 254],
             },
             Eff060TraceSidecarFrame {
                 time: 0.5,
                 evolution: 45.0,
-                field_hash: 8799583953116669421,
-                out_of_bounds_count: 5154,
-                center_displacement: [3.7621496, -8.169911],
-                center_source_uv: [259.76215, 247.8301],
-                center_sample_xy: [260, 248],
+                field_hash: 6515590001883281819,
+                out_of_bounds_count: 997,
+                center_displacement: [0.26686868, -1.8360277],
+                center_source_uv: [256.26688, 254.16397],
+                center_sample_xy: [256, 254],
             },
             Eff060TraceSidecarFrame {
                 time: 1.0,
                 evolution: 90.0,
-                field_hash: 3093366535440662700,
-                out_of_bounds_count: 5183,
-                center_displacement: [-4.8255854, -10.925628],
-                center_source_uv: [251.17441, 245.07437],
-                center_sample_xy: [251, 245],
+                field_hash: 2645535527365077358,
+                out_of_bounds_count: 1033,
+                center_displacement: [-1.3972771, -0.7662003],
+                center_source_uv: [254.60272, 255.2338],
+                center_sample_xy: [255, 255],
             },
             Eff060TraceSidecarFrame {
                 time: 1.5,
                 evolution: 135.0,
-                field_hash: 6881573285027360280,
-                out_of_bounds_count: 5117,
-                center_displacement: [-10.586543, -7.2808738],
-                center_source_uv: [245.41345, 248.71913],
-                center_sample_xy: [245, 249],
+                field_hash: 3185693117918154132,
+                out_of_bounds_count: 1098,
+                center_displacement: [-2.2427146, 0.7524594],
+                center_source_uv: [253.75728, 256.75247],
+                center_sample_xy: [254, 257],
             },
         ];
 
@@ -1022,7 +1095,7 @@ mod tests {
             assert_eq!(telemetry.resolved.amount, 45.0);
             assert_eq!(telemetry.resolved.size, 65.0);
             assert_eq!(telemetry.resolved.complexity, 2);
-            assert_eq!(telemetry.resolved.amplitude, 11.25);
+            assert_close(telemetry.resolved.amplitude, 45.0 * TURBULENT_AMOUNT_SCALE);
             assert_eq!(telemetry.resolved.evolution, expected.evolution);
             assert_eq!(telemetry.sampler_mode, TURBULENT_SAMPLER_MODE);
             assert_eq!(telemetry.edge_policy, "clamp_edges_pinning");
