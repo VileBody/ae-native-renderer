@@ -405,16 +405,16 @@ a simple axis swap or sign error.
 4. For Turbulent Displace, keep using `render-cli turbulent-samples` for
    arbitrary-point Rust/native vector telemetry so AE decoded coordinate-field
    JSON is compared against the real Rust implementation.
-5. Continue fitting Turbulent in this order:
-   - sampler/pixel-center using `TD_SAMPLER_CHECK_*`;
-   - amount scale/sign using `TD_AMOUNT_SWEEP_A010/A045/A100`;
-   - size/frequency/origin using `TD_SIZE_SWEEP_*` and offset variants;
-   - base type-1 noise basis;
-   - complexity octave weights;
-   - evolution period/phase and animated sampling;
-   - seed mapping;
-   - displacement type branches;
-   - pinning/resize/antialiasing.
+5. Continue Turbulent with reverse-first recovery, not metric-only fitting:
+   - trace or dump `TurbulentDisplaceFracAllKernel` and
+     `TurbulentDisplaceFrac1DKernel`;
+   - recover sampler/pixel-center and table lookup/interpolation contract;
+   - recover amount scale/sign and size/frequency/origin from traced params or
+     uniforms;
+   - recover base type-1 noise basis and complexity octave weights;
+   - recover evolution period/phase, cycle behavior, and seed mapping;
+   - recover displacement type branches, pinning, resize, and antialiasing;
+   - use `TD_*` vector cases only to validate the recovered implementation.
 6. Keep stack-level `STK_030` as a regression only after isolated Geometry2,
    Minimax, and Turbulent vectors/params are close. It is too composed for first
    formula fitting.

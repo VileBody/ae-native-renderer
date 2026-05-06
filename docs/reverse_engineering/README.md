@@ -12,7 +12,9 @@ Use this workflow when a native parity blocker needs evidence from AE binaries,
 AE probes, or both. Keep the chain explicit:
 
 ```text
-formula hypothesis
+reverse question
+  -> Frida/Ghidra evidence
+  -> finite formula candidate
   -> fixture or probe case
   -> native unit/conformance test
   -> AE golden PNGs or probe telemetry
@@ -22,6 +24,13 @@ formula hypothesis
 The goal is not to collect interesting disassembly. The goal is to turn one
 small recovered behavior into a deterministic check that another agent can run
 or audit without reopening the same binary.
+
+Reverse-first rule: do not discover formulas by open-ended metric optimization.
+Metrics are acceptance/regression checks after Frida and Ghidra have made the
+candidate formula finite. SDK references and focused probes can support or
+validate the finding, but blocker formulas should not skip the reverse pass. If
+the evidence is not enough to bound the formula, collect more traces instead of
+searching constants.
 
 ## Repository Layout
 
@@ -105,9 +114,11 @@ If a formula becomes canonical, link the phase report from the module doc
 
 ## Formula To Golden Checklist
 
-1. Write the recovered or hypothesized formula in a phase report, including
-   coordinate conventions, units, matrix order, premultiplication/alpha policy,
-   and any inferred signs.
+1. Write the recovered formula or finite evidence-backed candidate in a phase
+   report, including coordinate conventions, units, matrix order,
+   premultiplication/alpha policy, and any inferred signs. Record the Frida and
+   Ghidra artifacts that bound the candidate, plus any supporting SDK/probe
+   artifacts.
 2. Add or identify a minimal fixture that isolates the behavior. Use
    `fixtures/conformance/scenes/*.json` for native micro-scenes, or add a case
    to the AE conformance/probe pack when AE must produce new truth data.
@@ -118,7 +129,8 @@ If a formula becomes canonical, link the phase report from the module doc
    `fixtures/conformance/ae-reference/<case>/` for small checked fixtures, or
    `fixtures/ae_conformance_pack/ae_goldens/png/<case_id>/` for pack cases.
 5. Record the metric outcome and threshold intent. Distinguish "measured" from
-   "enforced": a measured diff proves only that the comparison ran.
+   "enforced": a measured diff proves only that the comparison ran. A lower
+   metric alone does not prove the formula is AE behavior.
 6. Update the phase report with links back to formula, fixture, native test, and
    AE golden paths. A future agent should not need to guess which evidence
    supported the change.

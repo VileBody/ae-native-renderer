@@ -10,6 +10,13 @@ parity locked. The goal was to make the native Rust implementation measurable at
 arbitrary AE probe points, then fit the current sine/noise approximation against
 decoded AE coordinate-field vectors.
 
+Process note: `native_sine_turbulence_fit_v1` is a transitional baseline, not
+the ongoing methodology. Future M14 formula changes must be reverse-first:
+Frida/Ghidra evidence should recover kernel inputs, tables, uniforms, buffer
+layouts, and control flow before constants or branches change. Probes and
+decoded vectors validate the recovered candidate; they are not the discovery
+mechanism.
+
 ## Code Changes
 
 - `render-cli turbulent-samples` accepts a JSON request and exports native
@@ -68,15 +75,18 @@ missing=0
   recovered.
 - `0008` cycle evolution and `0009` cycle revolutions are still telemetry-only
   for the sine model.
-- Continue tuning from decoded vector fields and Rust samples; do not tune this
-  module from final PNG diffs first.
+- Do not continue by optimizing constants against vector or final PNG metrics.
+  Continue by capturing the AE kernel/table contract through Frida/Ghidra
+  evidence, then use decoded vectors and Rust samples to validate it.
 
 ## Next Order
 
-1. Fit the field basis again with displacement type `1` only and split amount
-   zero cases out of aggregate statistics.
-2. Fit amount scale on `A010/A045/A100`.
-3. Fit size/frequency/origin using size and offset sweeps.
-4. Fit seed and evolution phase separately.
-5. Fit complexity octave/fraction behavior.
-6. Fit displacement branches, pinning, resize-layer, and antialiasing.
+1. Trace or dump the `TurbulentDisplaceFracAllKernel` and
+   `TurbulentDisplaceFrac1DKernel` execution path with Frida/Ghidra/coverage.
+2. Recover the field basis/table contract for displacement type `1`: coordinate
+   normalization, offset origin, lookup table layout, interpolation, and sampler.
+3. Recover amount and size units from the traced params/uniforms, then validate
+   on `A010/A045/A100` and size sweeps.
+4. Recover seed and evolution/cycle handling from traced state and table updates.
+5. Recover complexity octave/fraction behavior.
+6. Recover displacement branches, pinning, resize-layer, and antialiasing.

@@ -85,9 +85,10 @@ from `2.898929` to `1.424711`, and composed `STK_030` improved from `3.741755`
 to `3.424827` with zero master-gate regressions. `0008` cycle evolution and
 `0009` cycle revolutions are still recorded but do not yet alter the sine field.
 The exact vector/sampler math remains hidden behind
-`TurbulentDisplaceFracAllKernel` and `TurbulentDisplaceFrac1DKernel`; next
-tuning passes should continue from coordinate-field vectors, not final PNG
-pixels.
+`TurbulentDisplaceFracAllKernel` and `TurbulentDisplaceFrac1DKernel`. Future
+changes must be reverse-first: recover the kernel/table/param contract through
+Frida/Ghidra evidence, then use coordinate-field vectors and master-gate metrics
+only to validate the recovered implementation.
 
 ## Production/perf manifest
 

@@ -1,36 +1,42 @@
 # Module Hypothesis Validation Plans
 
-Status date: 2026-05-05
+Status date: 2026-05-06
 
 This document defines the working process for the remaining math modules after
 the M19 RGBA8 normal-composite lock.
 
-The important rule is finite hypothesis search:
+The important rule is reverse-first finite evidence:
 
 ```text
-recovered evidence -> finite candidate list -> discriminator fixture
+Frida/Ghidra evidence -> finite candidate list -> discriminator fixture
   -> candidate implementation switch -> isolated gate -> composition gate
   -> stack/template gate -> lock or reject
 ```
 
-If a module still has an open-ended formula space, do not tune pixels. Add a
-probe, Ghidra target, SDK reference, or fixture until the candidate list is
-finite.
+If a module still has an open-ended formula space, do not tune pixels and do not
+optimize constants against metrics. Add Frida hooks and Ghidra targets until the
+candidate list is finite; SDK references and focused AE probes are supporting
+evidence, not substitutes for the reverse pass. Metrics only validate or reject
+an evidence-backed candidate; they are not a discovery algorithm.
 
 ## Common Process
 
 Each module should move through the same loop:
 
 1. Name the unresolved question.
-2. Write hypotheses `H1`, `H2`, `H3`, with evidence source and expected output.
-3. Build or select a discriminator fixture that separates those hypotheses.
-4. Add a cheap native candidate switch, preferably local to the module.
-5. Run isolated primitive conformance.
-6. Run the relevant composition case.
-7. Run stack/template smoke only after isolated behavior improves.
-8. Accept the candidate only if telemetry and pixels agree with the same story.
-9. Delete or demote losing candidate code; keep the accepted path and tests.
-10. Update the module status doc with accepted formula, rejected hypotheses, and
+2. Collect static/dynamic evidence first: Ghidra call graph/decompile and Frida
+   args/stack/memory/buffer dumps. Add SDK references or AE probe telemetry only
+   as support/validation.
+3. Write hypotheses `H1`, `H2`, `H3` only when the evidence makes the candidate
+   set finite; include evidence source and expected output.
+4. Build or select a discriminator fixture that separates those hypotheses.
+5. Add a cheap native candidate switch, preferably local to the module.
+6. Run isolated primitive conformance.
+7. Run the relevant composition case.
+8. Run stack/template smoke only after isolated behavior improves.
+9. Accept the candidate only if telemetry and pixels agree with the same story.
+10. Delete or demote losing candidate code; keep the accepted path and tests.
+11. Update the module status doc with accepted formula, rejected hypotheses, and
     remaining scope limits.
 
 ## Shared Preparatory Work

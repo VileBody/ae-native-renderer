@@ -1,6 +1,6 @@
 # Math Contracts / Guardrails
 
-Status date: 2026-05-05
+Status date: 2026-05-06
 
 This is the shared M19 contract for native conformance work. It records the
 locked RGBA8 normal-composite substrate, what remains compatibility-only, and
@@ -13,6 +13,43 @@ Evidence roots:
 - `docs/reverse_engineering/M19_REVERSE_LOCK.md`
 - `docs/phase_reports/AGENT_A_SUBSTRATE_MATH_OBJECTS_20260504.md`
 - `docs/CONFORMANCE.md`
+
+## Reverse-First Formula Policy
+
+All unknown AE math must be closed through static or dynamic AE evidence first,
+with Frida/Ghidra as the default source of truth. WinDbg/TTD, coverage traces,
+SDK/official references, or AE probe artifacts may support the investigation,
+but they do not replace the Frida/Ghidra pass for blocker formulas. Metrics are
+validation and regression signals only. They must not be the primary source of a
+formula.
+
+Forbidden process:
+
+```text
+try constants / search parameter space / optimize final diff
+  -> pick the lowest metric
+  -> call it AE behavior
+```
+
+Allowed process:
+
+```text
+Frida/Ghidra evidence
+  -> recovered args/tables/uniforms/buffers/control flow
+  -> finite candidate formula or exact implementation
+  -> native implementation
+  -> isolated metrics
+  -> composed/template regression gate
+```
+
+If a module still has open-ended formula space, stop formula changes and collect
+the missing evidence instead. A useful evidence packet should answer, as
+applicable: function/module address, call stack, raw AE params, mapped `000n`
+properties, uniforms/constants, lookup tables, input/output buffer layout,
+coordinate units, time sampling, alpha/premult policy, edge/sampler policy, and
+CPU/GPU path. Any metric-driven approximation must remain explicitly labeled as
+temporary approximation and cannot be promoted to `reverse implemented` or
+`parity locked`.
 
 ## Metric Contract
 

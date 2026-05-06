@@ -6,7 +6,7 @@ This document separates two different kinds of work:
 
 ```text
 1. implement missing renderer functionality
-2. tune implemented math until it matches After Effects
+2. recover implemented math from AE evidence until it matches After Effects
 ```
 
 The renderer should be tracked as a set of modules first. A template status is
@@ -25,14 +25,20 @@ template_x status = weakest required module status, plus template-specific AE re
 | `implemented approximate` | The feature works in a controlled subset, but the formula is our approximation. | Add focused unit tests, conformance fixture, and enough debug/telemetry to localize divergence. |
 | `instrumented/testable` | The feature has deterministic probes, fixtures, assertions, or telemetry hooks. AE output is not checked in yet. | Export AE reference frames/telemetry and mark the manifest reference as ready. |
 | `AE golden exists` | AE reference PNGs or telemetry exist with thresholds, but native does not yet pass tightly. | Run diffs, identify first divergent operator, and begin formula changes against those failures. |
-| `formula tuning` | We are changing formulas/parameter mapping/sampling to reduce known AE diffs. | Thresholds pass consistently across micro-scenes and template frames. |
+| `formula tuning` | We are changing formulas/parameter mapping/sampling from reverse/probe evidence, then validating against known AE diffs. | Thresholds pass consistently across micro-scenes and template frames, and the formula source is documented. |
 | `parity locked` | The block passes AE thresholds and release-regression thresholds in CI. | Only intentional threshold changes or new AE fixtures can move this. |
 
 Rules:
 
 - A module cannot skip from `implemented approximate` to `formula tuning`.
-- As of this document date, text layout has sourceRect-based AE telemetry refs.
-  No module is yet `formula tuning` or `parity locked`.
+- Formula changes must follow the reverse-first policy in
+  `docs/reverse_engineering/MATH_CONTRACTS_GUARDRAILS.md`: Frida/Ghidra evidence
+  first, metrics second. SDK/probes support validation; open-ended optimization
+  against final diffs is not a valid promotion path.
+- As of this document date, `M14` is in transitional `formula tuning` because it
+  has Rust-native vector telemetry and a fitted baseline; future M14 changes
+  must recover the AE kernel/table contract through Frida/Ghidra evidence before
+  changing constants.
 - A final-frame PNG diff is useful, but not enough for complex operators.
 - Temporal, glyph, graph, procedural, and coordinate operators need internal
   checkpoints such as sample times, matrices, selector weights, UV fields, or
@@ -65,7 +71,7 @@ nearby AE math backlog. Template status is derived from this table.
 | `M11` | Glow | `instrumented/testable` | `template_4th` | Effect module, typed/numbered params, unit tests, effects conformance scaffold, time-aware params, straight-RGBA alpha-policy sidecar, threshold/blurred/scaled/final alpha stats, Frida-confirmed Glow radius route `IR_GaussianBlur(radius * 0.4)`, and native separable Gaussian approximation for the Glow blur stage. | Remaining work is effect-local Glow formula tuning: exact ImageRenderer recursive Gaussian coefficients/edge policy, `Glow Based On` default/enum threshold source, intensity clamp, and final IR composite/blend route. |
 | `M12` | Geometry2 | `reverse implemented (isolated sampler/matrix)` | `scenes_3rd` | Adjustment effect module with transform-like params, time-varying scalar support, matrix/sample debug data, adjustment-stack debug sidecars, isolated coordinate-field edge probe, integer pixel-center evidence, Frida CPU-path trace (`Transform.aex+0x5f30`), wrapper ABI trace (`Transform.aex+0x5b20`), confirmed `0012` Sampling mapping (`1` bilinear, `2` bicubic), fitted `0012=2` Keys cubic kernel (`a=-0.7`), AE-TIFF raw alpha loader, alpha-aware premultiplied-sample/unpremultiply wrapper, and durable `EFF_041` AE/native gate with primary visible RGB mean `0.043613`. | Keep Geometry2 matrix/sampling frozen; composed adjustment-layer residuals now route through `M16`, not M12 retuning. |
 | `M13` | Minimax | `instrumented/testable` | `scenes_3rd` | Effect module with AE operation/channel/direction enum surface, time-aware radius, AE discriminator probe for fractional radius/direction/channel/edge behavior, native `Don't Shrink Edges` edge policy, and stable isolated gate `EFF_050` primary visible RGB mean `0.073972`. | Commit durable goldens if needed, add deep internal-alpha edge probe, then GPU/CPU path parity only if template evidence shows divergence. |
-| `M14` | Turbulent Displace | `formula tuning` | `scenes_3rd` | Deterministic sine/noise displacement approximation with Rust-native arbitrary-point sample export via `render-cli turbulent-samples`; time-varying evolution param support; AE-wrapper telemetry from Ghidra for internal mode, `FracAll`/`Frac1D` path, fixed16 amount/size/offset/evolution plus `0008` cycle evolution, `0009` cycle revolutions, `0010` random seed, `0014` antialiasing, complexity split, H/V lookup sizes, adjustment-stack field sidecars, AE default offset-center handling, and `native_sine_turbulence_fit_v1`. Round5 Rust vector comparison improved `mean_vector_error=13.700092 -> 11.129620`; master gate has zero regressions. | Continue fitting field basis in Rust, then amount/size/displacement branches, seed/evolution/cycle behavior, complexity octave/fraction behavior, and pinning/resize/antialiasing. Hidden `FracAll`/`Frac1D` kernels are still not parity-recovered. |
+| `M14` | Turbulent Displace | `formula tuning` | `scenes_3rd` | Deterministic sine/noise displacement approximation with Rust-native arbitrary-point sample export via `render-cli turbulent-samples`; time-varying evolution param support; AE-wrapper telemetry from Ghidra for internal mode, `FracAll`/`Frac1D` path, fixed16 amount/size/offset/evolution plus `0008` cycle evolution, `0009` cycle revolutions, `0010` random seed, `0014` antialiasing, complexity split, H/V lookup sizes, adjustment-stack field sidecars, AE default offset-center handling, and `native_sine_turbulence_fit_v1`. Round5 Rust vector comparison improved `mean_vector_error=13.700092 -> 11.129620`; master gate has zero regressions. | Continue with Frida/Ghidra recovery of the hidden `FracAll`/`Frac1D` kernel/table contract, then implement recovered amount/size/displacement branches, seed/evolution/cycle behavior, complexity octave/fraction behavior, and pinning/resize/antialiasing. Do not continue by metric-only fitting. |
 | `M15` | Posterize Time true temporal behavior | `instrumented/testable` | `scenes_3rd` | Posterize Time quantizes layer/source/effect time above stateless canvas effects, including adjustment-layer lower-stack resampling; temporal telemetry includes source-frame quantization policy/time/subframe. Post-M16 batch keeps `TMP_020` exact and `STK_030` temporal contract green. | Add only boundary-stress AE micro-scenes if future payloads expose bucket-edge drift; current `STK_030` residual is not a Posterize blocker. |
 | `M16` | Adjustment layer pipeline and effect-stack order | `reverse implemented (Geometry2 origin routing)` | `scenes_3rd` | Adjustment layers apply known effects to accumulated canvas; per-effect input/output hashes, bucket/live param times, and Geometry2/Minimax/Turbulent debug checkpoints are logged for adjustment stacks. `ADJ_010..052` isolate the canvas contract. Geometry2-on-adjustment now forces comp/adjustment origin `(0,0)` instead of alpha-bounds origin: `STK_031` primary visible RGB mean dropped from `8.511274` to `0.032308`, and `ADJ_040` from `20.167969` to `0.087540`. | Keep this origin routing locked; route remaining `STK_030` residuals to `M13`/`M14`/`M15` and only revisit M16 for new effect classes or non-normal adjustment semantics. |
 | `M17` | Collapse transformations / text precomp graph | `instrumented/testable` | payload structure for `template_4th`, `impulse_2nd`; future nested cases | Nested graph validation, cycle detection, text/solid-only collapse, parent matrix composition, scale-aware collapsed text rasterization, collapse micro-scene scaffold. | AE collapsed/rasterized pair goldens, vector/text deferred-raster telemetry, wider nested-case coverage. |
