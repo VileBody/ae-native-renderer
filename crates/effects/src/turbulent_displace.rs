@@ -1,5 +1,5 @@
 use crate::{param_bool_any, param_f32_any, param_f32_at_any, param_value, Effect, EffectContext};
-use raster_cpu::Canvas;
+use raster_cpu::{BilinearSampler, Canvas, Sampler};
 use serde_json::Value;
 
 #[derive(Debug, Default)]
@@ -105,6 +105,7 @@ pub struct TurbulentDisplaceResolvedParams {
     pub size: f32,
     pub offset: [f32; 2],
     pub complexity: u32,
+    pub complexity_fraction: f32,
     pub evolution: f32,
     pub cycle_evolution: bool,
     pub cycle_revolutions: f32,
@@ -221,7 +222,9 @@ fn map_params_to_field_model(
 ) -> TurbulentDisplaceResolvedParams {
     let amount = params.amount.clamp(0.0, 200.0);
     let size = params.size.clamp(2.0, 1000.0);
-    let complexity = params.complexity.round().clamp(1.0, 6.0) as u32;
+    let complexity = params.complexity.clamp(1.0, 6.0);
+    let complexity_octaves = complexity.floor() as u32;
+    let complexity_fraction = complexity - complexity_octaves as f32;
     let random_seed = params.random_seed.round().clamp(0.0, u32::MAX as f32) as u32;
     let phase_radians = params.evolution.to_radians() + seed_phase(random_seed);
     let offset = if params.offset_is_default {
@@ -234,7 +237,8 @@ fn map_params_to_field_model(
         amount,
         size,
         offset,
-        complexity,
+        complexity: complexity_octaves,
+        complexity_fraction,
         evolution: params.evolution,
         cycle_evolution: params.cycle_evolution,
         cycle_revolutions: params.cycle_revolutions.max(0.0),
@@ -242,7 +246,7 @@ fn map_params_to_field_model(
         antialiasing_best_quality: params.antialiasing_best_quality,
         pinning: params.pinning.round().clamp(0.0, 17.0) as u32,
         resize_layer: params.resize_layer,
-        amplitude: amount * TURBULENT_AMOUNT_SCALE,
+        amplitude: amount * size * AE_TURBULENT_AMOUNT_SIZE_SCALE,
         phase_radians,
     }
 }
@@ -286,11 +290,12 @@ pub fn turbulent_displace_field_telemetry(
     let resolved = raw.resolved_for_input(input);
     let ae_wrapper = ae_wrapper_telemetry(input, raw);
     let field_state = field_state_telemetry(resolved, ae_wrapper);
+    let model = AeTurbulentFieldModel::new(resolved);
     let samples = turbulent_probe_points(input)
         .into_iter()
-        .map(|[x, y]| field_sample(input, resolved, x, y))
+        .map(|[x, y]| field_sample(input, &model, x, y))
         .collect();
-    let (field_hash, out_of_bounds_count) = field_hash_and_oob(input, resolved);
+    let (field_hash, out_of_bounds_count) = field_hash_and_oob(input, &model);
 
     TurbulentDisplaceFieldTelemetry {
         raw_params: params.clone(),
@@ -327,9 +332,10 @@ pub fn turbulent_displace_field_samples(
     points: &[[u32; 2]],
 ) -> Vec<TurbulentDisplaceFieldSample> {
     let resolved = TurbulentDisplaceParams::from_json(params, time).resolved_for_input(input);
+    let model = AeTurbulentFieldModel::new(resolved);
     points
         .iter()
-        .map(|&[x, y]| field_sample(input, resolved, x, y))
+        .map(|&[x, y]| field_sample(input, &model, x, y))
         .collect()
 }
 
@@ -338,7 +344,7 @@ fn field_state_telemetry(
     ae_wrapper: TurbulentDisplaceAeWrapperTelemetry,
 ) -> TurbulentDisplaceFieldStateTelemetry {
     TurbulentDisplaceFieldStateTelemetry {
-        model: "native_sine_turbulence_fit_v1",
+        model: "ae_lcg_table_noise_v1",
         coordinate_space: "output_pixel_to_source_uv",
         dispatch_path: ae_wrapper.kernel_path,
         complexity_octaves: ae_wrapper.complexity_octaves,
@@ -350,7 +356,7 @@ fn field_state_telemetry(
         phase_radians: resolved.phase_radians,
         amplitude: resolved.amplitude,
         source_uv_convention: "source_uv = output_xy + displacement",
-        hash_coverage: "full_frame_displacement_source_uv_sample_xy_oob",
+        hash_coverage: "full_frame_ae_lcg_displacement_source_uv_sample_xy_oob",
         property_mapping_status: "0008_cycle_evolution_0009_cycle_revolutions_0010_random_seed_0014_antialiasing_recorded",
         tuning_guardrail: "do_not_tune_from_final_png_only",
     }
@@ -409,14 +415,15 @@ fn to_fixed16(value: f32) -> i32 {
 
 fn displace_canvas(input: &Canvas, resolved: TurbulentDisplaceResolvedParams) -> Canvas {
     let mut output = Canvas::transparent(input.width, input.height);
+    let model = AeTurbulentFieldModel::new(resolved);
 
     for y in 0..input.height {
         for x in 0..input.width {
-            let sample = field_sample(input, resolved, x, y);
-            let Some([sx, sy]) = sample.sample_xy else {
+            let sample = field_sample(input, &model, x, y);
+            let Some(pixel) = sample_source_pixel(input, sample.source_uv, model.resolved) else {
                 continue;
             };
-            output.set_pixel(x, y, input.pixel(sx, sy));
+            output.set_pixel(x, y, pixel);
         }
     }
 
@@ -425,12 +432,12 @@ fn displace_canvas(input: &Canvas, resolved: TurbulentDisplaceResolvedParams) ->
 
 fn field_sample(
     input: &Canvas,
-    resolved: TurbulentDisplaceResolvedParams,
+    model: &AeTurbulentFieldModel,
     x: u32,
     y: u32,
 ) -> TurbulentDisplaceFieldSample {
-    let vector = field_vector(resolved, x, y);
-    let (sample_xy, out_of_bounds) = sample_nearest_round(input, vector.source_uv, resolved);
+    let vector = model.field_vector(x, y);
+    let (sample_xy, out_of_bounds) = sample_nearest_round(input, vector.source_uv, model.resolved);
 
     TurbulentDisplaceFieldSample {
         output_xy: [x, y],
@@ -442,73 +449,104 @@ fn field_sample(
     }
 }
 
-fn field_vector(
+#[derive(Debug, Clone)]
+struct AeTurbulentFieldModel {
     resolved: TurbulentDisplaceResolvedParams,
-    x: u32,
-    y: u32,
-) -> TurbulentDisplaceFieldVector {
-    let noise = field_noise(resolved, x, y);
-    let displacement = displacement_from_noise(resolved, noise, x, y);
-    TurbulentDisplaceFieldVector {
-        noise,
-        displacement,
-        source_uv: [x as f32 + displacement[0], y as f32 + displacement[1]],
-    }
+    amount_pixels: f64,
+    coordinate_scale: f64,
+    table: Vec<f64>,
 }
 
-fn field_noise(resolved: TurbulentDisplaceResolvedParams, x: u32, y: u32) -> [f32; 2] {
-    let seed = resolved.random_seed as f32;
-    let nx = (x as f32 - resolved.offset[0]) / (resolved.size * TURBULENT_COORD_SCALE);
-    let ny = (y as f32 - resolved.offset[1]) / (resolved.size * TURBULENT_COORD_SCALE);
-    [
-        turbulence(
-            nx + TURBULENT_NOISE_X_OFFSET[0] + seed * 0.137,
-            ny + TURBULENT_NOISE_X_OFFSET[1] + seed * 0.071,
-            resolved.phase_radians,
-            resolved.complexity,
-        ),
-        turbulence(
-            nx + TURBULENT_NOISE_Y_OFFSET[0] + seed * 0.113,
-            ny + TURBULENT_NOISE_Y_OFFSET[1] + seed * 0.193,
-            resolved.phase_radians + TURBULENT_NOISE_Y_PHASE,
-            resolved.complexity,
-        ),
-    ]
-}
-
-fn displacement_from_noise(
-    resolved: TurbulentDisplaceResolvedParams,
-    noise: [f32; 2],
-    x: u32,
-    y: u32,
-) -> [f32; 2] {
-    if resolved.amplitude <= f32::EPSILON {
-        return [0.0, 0.0];
+impl AeTurbulentFieldModel {
+    fn new(resolved: TurbulentDisplaceResolvedParams) -> Self {
+        let coordinate_scale = ae_coordinate_scale(resolved);
+        let table = ae_turbulent_table(resolved);
+        Self {
+            amount_pixels: resolved.amplitude as f64,
+            resolved,
+            coordinate_scale,
+            table,
+        }
     }
-    let base = [noise[0] * resolved.amplitude, noise[1] * resolved.amplitude];
-    let scalar = ((noise[0] + noise[1]) * 0.5) * resolved.amplitude;
-    let radial = radial_basis(resolved, x, y);
-    let tangent = [-radial[1], radial[0]];
 
-    match resolved.displacement_type {
-        2 => [radial[0] * scalar * 1.5, radial[1] * scalar * 1.5],
-        3 | 4 => [tangent[0] * scalar * 1.5, tangent[1] * scalar * 1.5],
-        5 => [base[0] * 1.45, base[1] * 0.35],
-        6 => [base[0] * 0.35, base[1] * 0.85],
-        7 | 8 => [base[1] * 0.85, base[0] * 0.85],
-        9 => [0.0, scalar],
-        _ => base,
+    fn field_vector(&self, x: u32, y: u32) -> TurbulentDisplaceFieldVector {
+        let noise = self.field_noise(x, y);
+        let displacement = self.displacement_from_noise(noise);
+        TurbulentDisplaceFieldVector {
+            noise,
+            displacement,
+            source_uv: [x as f32 + displacement[0], y as f32 + displacement[1]],
+        }
     }
-}
 
-fn radial_basis(resolved: TurbulentDisplaceResolvedParams, x: u32, y: u32) -> [f32; 2] {
-    let dx = x as f32 - resolved.offset[0];
-    let dy = y as f32 - resolved.offset[1];
-    let len = (dx * dx + dy * dy).sqrt();
-    if len <= f32::EPSILON {
-        [1.0, 0.0]
-    } else {
-        [dx / len, dy / len]
+    fn field_noise(&self, x: u32, y: u32) -> [f32; 2] {
+        let x_coord =
+            (x as f64 - self.resolved.offset[0] as f64) * self.coordinate_scale + AE_NOISE_X_BIAS;
+        let y_coord =
+            (y as f64 - self.resolved.offset[1] as f64) * self.coordinate_scale + AE_NOISE_Y_BIAS;
+        let [first, second] = self.field_pair(x_coord, y_coord);
+        [first as f32, second as f32]
+    }
+
+    fn field_pair(&self, x: f64, y: f64) -> [f64; 2] {
+        let mode = self.resolved.displacement_type;
+        let bicubic = matches!(mode, 5..=7);
+        let first = self.noise2d(x, y, bicubic);
+        if matches!(mode, 1 | 5) {
+            [
+                first,
+                self.noise2d(x + AE_PAIR_X_OFFSET, y + AE_PAIR_Y_OFFSET, bicubic),
+            ]
+        } else {
+            [
+                first - self.noise2d(x + AE_DERIVATIVE_STEP, y, bicubic),
+                first - self.noise2d(x, y + AE_DERIVATIVE_STEP, bicubic),
+            ]
+        }
+    }
+
+    fn displacement_from_noise(&self, noise: [f32; 2]) -> [f32; 2] {
+        if self.amount_pixels <= f64::EPSILON {
+            return [0.0, 0.0];
+        }
+        let mut dx = self.amount_pixels * noise[0] as f64;
+        let mut dy = self.amount_pixels * noise[1] as f64;
+        if matches!(self.resolved.displacement_type, 3 | 7) {
+            std::mem::swap(&mut dx, &mut dy);
+            dx = -dx;
+        }
+        [dx as f32, dy as f32]
+    }
+
+    fn noise2d(&self, mut x: f64, mut y: f64, bicubic: bool) -> f64 {
+        if !bicubic {
+            let rotated_x = x - y;
+            y += x;
+            x = rotated_x;
+        }
+
+        let mut value = 0.0;
+        let mut amplitude = AE_OCTAVE_INITIAL_AMPLITUDE;
+        for _ in 0..self.resolved.complexity {
+            x *= AE_LACUNARITY;
+            y *= AE_LACUNARITY;
+            value += self.noise2d_once(x, y, bicubic) * amplitude;
+            amplitude *= AE_OCTAVE_PERSISTENCE;
+        }
+        if self.resolved.complexity_fraction > 0.0 {
+            value += self.noise2d_once(x * AE_LACUNARITY, y * AE_LACUNARITY, bicubic)
+                * amplitude
+                * self.resolved.complexity_fraction as f64;
+        }
+        value
+    }
+
+    fn noise2d_once(&self, x: f64, y: f64, bicubic: bool) -> f64 {
+        if bicubic {
+            ae_table_lookup_bicubic(&self.table, x, y)
+        } else {
+            ae_table_lookup_bilinear(&self.table, x, y)
+        }
     }
 }
 
@@ -532,6 +570,28 @@ fn sample_nearest_round(
         return (None, true);
     }
     (Some([sx as u32, sy as u32]), false)
+}
+
+fn sample_source_pixel(
+    input: &Canvas,
+    source_uv: [f32; 2],
+    resolved: TurbulentDisplaceResolvedParams,
+) -> Option<[u8; 4]> {
+    if input.width == 0 || input.height == 0 {
+        return None;
+    }
+    let max_x = input.width.saturating_sub(1) as f32;
+    let max_y = input.height.saturating_sub(1) as f32;
+    let mut sx = source_uv[0];
+    let mut sy = source_uv[1];
+    if sx < 0.0 || sy < 0.0 || sx > max_x || sy > max_y {
+        if !uses_clamped_edges(resolved) {
+            return None;
+        }
+        sx = sx.clamp(0.0, max_x);
+        sy = sy.clamp(0.0, max_y);
+    }
+    Some(BilinearSampler.sample(input, sx, sy))
 }
 
 fn uses_clamped_edges(resolved: TurbulentDisplaceResolvedParams) -> bool {
@@ -565,14 +625,14 @@ fn turbulent_probe_points(input: &Canvas) -> Vec<[u32; 2]> {
     points
 }
 
-fn field_hash_and_oob(input: &Canvas, resolved: TurbulentDisplaceResolvedParams) -> (u64, u32) {
+fn field_hash_and_oob(input: &Canvas, model: &AeTurbulentFieldModel) -> (u64, u32) {
     let mut hash = FNV_OFFSET_BASIS;
     let mut out_of_bounds_count = 0;
     hash = fnv_hash_u32(hash, input.width);
     hash = fnv_hash_u32(hash, input.height);
     for y in 0..input.height {
         for x in 0..input.width {
-            let sample = field_sample(input, resolved, x, y);
+            let sample = field_sample(input, model, x, y);
             hash = fnv_hash_u32(hash, sample.displacement[0].to_bits());
             hash = fnv_hash_u32(hash, sample.displacement[1].to_bits());
             hash = fnv_hash_u32(hash, sample.source_uv[0].to_bits());
@@ -595,12 +655,30 @@ fn field_hash_and_oob(input: &Canvas, resolved: TurbulentDisplaceResolvedParams)
 
 const FNV_OFFSET_BASIS: u64 = 0xcbf29ce484222325;
 const FNV_PRIME: u64 = 0x100000001b3;
-const TURBULENT_SAMPLER_MODE: &str = "nearest_round";
-const TURBULENT_AMOUNT_SCALE: f32 = 0.050_208_46;
-const TURBULENT_COORD_SCALE: f32 = 4.188_871;
-const TURBULENT_NOISE_X_OFFSET: [f32; 2] = [-56.839_57, -17.358_797];
-const TURBULENT_NOISE_Y_OFFSET: [f32; 2] = [23.922_977, -20.261_85];
-const TURBULENT_NOISE_Y_PHASE: f32 = -2.724_936_9;
+const TURBULENT_SAMPLER_MODE: &str = "pf_subpixel_sample_straight_bilinear";
+const AE_TURBULENT_AMOUNT_SIZE_SCALE: f32 = 0.05;
+const AE_SIZE_TO_COORD_SCALE: f64 = 0.5;
+const AE_RADIAL_COORD_SCALE: f64 = 0.353_553_39;
+const AE_NOISE_X_BIAS: f64 = 7913.17;
+const AE_NOISE_Y_BIAS: f64 = 9711.73;
+const AE_PAIR_X_OFFSET: f64 = 37.0;
+const AE_PAIR_Y_OFFSET: f64 = 17.0;
+const AE_DERIVATIVE_STEP: f64 = 0.25;
+const AE_LACUNARITY: f64 = 1.77;
+const AE_OCTAVE_INITIAL_AMPLITUDE: f64 = 0.25;
+const AE_OCTAVE_PERSISTENCE: f64 = 0.7;
+const AE_TABLE_SIZE: usize = 64;
+const AE_TABLE_LEN: usize = AE_TABLE_SIZE * AE_TABLE_SIZE;
+const AE_EVOLUTION_STEP_FIXED16: i32 = 0x5a0000;
+const AE_EVOLUTION_PERIOD_FIXED16: i32 = 0x7e900000;
+const AE_TABLE_BASE_SEED: u32 = 0x00bc8cb5;
+const AE_TABLE_HASH_MUL: i32 = -0x145e_b7c3;
+const AE_TABLE_HASH_ADD: i32 = 0x0daa_96f5;
+const AE_LCG_MUL: u32 = 0x41c6_4e6d;
+const AE_LCG_ADD: u32 = 0x3039;
+const AE_FIXED16: f64 = 65_536.0;
+const AE_EVOLUTION_CYCLE_FIXED16: f64 = 5_898_240.0;
+const AE_RAND_SCALE: f64 = 1.0 / 16_384.0;
 
 fn fnv_hash_u32(mut hash: u64, value: u32) -> u64 {
     for byte in value.to_le_bytes() {
@@ -614,20 +692,186 @@ fn seed_phase(seed: u32) -> f32 {
     seed as f32 * 0.618_034
 }
 
-fn turbulence(x: f32, y: f32, phase: f32, octaves: u32) -> f32 {
-    let mut value = 0.0;
-    let mut amplitude = 1.0;
-    let mut frequency = 1.0;
-    let mut total = 0.0;
-    for octave in 0..octaves {
-        let angle =
-            x * 12.9898 * frequency + y * 78.233 * frequency + phase + octave as f32 * 4.123;
-        value += angle.sin() * amplitude;
-        total += amplitude;
-        amplitude *= 0.5;
-        frequency *= 2.0;
+fn ae_coordinate_scale(resolved: TurbulentDisplaceResolvedParams) -> f64 {
+    let mut scale = AE_SIZE_TO_COORD_SCALE / resolved.size as f64;
+    if matches!(resolved.displacement_type, 1..=3) {
+        scale *= AE_RADIAL_COORD_SCALE;
     }
-    (value / total).clamp(-1.0, 1.0)
+    scale
+}
+
+fn ae_turbulent_table(resolved: TurbulentDisplaceResolvedParams) -> Vec<f64> {
+    let evolution_fixed16 = (resolved.evolution as f64 * AE_FIXED16).round() as i32;
+    let cycle = evolution_fixed16 as f64 / AE_EVOLUTION_CYCLE_FIXED16;
+    let cycle_floor = ae_floor_i32(cycle);
+    let cycle_base = (cycle_floor as f64 * AE_EVOLUTION_CYCLE_FIXED16) as i32;
+    let evolution_fraction =
+        (evolution_fixed16.wrapping_sub(cycle_base)) as f64 / AE_EVOLUTION_CYCLE_FIXED16;
+    let seed = (resolved.random_seed as i32)
+        .wrapping_mul(AE_FIXED16 as i32)
+        .wrapping_add(cycle_base);
+    let period = if resolved.cycle_evolution && resolved.cycle_revolutions > 0.0 {
+        (resolved.cycle_revolutions as f64 * 360.0 * AE_FIXED16).round() as i32
+    } else {
+        AE_EVOLUTION_PERIOD_FIXED16
+    };
+    ae_build_table(seed, AE_EVOLUTION_STEP_FIXED16, period, evolution_fraction)
+}
+
+fn ae_build_table(seed: i32, step: i32, period: i32, fraction: f64) -> Vec<f64> {
+    let period = period.max(1);
+    let mut base_seed = AE_TABLE_BASE_SEED;
+    let mut s0 = ae_seed_hash(ae_period_mod(
+        seed.wrapping_sub(step.wrapping_mul(2)),
+        period,
+    ));
+    let mut s1 = ae_seed_hash(ae_period_mod(seed.wrapping_sub(step), period));
+    let mut s2 = ae_seed_hash(ae_period_mod(seed, period));
+    let mut s3 = ae_seed_hash(ae_period_mod(seed.wrapping_add(step), period));
+    let mut s4 = ae_seed_hash(ae_period_mod(
+        seed.wrapping_add(step.wrapping_mul(2)),
+        period,
+    ));
+    let mut s5 = ae_seed_hash(ae_period_mod(
+        seed.wrapping_add(step.wrapping_mul(3)),
+        period,
+    ));
+
+    let mut table = Vec::with_capacity(AE_TABLE_LEN);
+    for _ in 0..AE_TABLE_SIZE {
+        for _ in 0..AE_TABLE_SIZE {
+            base_seed = ae_lcg(base_seed);
+            s0 = ae_lcg(s0);
+            s1 = ae_lcg(s1);
+            s2 = ae_lcg(s2);
+            s3 = ae_lcg(s3);
+            s4 = ae_lcg(s4);
+            s5 = ae_lcg(s5);
+
+            let mut t = ae_rand_unit(base_seed) + fraction;
+            let p0;
+            let p1;
+            let p2;
+            let p3;
+            if t >= 0.0 {
+                if t > 1.0 {
+                    t -= 1.0;
+                    p0 = ae_rand_unit(s2);
+                    p1 = ae_rand_unit(s3);
+                    p2 = ae_rand_unit(s4);
+                    p3 = ae_rand_unit(s5);
+                } else {
+                    p0 = ae_rand_unit(s1);
+                    p1 = ae_rand_unit(s2);
+                    p2 = ae_rand_unit(s3);
+                    p3 = ae_rand_unit(s4);
+                }
+            } else {
+                t += 1.0;
+                p0 = ae_rand_unit(s0);
+                p1 = ae_rand_unit(s1);
+                p2 = ae_rand_unit(s2);
+                p3 = ae_rand_unit(s3);
+            }
+            table.push(ae_bspline(p0, p1, p2, p3, t));
+        }
+    }
+    table
+}
+
+fn ae_seed_hash(value: i32) -> u32 {
+    value
+        .wrapping_mul(AE_TABLE_HASH_MUL)
+        .wrapping_add(AE_TABLE_HASH_ADD) as u32
+}
+
+fn ae_period_mod(value: i32, period: i32) -> i32 {
+    let value = value as f64;
+    let period_f = period as f64;
+    let mut rem = value - (value / period_f).trunc() * period_f;
+    if rem < 0.0 {
+        rem += period_f;
+    }
+    rem as i32
+}
+
+fn ae_lcg(value: u32) -> u32 {
+    value.wrapping_mul(AE_LCG_MUL).wrapping_add(AE_LCG_ADD)
+}
+
+fn ae_rand_unit(value: u32) -> f64 {
+    ((value >> 16) & 0x7fff) as f64 * AE_RAND_SCALE - 1.0
+}
+
+fn ae_bspline(p0: f64, p1: f64, p2: f64, p3: f64, t: f64) -> f64 {
+    let t2 = t * t;
+    let t3 = t2 * t;
+    let one_minus_t = 1.0 - t;
+    (((3.0 * t3 - 6.0 * t2) + 4.0) * p1
+        + one_minus_t * one_minus_t * one_minus_t * p0
+        + ((3.0 * t2 - 3.0 * t3) + 3.0 * t + 1.0) * p2
+        + t3 * p3)
+        * 0.2
+}
+
+fn ae_floor_i32(value: f64) -> i32 {
+    let truncated = value as i32;
+    if value < 0.0 && value != truncated as f64 {
+        truncated - 1
+    } else {
+        truncated
+    }
+}
+
+fn ae_smoothstep(value: f64) -> f64 {
+    if value < 0.0 {
+        0.0
+    } else if value <= 1.0 {
+        (3.0 - value * 2.0) * value * value
+    } else {
+        1.0
+    }
+}
+
+fn ae_table_lookup_bilinear(table: &[f64], x: f64, y: f64) -> f64 {
+    let ix = ae_floor_i32(x);
+    let iy = ae_floor_i32(y);
+    let fx = ae_smoothstep(x - ix as f64);
+    let fy = ae_smoothstep(y - iy as f64);
+
+    let p00 = table[ae_table_index_2d(ix, iy)];
+    let p10 = table[ae_table_index_2d(ix.wrapping_add(1), iy)];
+    let p01 = table[ae_table_index_2d(ix, iy.wrapping_add(1))];
+    let p11 = table[ae_table_index_2d(ix.wrapping_add(1), iy.wrapping_add(1))];
+    ((1.0 - fx) * p00 + fx * p10) * (1.0 - fy) + ((1.0 - fx) * p01 + fx * p11) * fy
+}
+
+fn ae_table_lookup_bicubic(table: &[f64], x: f64, y: f64) -> f64 {
+    let ix = ae_floor_i32(x);
+    let iy = ae_floor_i32(y);
+    let fx = x - ix as f64;
+    let fy = y - iy as f64;
+    let row_y2 = ae_bicubic_row(table, ix, iy.wrapping_add(2), fx);
+    let row_y1 = ae_bicubic_row(table, ix, iy.wrapping_add(1), fx);
+    let row_y0 = ae_bicubic_row(table, ix, iy, fx);
+    let row_ym1 = ae_bicubic_row(table, ix, iy.wrapping_sub(1), fx);
+    ae_bspline(row_ym1, row_y0, row_y1, row_y2, fy)
+}
+
+fn ae_bicubic_row(table: &[f64], ix: i32, iy: i32, fx: f64) -> f64 {
+    ae_bspline(
+        table[ae_table_index_2d(ix.wrapping_sub(1), iy)],
+        table[ae_table_index_2d(ix, iy)],
+        table[ae_table_index_2d(ix.wrapping_add(1), iy)],
+        table[ae_table_index_2d(ix.wrapping_add(2), iy)],
+        fx,
+    )
+}
+
+fn ae_table_index_2d(ix: i32, iy: i32) -> usize {
+    let row = (((iy >> 6) as u32 ^ ix as u32) & 0x3f) as usize;
+    let col = (((ix >> 6) as u32 ^ iy as u32) & 0x3f) as usize;
+    row * AE_TABLE_SIZE + col
 }
 
 #[cfg(test)]
@@ -669,15 +913,17 @@ mod tests {
 
     #[test]
     fn displacement_is_deterministic_and_moves_pixels() {
-        let mut input = Canvas::transparent(5, 1);
-        for x in 0..5 {
-            input.set_pixel(x, 0, [x as u8 * 50, 0, 0, 255]);
+        let mut input = Canvas::transparent(16, 16);
+        for y in 0..16 {
+            for x in 0..16 {
+                input.set_pixel(x, y, [(x * 13) as u8, (y * 17) as u8, 0, 255]);
+            }
         }
         let ctx = EffectContext {
             time: 0.0,
             fps: 30.0,
         };
-        let params = json!({ "amount": 16, "size": 3, "complexity": 2, "evolution": 0 });
+        let params = json!({ "amount": 45, "size": 65, "complexity": 2, "evolution": 0 });
 
         let first = TurbulentDisplace::default()
             .render(&input, &ctx, &params)
@@ -762,7 +1008,10 @@ mod tests {
         assert!(!telemetry.resolved.cycle_evolution);
         assert_eq!(telemetry.resolved.cycle_revolutions, 1.0);
         assert!(telemetry.resolved.antialiasing_best_quality);
-        assert_close(telemetry.resolved.amplitude, 16.0 * TURBULENT_AMOUNT_SCALE);
+        assert_close(
+            telemetry.resolved.amplitude,
+            16.0 * 3.0 * AE_TURBULENT_AMOUNT_SIZE_SCALE,
+        );
         assert_close(
             telemetry.resolved.phase_radians,
             std::f32::consts::FRAC_PI_2,
@@ -784,7 +1033,7 @@ mod tests {
         assert!(telemetry.ae_wrapper.antialiasing_best_quality);
         assert_eq!(telemetry.ae_wrapper.complexity_octaves, 2);
         assert_close(telemetry.ae_wrapper.complexity_fraction, 0.0);
-        assert_eq!(telemetry.field_state.model, "native_sine_turbulence_fit_v1");
+        assert_eq!(telemetry.field_state.model, "ae_lcg_table_noise_v1");
         assert_eq!(
             telemetry.field_state.coordinate_space,
             "output_pixel_to_source_uv"
@@ -807,7 +1056,10 @@ mod tests {
             telemetry.field_state.tuning_guardrail,
             "do_not_tune_from_final_png_only"
         );
-        assert_eq!(telemetry.sampler_mode, "nearest_round");
+        assert_eq!(
+            telemetry.sampler_mode,
+            "pf_subpixel_sample_straight_bilinear"
+        );
         assert_eq!(telemetry.edge_policy, "clamp_edges_pinning");
         assert_eq!(telemetry.samples.len(), 9);
         assert_eq!(telemetry.field_hash, same.field_hash);
@@ -956,7 +1208,10 @@ mod tests {
         assert!(!resolved.antialiasing_best_quality);
         assert_eq!(resolved.pinning, 17);
         assert!(resolved.resize_layer);
-        assert_close(resolved.amplitude, 200.0 * TURBULENT_AMOUNT_SCALE);
+        assert_close(
+            resolved.amplitude,
+            200.0 * 2.0 * AE_TURBULENT_AMOUNT_SIZE_SCALE,
+        );
         assert_close(
             resolved.phase_radians,
             450.0_f32.to_radians() + seed_phase(7),
@@ -1054,38 +1309,38 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 0.0,
                 evolution: 0.0,
-                field_hash: 17573069606585102633,
-                out_of_bounds_count: 1036,
-                center_displacement: [1.7744263, -1.8303294],
-                center_source_uv: [257.7744, 254.16968],
-                center_sample_xy: [258, 254],
+                field_hash: 2683613110696052001,
+                out_of_bounds_count: 11351,
+                center_displacement: [7.687488, -6.037524],
+                center_source_uv: [263.6875, 249.96248],
+                center_sample_xy: [264, 250],
             },
             Eff060TraceSidecarFrame {
                 time: 0.5,
                 evolution: 45.0,
-                field_hash: 6515590001883281819,
-                out_of_bounds_count: 997,
-                center_displacement: [0.26686868, -1.8360277],
-                center_source_uv: [256.26688, 254.16397],
-                center_sample_xy: [256, 254],
+                field_hash: 15425239775886312303,
+                out_of_bounds_count: 7082,
+                center_displacement: [-1.7932884, -5.3806043],
+                center_source_uv: [254.20671, 250.6194],
+                center_sample_xy: [254, 251],
             },
             Eff060TraceSidecarFrame {
                 time: 1.0,
                 evolution: 90.0,
-                field_hash: 2645535527365077358,
-                out_of_bounds_count: 1033,
-                center_displacement: [-1.3972771, -0.7662003],
-                center_source_uv: [254.60272, 255.2338],
-                center_sample_xy: [255, 255],
+                field_hash: 1218132080864211637,
+                out_of_bounds_count: 3103,
+                center_displacement: [-4.21859, -3.4364386],
+                center_source_uv: [251.7814, 252.56357],
+                center_sample_xy: [252, 253],
             },
             Eff060TraceSidecarFrame {
                 time: 1.5,
                 evolution: 135.0,
-                field_hash: 3185693117918154132,
-                out_of_bounds_count: 1098,
-                center_displacement: [-2.2427146, 0.7524594],
-                center_source_uv: [253.75728, 256.75247],
-                center_sample_xy: [254, 257],
+                field_hash: 4697150789677612090,
+                out_of_bounds_count: 4222,
+                center_displacement: [1.5609949, -4.2884946],
+                center_source_uv: [257.561, 251.7115],
+                center_sample_xy: [258, 252],
             },
         ];
 
@@ -1095,7 +1350,10 @@ mod tests {
             assert_eq!(telemetry.resolved.amount, 45.0);
             assert_eq!(telemetry.resolved.size, 65.0);
             assert_eq!(telemetry.resolved.complexity, 2);
-            assert_close(telemetry.resolved.amplitude, 45.0 * TURBULENT_AMOUNT_SCALE);
+            assert_close(
+                telemetry.resolved.amplitude,
+                45.0 * 65.0 * AE_TURBULENT_AMOUNT_SIZE_SCALE,
+            );
             assert_eq!(telemetry.resolved.evolution, expected.evolution);
             assert_eq!(telemetry.sampler_mode, TURBULENT_SAMPLER_MODE);
             assert_eq!(telemetry.edge_policy, "clamp_edges_pinning");
@@ -1113,6 +1371,48 @@ mod tests {
             assert_close(center.source_uv[1], expected.center_source_uv[1]);
             assert_eq!(center.sample_xy, Some(expected.center_sample_xy));
             assert!(!center.out_of_bounds);
+        }
+    }
+
+    #[test]
+    fn ae_table_matches_frida_cmd11_state_for_single_frame_trace() {
+        let input = Canvas::transparent(512, 512);
+        let resolved = TurbulentDisplaceParams::from_json(
+            &json!({
+                "0001": 1,
+                "0002": 45,
+                "0003": 65,
+                "0005": 2,
+                "0006": 0,
+                "0010": 0,
+                "0012": 3,
+                "0013": false,
+                "0014": true
+            }),
+            0.0,
+        )
+        .resolved_for_input(&input);
+        let table = ae_turbulent_table(resolved);
+        let expected = [
+            0.456_588_047_941_204_17,
+            0.122_241_144_698_637_07,
+            0.096_215_241_219_060_44,
+            0.682_504_073_069_549_5,
+            0.041_757_244_616_746_9,
+            -0.346_158_675_795_971_1,
+            0.219_985_181_104_799_48,
+            0.539_152_087_685_922_2,
+            -0.144_988_835_470_294_62,
+            -0.083_446_784_209_309_05,
+            0.370_167_017_696_028_1,
+            0.739_003_158_013_585_5,
+        ];
+        for (index, expected) in expected.iter().copied().enumerate() {
+            assert!(
+                (table[index] - expected).abs() < 1e-12,
+                "table[{index}] native={} ae={expected}",
+                table[index]
+            );
         }
     }
 }

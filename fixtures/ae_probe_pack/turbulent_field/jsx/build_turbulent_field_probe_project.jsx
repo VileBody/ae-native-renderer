@@ -24,6 +24,7 @@ before native formula work.
     LOG_FILE.open("w");
     logLine("Turbulent field probe builder");
     logLine("Pack: " + PACK_DIR.fsName);
+    purgeAeCaches("before building probes");
 
     var CFG = {
         width: 512,
@@ -149,6 +150,7 @@ before native formula work.
     }, {});
 
     enqueueCases(cases, OUT_DIR);
+    purgeAeCaches("after queueing probes");
     LOG_FILE.close();
 
     alert(
@@ -427,6 +429,15 @@ before native formula work.
                 ensureFolder(folder.parent);
             }
             folder.create();
+        }
+    }
+
+    function purgeAeCaches(label) {
+        try {
+            app.purge(PurgeTarget.ALL_CACHES);
+            logLine(label + ": purged AE memory/disk caches");
+        } catch (err) {
+            logLine(label + ": cache purge failed: " + err.toString());
         }
     }
 

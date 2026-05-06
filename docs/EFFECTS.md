@@ -6,7 +6,7 @@ Initial first-party AE matchName support:
 ADBE Drop Shadow       approximate
 ADBE Glo2              approximate with traced radius route + native Gaussian blur
 ADBE Box Blur2         approximate
-ADBE Turbulent Displace approximate with Rust-backed vector fit v1
+ADBE Turbulent Displace recovered FracAll table/state subset
 ADBE Posterize Time     temporal quantization in render-core
 ADBE Geometry2          approximate
 ADBE Minimax            approximate
@@ -78,16 +78,17 @@ integer/fraction split, H/V lookup lengths, and control slots
 can now call `render-cli turbulent-samples` to export arbitrary Rust-native
 field samples for AE comparison.
 
-The current field model is `native_sine_turbulence_fit_v1`. It is a fitted
-native approximation, not a parity lock: Round 5 vector error improved from
-`13.700092` to `11.129620`, isolated `EFF_060` primary visible mean improved
-from `2.898929` to `1.424711`, and composed `STK_030` improved from `3.741755`
-to `3.424827` with zero master-gate regressions. `0008` cycle evolution and
-`0009` cycle revolutions are still recorded but do not yet alter the sine field.
-The exact vector/sampler math remains hidden behind
-`TurbulentDisplaceFracAllKernel` and `TurbulentDisplaceFrac1DKernel`. Future
-changes must be reverse-first: recover the kernel/table/param contract through
-Frida/Ghidra evidence, then use coordinate-field vectors and master-gate metrics
+The current field model is the recovered AE `FracAll` table/state subset, not
+the older fitted sine approximation. Frida/Ghidra evidence now covers the CPU
+render route, table build, bspline interpolation, octave/fractal constants,
+fixed16 displacement scale, default offset-center, source-UV sign/swap rules,
+and source-space-before-transform routing for footage Turbulent-only stacks.
+The isolated `EFF_060` primary visible mean is `0.659897` with alpha `0`, and
+composed `STK_030` is `1.017883`. `0008` cycle evolution and `0009` cycle
+revolutions are recorded, with non-default-cycle parity still pending. Future
+changes must stay reverse-first: recover remaining sampler/edge/`Frac1D`
+contracts through Frida/Ghidra evidence, then use coordinate-field vectors and
+master-gate metrics
 only to validate the recovered implementation.
 
 ## Production/perf manifest

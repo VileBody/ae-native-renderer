@@ -247,6 +247,7 @@ PLUGIN_ENTRY_EXPORTS = [
     {"module": "Transform.aex", "name": "EffectMain", "kind": "transform_effect_main"},
     {"module": "Transform.aex", "name": "EffectMainExtra", "kind": "transform_effect_main_extra"},
     {"module": "Transform.aex", "name": "EffectMainExtra2", "kind": "transform_effect_main_extra2"},
+    {"module": "TurbulentDisplace.aex", "name": "EffectMainExtra", "kind": "turbulent_effect_main_extra"},
 ]
 OFFSET_HOOKS: list[dict[str, str]] = []
 
@@ -257,6 +258,10 @@ const maxGenericHooks = MAX_GENERIC_HOOKS_PLACEHOLDER;
 const processInfo = PROCESS_INFO_PLACEHOLDER;
 const stalkTransformRender = STALK_TRANSFORM_RENDER_PLACEHOLDER;
 const maxStalkRenderCalls = MAX_STALK_RENDER_CALLS_PLACEHOLDER;
+const stalkRenderModules = {
+  "Transform.aex": true,
+  "TurbulentDisplace.aex": true
+};
 let eventCount = 0;
 let genericHookCount = 0;
 const installedHooks = {};
@@ -264,6 +269,9 @@ const missingNotified = {};
 const genericCallCounts = {};
 const moduleSnapshots = {};
 let stalkRenderCallCount = 0;
+let cpuRenderStalkCallCount = 0;
+const cpuStalkThreads = {};
+let activeCpuStalk = null;
 
 const WATCH_MODULES = [
   "GPUFoundation.DLL",
@@ -279,7 +287,8 @@ const WATCH_MODULES = [
   "Drop_Shadow.aex",
   "Box_Blur.aex",
   "Glow.aex",
-  "Transform.aex"
+  "Transform.aex",
+  "TurbulentDisplace.aex"
 ];
 const GENERIC_HOOK_MODULES = {
   "GPUFoundation.DLL": true,
@@ -293,13 +302,15 @@ const GENERIC_HOOK_MODULES = {
   "Drop_Shadow.aex": true,
   "Box_Blur.aex": true,
   "Glow.aex": true,
-  "Transform.aex": true
+  "Transform.aex": true,
+  "TurbulentDisplace.aex": true
 };
 const HOOK_ALL_EXPORT_MODULES = {
   "Drop_Shadow.aex": true,
   "Box_Blur.aex": true,
   "Glow.aex": true,
-  "Transform.aex": true
+  "Transform.aex": true,
+  "TurbulentDisplace.aex": true
 };
 const GENERIC_EXPORT_RE = /(blur|box|gauss|alpha|premult|unpremult|compos|blend|shadow|glow|mask|effect|render|world|iterate|filter|kernel|convol|soft|transform|geometry|matrix|matrices|sample|quality|bounds|resampl|resize|pixel|opacity|motion)/i;
 const NOISY_CXX_EXPORT_RE = /^\?\?[0148]/;
@@ -312,6 +323,8 @@ const offsetHooks = OFFSET_HOOKS_PLACEHOLDER;
 let moduleObserverInstalled = false;
 const effectProcHooks = {};
 const effectProcCallCounts = {};
+const turbulentSamplerCallbackHooks = {};
+let fltDispatchHookInstalled = false;
 
 function hexptr(p) {
   if (p === null || p === undefined) {
@@ -330,6 +343,10 @@ function safeReadS32(p) {
 
 function safeReadFloat(p) {
   try { return ptr(p).readFloat(); } catch (e) { return null; }
+}
+
+function safeReadDouble(p) {
+  try { return ptr(p).readDouble(); } catch (e) { return null; }
 }
 
 function safeReadPointer(p) {
@@ -351,6 +368,7 @@ function memoryWords(p, count) {
       s32_0: safeReadS32(r),
       u32_0: safeReadU32(r),
       f32_0: safeReadFloat(r),
+      f64_0: safeReadDouble(r),
       s32_4: safeReadS32(r.add(4)),
       u32_4: safeReadU32(r.add(4)),
       f32_4: safeReadFloat(r.add(4))
@@ -386,6 +404,119 @@ function pointerArray(p, count) {
     out.push({index: i, ptr: pp});
   }
   return out;
+}
+
+function pointerArrayWithModules(p, count) {
+  return pointerArray(p, count).map(function (entry) {
+    return {
+      index: entry.index,
+      ptr: entry.ptr,
+      target: entry.ptr === null ? null : moduleOffset(ptr(entry.ptr))
+    };
+  });
+}
+
+function dumpTurbulentStateBlock(p) {
+  if (p === null || p === undefined || ptr(p).isNull()) {
+    return null;
+  }
+  const q = ptr(p);
+  const samplerLocal = safeReadPointer(q.add(0x118));
+  return {
+    ptr: q.toString(),
+    bytes_prefix: memoryBytes(q, 0x180),
+    amount_pixels: safeReadDouble(q.add(0x00)),
+    coord_scale: safeReadDouble(q.add(0x08)),
+    complexity_octaves: safeReadS32(q.add(0x10)),
+    complexity_fraction: safeReadDouble(q.add(0x18)),
+    offset: [safeReadDouble(q.add(0x20)), safeReadDouble(q.add(0x28))],
+    pinning_mode: safeReadS32(q.add(0x34)),
+    pin_flags: {
+      left: safeReadS32(q.add(0x38)),
+      right: safeReadS32(q.add(0x3c)),
+      top: safeReadS32(q.add(0x40)),
+      bottom: safeReadS32(q.add(0x44))
+    },
+    pin_thresholds: {
+      left: safeReadDouble(q.add(0x48)),
+      top: safeReadDouble(q.add(0x50)),
+      inv_width: safeReadDouble(q.add(0x58)),
+      inv_height: safeReadDouble(q.add(0x60)),
+      right: safeReadDouble(q.add(0x68)),
+      bottom: safeReadDouble(q.add(0x70))
+    },
+    h_lookup_len: safeReadS32(q.add(0x80)),
+    h_lookup_ptr: safeReadPointer(q.add(0x88)),
+    v_lookup_len: safeReadS32(q.add(0x90)),
+    v_lookup_ptr: safeReadPointer(q.add(0x98)),
+    internal_mode: safeReadS32(q.add(0xa0)),
+    sampler_local: samplerLocal,
+    sampler_callbacks: samplerLocal === null ? [] : pointerArrayWithModules(ptr(samplerLocal), 4),
+    render_context_ptr: safeReadPointer(q.add(0x120)),
+    effect_ref_ptr: safeReadPointer(q.add(0x128)),
+    table_words: memoryWords(q.add(0x130), 12)
+  };
+}
+
+function installTurbulentSamplerCallbacks(statePtr, origin) {
+  const state = ptr(statePtr);
+  const samplerLocal = safeReadPointer(state.add(0x118));
+  if (samplerLocal === null) {
+    return;
+  }
+  pointerArrayWithModules(ptr(samplerLocal), 2).forEach(function (entry) {
+    if (entry.ptr === null || ptr(entry.ptr).isNull()) {
+      return;
+    }
+    const key = "turbulent_sampler!" + entry.ptr + "!" + entry.index;
+    if (turbulentSamplerCallbackHooks[key]) {
+      return;
+    }
+    try {
+      Interceptor.attach(ptr(entry.ptr), {
+        onEnter: function () {
+          const seen = genericCallCounts[key] || 0;
+          if (seen >= 12) {
+            return;
+          }
+          genericCallCounts[key] = seen + 1;
+          emit("turbulent_sampler_callback_enter", {
+            origin: origin,
+            callback_index: entry.index,
+            callback_ptr: entry.ptr,
+            callback_target: entry.target,
+            call_index: seen + 1,
+            world: ptr(this.context.rcx).toString(),
+            x_fixed16: ptr(this.context.rdx).toInt32(),
+            y_fixed16: ptr(this.context.r8).toInt32(),
+            sample_options: ptr(this.context.r9).toString(),
+            sample_options_words: memoryWords(ptr(this.context.r9), 8),
+            world_like: dumpPfWorldLike(ptr(this.context.rcx)),
+            regs: regSnapshot(this.context),
+            xmm: xmmSnapshot(this.context),
+            stack: stackSnapshot(this.context),
+            backtrace: backtrace(this.context)
+          });
+        }
+      });
+      turbulentSamplerCallbackHooks[key] = true;
+      meta("turbulent_sampler_callback_hook_installed", {
+        origin: origin,
+        callback_index: entry.index,
+        callback_ptr: entry.ptr,
+        callback_target: entry.target
+      });
+    } catch (e) {
+      turbulentSamplerCallbackHooks[key] = true;
+      meta("turbulent_sampler_callback_hook_error", {
+        origin: origin,
+        callback_index: entry.index,
+        callback_ptr: entry.ptr,
+        callback_target: entry.target,
+        error: String(e)
+      });
+    }
+  });
 }
 
 function dumpPfParamDef(p) {
@@ -441,6 +572,108 @@ function dumpAeEffectCall(ctx, moduleName, exportName) {
   };
 }
 
+function dumpFltComputedEffectCall(ctx) {
+  const target = ptr(ctx.r10);
+  const paramsPtr = ptr(ctx.r9);
+  const outputPtr = safeReadPointer(ctx.rsp.add(0x20));
+  const extraPtr = safeReadPointer(ctx.rsp.add(0x28));
+  return {
+    target: target.toString(),
+    target_module: moduleOffset(target),
+    pf_cmd: ptr(ctx.rcx).toString(),
+    pf_cmd_s32: ptr(ctx.rcx).toInt32(),
+    in_data: ptr(ctx.rdx).toString(),
+    out_data: ptr(ctx.r8).toString(),
+    params: paramsPtr.toString(),
+    output_stack_0x20_before_call: outputPtr,
+    extra_stack_0x28_before_call: extraPtr,
+    in_data_words: memoryWords(ptr(ctx.rdx), 24),
+    out_data_words: memoryWords(ptr(ctx.r8), 16),
+    params_array: pointerArray(paramsPtr, 24),
+    param_defs: dumpPfParamDefsFromArray(paramsPtr, 16),
+    output_words: memoryWords(outputPtr, 16),
+    extra_words: memoryWords(extraPtr, 12)
+  };
+}
+
+function dumpFltDispatchStruct(dispatchPtr) {
+  if (dispatchPtr === null || dispatchPtr === undefined || ptr(dispatchPtr).isNull()) {
+    return null;
+  }
+  const q = ptr(dispatchPtr);
+  const target = safeReadPointer(q);
+  const inData = safeReadPointer(q.add(0x10));
+  const outData = safeReadPointer(q.add(0x18));
+  const paramsPtr = safeReadPointer(q.add(0x20));
+  const outputPtr = safeReadPointer(q.add(0x28));
+  const extraPtr = safeReadPointer(q.add(0x30));
+  return {
+    ptr: q.toString(),
+    target: target,
+    target_module: target === null ? null : moduleOffset(ptr(target)),
+    pf_cmd_s32: safeReadS32(q.add(0x8)),
+    pf_cmd_u32: safeReadU32(q.add(0x8)),
+    in_data: inData,
+    out_data: outData,
+    params: paramsPtr,
+    output: outputPtr,
+    extra: extraPtr,
+    words: memoryWords(q, 12),
+    ptrs: pointerArrayWithModules(q, 8),
+    in_data_words: memoryWords(inData, 24),
+    out_data_words: memoryWords(outData, 16),
+    params_array: pointerArray(paramsPtr, 24),
+    param_defs: dumpPfParamDefsFromArray(paramsPtr, 16),
+    output_words: memoryWords(outputPtr, 16),
+    extra_words: memoryWords(extraPtr, 12)
+  };
+}
+
+function installFltComputedDispatchHooks() {
+  if (fltDispatchHookInstalled) {
+    return;
+  }
+  const module = Process.findModuleByName("FLT.dll");
+  if (module === null) {
+    return;
+  }
+  fltDispatchHookInstalled = true;
+  const dispatchEntry = module.base.add(0x3fe20);
+  try {
+    Interceptor.attach(dispatchEntry, {
+      onEnter: function () {
+        const seen = genericCallCounts["flt_dispatch_entry"] || 0;
+        if (seen >= 120) {
+          return;
+        }
+        genericCallCounts["flt_dispatch_entry"] = seen + 1;
+        emit("flt_dispatch_entry", {
+          call_index: seen + 1,
+          address: dispatchEntry.toString(),
+          dispatch_arg: ptr(this.context.rcx).toString(),
+          ae_effect_dispatch: dumpFltDispatchStruct(ptr(this.context.rcx)),
+          crash_info_flag: ptr(this.context.rdx).toInt32() & 0xff,
+          regs: regSnapshot(this.context),
+          stack: stackSnapshot(this.context),
+          backtrace: backtrace(this.context)
+        });
+      }
+    });
+    meta("flt_dispatch_entry_hook_installed", {
+      module: "FLT.dll",
+      offset: "0x3fe20",
+      address: dispatchEntry.toString()
+    });
+  } catch (e) {
+    meta("flt_dispatch_entry_hook_error", {
+      module: "FLT.dll",
+      offset: "0x3fe20",
+      address: dispatchEntry.toString(),
+      error: String(e)
+    });
+  }
+}
+
 function installEffectProcPointer(address, origin) {
   if (address === null || address === undefined) {
     return;
@@ -460,7 +693,7 @@ function installEffectProcPointer(address, origin) {
   try {
     Interceptor.attach(p, {
       onEnter: function () {
-        this.stalked = maybeStartTransformRenderStalker(this.context, this.threadId, p);
+        this.stalked = maybeStartEffectRenderStalker(this.context, this.threadId, p);
         const seen = effectProcCallCounts[key] || 0;
         if (seen >= 80) {
           return;
@@ -515,12 +748,12 @@ function installEffectProcPointer(address, origin) {
   }
 }
 
-function maybeStartTransformRenderStalker(ctx, threadId, procAddress) {
+function maybeStartEffectRenderStalker(ctx, threadId, procAddress) {
   if (!stalkTransformRender) {
     return false;
   }
   const loc = moduleOffset(procAddress);
-  if (loc.module !== "Transform.aex") {
+  if (!stalkRenderModules[loc.module]) {
     return false;
   }
   let pfCmd = null;
@@ -529,7 +762,7 @@ function maybeStartTransformRenderStalker(ctx, threadId, procAddress) {
   } catch (e) {
     return false;
   }
-  if (pfCmd !== 13) {
+  if (!shouldStalkEffectProcCommand(loc.module, pfCmd)) {
     return false;
   }
   if (stalkRenderCallCount >= maxStalkRenderCalls) {
@@ -589,6 +822,145 @@ function maybeStartTransformRenderStalker(ctx, threadId, procAddress) {
     });
     return false;
   }
+}
+
+function maybeStartCpuRenderStalker(ctx, threadId, target) {
+  if (!stalkTransformRender) {
+    return false;
+  }
+  if (target.kind !== "bee_workqueue_render_to_output") {
+    return false;
+  }
+  if (cpuRenderStalkCallCount >= maxStalkRenderCalls) {
+    return false;
+  }
+  cpuRenderStalkCallCount += 1;
+  const stalkIndex = cpuRenderStalkCallCount;
+  try {
+    activeCpuStalk = {stalk_index: stalkIndex, cpu_kind: target.kind};
+    followCpuStalkThread(threadId, stalkIndex, target.kind, "bee_enter");
+    Process.enumerateThreads().forEach(function (thread) {
+      followCpuStalkThread(thread.id, stalkIndex, target.kind, "bee_enter_enumerate");
+    });
+    meta("cpu_stalker_started", {
+      stalk_index: stalkIndex,
+      thread_id: threadId,
+      cpu_kind: target.kind,
+      regs: regSnapshot(ctx),
+      stack: stackSnapshot(ctx)
+    });
+    return true;
+  } catch (e) {
+    activeCpuStalk = null;
+    meta("cpu_stalker_start_error", {
+      stalk_index: stalkIndex,
+      thread_id: threadId,
+      cpu_kind: target.kind,
+      error: String(e)
+    });
+    return false;
+  }
+}
+
+function followCpuStalkThread(threadId, stalkIndex, cpuKind, origin) {
+  const key = stalkIndex + ":" + threadId;
+  if (cpuStalkThreads[key]) {
+    return;
+  }
+  if (Object.keys(cpuStalkThreads).filter(function (k) { return k.indexOf(stalkIndex + ":") === 0; }).length >= 64) {
+    return;
+  }
+  try {
+    Stalker.follow(threadId, {
+      events: {call: true},
+      onCallSummary: function (summary) {
+        const items = [];
+        Object.keys(summary).forEach(function (targetAddr) {
+          const targetLoc = moduleOffset(ptr(targetAddr));
+          if (targetLoc.module === null || WATCH_MODULES.indexOf(targetLoc.module) === -1) {
+            return;
+          }
+          items.push({
+            module: targetLoc.module,
+            offset: targetLoc.offset,
+            addr: targetLoc.addr,
+            count: summary[targetAddr]
+          });
+        });
+        items.sort(function (a, b) {
+          if (b.count !== a.count) {
+            return b.count - a.count;
+          }
+          return (String(a.module) + String(a.offset)).localeCompare(String(b.module) + String(b.offset));
+        });
+        meta("cpu_stalker_call_summary", {
+          stalk_index: stalkIndex,
+          thread_id: threadId,
+          cpu_kind: cpuKind,
+          item_count: items.length,
+          items: items.slice(0, 160)
+        });
+      }
+    });
+    cpuStalkThreads[key] = true;
+    meta("cpu_stalker_thread_followed", {
+      stalk_index: stalkIndex,
+      thread_id: threadId,
+      cpu_kind: cpuKind,
+      origin: origin
+    });
+  } catch (e) {
+    cpuStalkThreads[key] = true;
+    meta("cpu_stalker_thread_follow_error", {
+      stalk_index: stalkIndex,
+      thread_id: threadId,
+      cpu_kind: cpuKind,
+      error: String(e)
+    });
+  }
+}
+
+function stopCpuStalkAllThreads(stalkIndex, cpuKind) {
+  activeCpuStalk = null;
+  Object.keys(cpuStalkThreads).forEach(function (key) {
+    if (key.indexOf(stalkIndex + ":") !== 0) {
+      return;
+    }
+    const threadId = parseInt(key.split(":")[1], 10);
+    try {
+      Stalker.unfollow(threadId);
+    } catch (e) {
+      meta("cpu_stalker_stop_error", {
+        stalk_index: stalkIndex,
+        thread_id: threadId,
+        cpu_kind: cpuKind,
+        error: String(e)
+      });
+    }
+    delete cpuStalkThreads[key];
+  });
+  try {
+    Stalker.flush();
+  } catch (e) {
+    meta("cpu_stalker_flush_error", {
+      stalk_index: stalkIndex,
+      cpu_kind: cpuKind,
+      error: String(e)
+    });
+  }
+}
+
+function shouldStalkEffectProcCommand(moduleName, pfCmd) {
+  if (moduleName === "Transform.aex") {
+    return pfCmd === 13;
+  }
+  if (moduleName === "TurbulentDisplace.aex") {
+    // The current CPU AE render path reaches TurbulentDisplace through PF cmds
+    // 10/11/12; keep the older Ghidra switch ids available for legacy traces.
+    return pfCmd === 10 || pfCmd === 11 || pfCmd === 12 ||
+      pfCmd === 0x17 || pfCmd === 0x18 || pfCmd === 0x1f;
+  }
+  return false;
 }
 
 function dumpCpuEffectCall(ctx, target) {
@@ -941,9 +1313,14 @@ function installCpuEffectHooks() {
       Interceptor.attach(address, {
         onEnter: function () {
           this.target = target;
+          this.stalked = maybeStartCpuRenderStalker(this.context, this.threadId, target);
+          this.cpuStalkIndex = cpuRenderStalkCallCount;
           emit("cpu_effect_enter", dumpCpuEffectCall(this.context, target));
         },
         onLeave: function (retval) {
+          if (this.stalked) {
+            stopCpuStalkAllThreads(this.cpuStalkIndex, this.target.kind);
+          }
           emit("cpu_effect_leave", {
             module: target.module,
             export_name: target.name,
@@ -1038,6 +1415,7 @@ function installOffsetHooks() {
     try {
       Interceptor.attach(address, {
         onEnter: function () {
+          this.turbulentStatePtr = null;
           const isTransformWrapperRender =
             target.module === "Transform.aex" &&
             target.offset === "0x5b20" &&
@@ -1045,6 +1423,18 @@ function installOffsetHooks() {
             ptr(this.context.rdx).toInt32() === 13;
           const stackParams = isTransformWrapperRender ? safeReadPointer(this.context.rsp.add(0x28)) : null;
           const stackOutput = isTransformWrapperRender ? safeReadPointer(this.context.rsp.add(0x38)) : null;
+          const isTurbulent = target.module === "TurbulentDisplace.aex";
+          const isTurbulentParamSetup = isTurbulent && /param_setup|setup/i.test(target.kind);
+          const isTurbulentPixelCore = isTurbulent && /pixel|core|frac/i.test(target.kind);
+          const isTurbulentPinning = isTurbulent && /pin/i.test(target.kind);
+          if (isTurbulentParamSetup) {
+            this.turbulentStatePtr = safeReadPointer(this.context.rsp.add(0x30));
+          } else if (isTurbulentPixelCore || isTurbulentPinning) {
+            this.turbulentStatePtr = ptr(this.context.rcx).toString();
+          }
+          if (this.turbulentStatePtr !== null) {
+            installTurbulentSamplerCallbacks(this.turbulentStatePtr, target.kind);
+          }
           emit("offset_hook_enter", {
             offset_kind: target.kind,
             module: target.module,
@@ -1065,9 +1455,36 @@ function installOffsetHooks() {
             rdx_world_like: dumpPfWorldLike(ptr(this.context.rdx)),
             r8_world_like: dumpPfWorldLike(ptr(this.context.r8)),
             r9_world_like: dumpPfWorldLike(ptr(this.context.r9)),
+            turbulent: this.turbulentStatePtr === null ? null : {
+              state_ptr: this.turbulentStatePtr,
+              state: dumpTurbulentStateBlock(ptr(this.turbulentStatePtr)),
+              pixel_x: isTurbulentPixelCore ? ptr(this.context.rdx).toInt32() : null,
+              pixel_y: isTurbulentPixelCore ? ptr(this.context.r8).toInt32() : null,
+              internal_mode_arg: isTurbulentPixelCore ? safeReadS32(this.context.rsp.add(0x30)) : null,
+              pinning_xy: isTurbulentPinning ? {
+                x_from_xmm1: this.context.xmm1 === undefined ? null : this.context.xmm1.toString(),
+                y_from_xmm2: this.context.xmm2 === undefined ? null : this.context.xmm2.toString()
+              } : null
+            },
             stack_0x28_param_defs: isTransformWrapperRender ? dumpPfParamDefsFromArray(stackParams, 16) : null,
             stack_0x38_world_like: isTransformWrapperRender ? dumpPfWorldLike(stackOutput) : null,
             backtrace: backtrace(this.context)
+          });
+        },
+        onLeave: function (retval) {
+          if (this.turbulentStatePtr === null) {
+            return;
+          }
+          emit("offset_hook_leave", {
+            offset_kind: target.kind,
+            module: target.module,
+            offset: target.offset,
+            address: address.toString(),
+            retval: ptr(retval).toString(),
+            turbulent: {
+              state_ptr: this.turbulentStatePtr,
+              state: dumpTurbulentStateBlock(ptr(this.turbulentStatePtr))
+            }
           });
         }
       });
@@ -1234,6 +1651,7 @@ function installBroadHooks() {
 
 function installAllHooks() {
   installKnownHooks();
+  installFltComputedDispatchHooks();
   installBoxOptionHooks();
   installRenderExportHooks();
   installCpuEffectHooks();
@@ -1266,6 +1684,19 @@ function installModuleObserver() {
 
 installModuleObserver();
 installAllHooks();
+setInterval(function () {
+  if (activeCpuStalk === null) {
+    return;
+  }
+  Process.enumerateThreads().forEach(function (thread) {
+    followCpuStalkThread(
+      thread.id,
+      activeCpuStalk.stalk_index,
+      activeCpuStalk.cpu_kind,
+      "bee_active_poll"
+    );
+  });
+}, 100);
 setInterval(installAllHooks, 500);
 """
 

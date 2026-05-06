@@ -522,6 +522,13 @@ fn effects_of(layer: &Layer) -> &[EffectSpec] {
     }
 }
 
+fn effects_are_turbulent_only(effects: &[EffectSpec]) -> bool {
+    !effects.is_empty()
+        && effects
+            .iter()
+            .all(|effect| effect.match_name == "ADBE Turbulent Displace")
+}
+
 fn posterized_time_for_effects(effects: &[EffectSpec], time: f64) -> f64 {
     effects.iter().fold(time, |current_time, spec| {
         if spec.match_name == "ADBE Posterize Time" {
@@ -713,6 +720,7 @@ fn render_layer_stub(
     let content_started = Instant::now();
     let layer_time = posterized_time_for_effects(effects_of(layer), time);
     record_layer_temporal_trace(trace.as_deref_mut(), comp, layer, time, layer_time);
+    let mut layer_space_effects_ms = None;
     let mut canvas = match layer {
         Layer::Solid {
             id,
@@ -844,7 +852,22 @@ fn render_layer_stub(
             let source_time = (*source_start + (layer_time - *start)).max(0.0);
             match footage.frame_at(source, source_time)? {
                 Some(frame) => {
-                    transform_canvas(&frame, comp.width, comp.height, &evaluated, [0.0, 0.0])
+                    if effects_are_turbulent_only(effects_of(layer)) {
+                        let effects_started = Instant::now();
+                        let effected = apply_effects_to_canvas(
+                            effects_of(layer),
+                            &frame,
+                            layer_time,
+                            comp.fps,
+                            trace.as_deref_mut(),
+                            &comp.id,
+                            layer.id(),
+                        )?;
+                        layer_space_effects_ms = Some(elapsed_ms(effects_started));
+                        transform_canvas(&effected, comp.width, comp.height, &evaluated, [0.0, 0.0])
+                    } else {
+                        transform_canvas(&frame, comp.width, comp.height, &evaluated, [0.0, 0.0])
+                    }
                 }
                 None => checkerboard_canvas(comp.width, comp.height),
             }
@@ -931,17 +954,21 @@ fn render_layer_stub(
     };
     let content_ms = elapsed_ms(content_started);
 
-    let effects_started = Instant::now();
-    canvas = apply_effects_to_canvas(
-        effects_of(layer),
-        &canvas,
-        layer_time,
-        comp.fps,
-        trace.as_deref_mut(),
-        &comp.id,
-        layer.id(),
-    )?;
-    let effects_ms = elapsed_ms(effects_started);
+    let effects_ms = if let Some(effects_ms) = layer_space_effects_ms {
+        effects_ms
+    } else {
+        let effects_started = Instant::now();
+        canvas = apply_effects_to_canvas(
+            effects_of(layer),
+            &canvas,
+            layer_time,
+            comp.fps,
+            trace.as_deref_mut(),
+            &comp.id,
+            layer.id(),
+        )?;
+        elapsed_ms(effects_started)
+    };
     if let Some(trace) = trace.as_deref_mut() {
         trace.layers.push(LayerTiming {
             composition: comp.id.clone(),

@@ -262,13 +262,27 @@
       "targets": [
         { "label": "Turbulent_FilterMain", "address": "0x180001f30" },
         { "label": "Turbulent_param_setup", "address": "0x180003e70" },
+        { "label": "Turbulent_field_to_uv_all_5e10", "address": "0x180005e10" },
+        { "label": "Turbulent_field_to_uv_1d_6330", "address": "0x180006330" },
         { "label": "Turbulent_pixel_format_stride", "address": "0x180006ca0" },
         { "label": "Turbulent_dispatch_all", "address": "0x180006e40" },
         { "label": "Turbulent_dispatch_1d", "address": "0x180007040" },
+        { "label": "Turbulent_runtime_field_pair_6a20", "address": "0x180006a20" },
+        { "label": "Turbulent_runtime_field_pair_6b60", "address": "0x180006b60" },
+        { "label": "Turbulent_runtime_cmd10_render_ca40", "address": "0x18000ca40" },
+        { "label": "Turbulent_runtime_stalker_target_11ca0", "address": "0x180011ca0" },
+        { "label": "Turbulent_runtime_cmd11_render_df30", "address": "0x18000df30" },
+        { "label": "Turbulent_runtime_cmd11_prepare_3410", "address": "0x180003410" },
+        { "label": "Turbulent_runtime_cmd11_prepare_7de0", "address": "0x180007de0" },
+        { "label": "Turbulent_runtime_cmd11_iterate_114a0", "address": "0x1800114a0" },
         { "label": "Turbulent_render", "address": "0x18000ad10" },
         { "label": "Turbulent_amount_checkout", "address": "0x18000d070" },
         { "label": "Turbulent_lookup_noise", "address": "0x18000d230" },
-        { "label": "Turbulent_table_build", "address": "0x18000e340" }
+        { "label": "Turbulent_bspline_d120", "address": "0x18000d120" },
+        { "label": "Turbulent_table_build", "address": "0x18000e340" },
+        { "label": "Turbulent_noise2d_interp_e000", "address": "0x18000e000" },
+        { "label": "Turbulent_noise2d_alt_a5b0", "address": "0x18000a5b0" },
+        { "label": "Turbulent_noise2d_octave_eb00", "address": "0x18000eb00" }
       ]
     },
     {

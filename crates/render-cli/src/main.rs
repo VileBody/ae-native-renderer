@@ -505,6 +505,7 @@ fn turbulent_resolved_params_json(
         "size": resolved.size,
         "offset": resolved.offset,
         "complexity": resolved.complexity,
+        "complexity_fraction": resolved.complexity_fraction,
         "evolution": resolved.evolution,
         "cycle_evolution": resolved.cycle_evolution,
         "cycle_revolutions": resolved.cycle_revolutions,
