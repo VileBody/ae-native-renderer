@@ -167,12 +167,12 @@ def expected_cases() -> list[dict[str, object]]:
     return out
 
 
-def first_png(case_dir: Path, case: str) -> Path | None:
-    exact = sorted(case_dir.glob(f"{case}_*.png"))
-    if exact:
-        return exact[0]
-    any_png = sorted(case_dir.glob("*.png"))
-    return any_png[0] if any_png else None
+def first_render_image(case_dir: Path, case: str) -> Path | None:
+    for pattern in (f"{case}_*.tif", f"{case}_*.tiff", f"{case}_*.png", "*.tif", "*.tiff", "*.png"):
+        found = sorted(case_dir.glob(pattern))
+        if found:
+            return found[0]
+    return None
 
 
 def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> dict[str, object]:
@@ -191,18 +191,13 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
         assert isinstance(source, SourceDef)
         assert isinstance(transform, TransformDef)
         assert isinstance(sampling, SamplingDef)
-        png = first_png(png_root / cid, cid)
-        if png is None:
+        image_path = first_render_image(png_root / cid, cid)
+        if image_path is None:
             missing.append(cid)
             continue
-        with Image.open(png) as im:
-            bands = im.getbands()
-            image_meta[cid] = {
-                "mode": im.mode,
-                "bands": list(bands),
-                "has_alpha_band": "A" in bands,
-            }
-            images[cid] = im.convert("RGBA").copy()
+        image, meta = load_render_image_rgba(image_path)
+        image_meta[cid] = meta
+        images[cid] = image
         case_rows.append(
             {
                 "case_id": cid,
@@ -210,7 +205,7 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
                 "transform_id": transform.id,
                 "sampling_id": sampling.id,
                 "sampling_value": sampling.value,
-                "png": str(png),
+                "png": str(image_path),
             }
         )
 
@@ -292,12 +287,28 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
     alpha_q2_rgb_projection_scores.sort(
         key=lambda item: (item["mean_abs_channel_delta"], item["max_channel_delta"], item["id"])
     )
+    alpha_q1_straight_export_scores = [
+        score_cases_unpremultiply_observed_export(alpha_q1_cases, images, source_pixels, candidate, sample_step=1)
+        for candidate in build_alpha_candidates("bilinear")
+    ]
+    alpha_q1_straight_export_scores.sort(
+        key=lambda item: (item["mean_abs_channel_delta"], item["max_channel_delta"], item["id"])
+    )
+    alpha_q2_straight_export_scores = [
+        score_cases_unpremultiply_observed_export(alpha_q2_cases, images, source_pixels, candidate, sample_step=1)
+        for candidate in build_alpha_candidates("bicubic")
+    ]
+    alpha_q2_straight_export_scores.sort(
+        key=lambda item: (item["mean_abs_channel_delta"], item["max_channel_delta"], item["id"])
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_candidate_csv(out_dir / "fit_candidates.csv", candidate_scores)
     write_candidate_csv(out_dir / "fit_candidates_refined_top16.csv", refined_scores)
     write_candidate_csv(out_dir / "alpha_rgb_projection_candidates_q1.csv", alpha_q1_rgb_projection_scores)
     write_candidate_csv(out_dir / "alpha_rgb_projection_candidates_q2.csv", alpha_q2_rgb_projection_scores)
+    write_candidate_csv(out_dir / "alpha_straight_export_candidates_q1.csv", alpha_q1_straight_export_scores)
+    write_candidate_csv(out_dir / "alpha_straight_export_candidates_q2.csv", alpha_q2_straight_export_scores)
     write_case_csv(out_dir / "measured_cases.csv", case_rows)
     if winner and write_diffs > 0:
         winner_candidate = next(candidate for candidate in candidates if candidate.id == winner["id"])
@@ -349,6 +360,17 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
                     },
                     "note": "Compares AE RGB-only outputs against candidate pixels projected over black. This is the acceptance metric when the output module did not preserve alpha.",
                 },
+                "straight_rgba_from_premultiplied_export": {
+                    "q1_bilinear": {
+                        "winner": alpha_q1_straight_export_scores[0] if alpha_q1_straight_export_scores else None,
+                        "top_candidates": alpha_q1_straight_export_scores[:12],
+                    },
+                    "q2_bicubic": {
+                        "winner": alpha_q2_straight_export_scores[0] if alpha_q2_straight_export_scores else None,
+                        "top_candidates": alpha_q2_straight_export_scores[:12],
+                    },
+                    "note": "Unpremultiplies AE's premultiplied RGB+Alpha TIFF export before comparing to native straight-RGBA candidate pixels.",
+                },
                 "output_observation": summarize_alpha_output(alpha_q1_cases + alpha_q2_cases, images, image_meta),
                 "note": "Raw RGBA candidates compare straight/premult variants directly. If output_observation.has_alpha_band_case_count is zero, raw RGBA includes synthetic opaque alpha from RGB-only exports and must not drive internal alpha-policy changes.",
             },
@@ -364,6 +386,94 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
     }
     (out_dir / "fit_report.json").write_text(json.dumps(report, indent=2) + "\n", encoding="utf-8")
     return report
+
+
+def load_render_image_rgba(path: Path):
+    from PIL import Image
+
+    if path.suffix.lower() in {".tif", ".tiff"}:
+        raw = load_uncompressed_chunky_rgba_tiff(path)
+        if raw is not None:
+            width, height, data, tiff_meta = raw
+            image = Image.frombytes("RGBA", (width, height), data)
+            return image, {
+                "path": str(path),
+                "mode": "RGBA",
+                "bands": ["R", "G", "B", "A"],
+                "has_alpha_band": True,
+                "loader": "ae_uncompressed_chunky_rgba_tiff_raw",
+                **tiff_meta,
+            }
+
+    with Image.open(path) as im:
+        bands = im.getbands()
+        image = im.convert("RGBA").copy()
+        return image, {
+            "path": str(path),
+            "mode": im.mode,
+            "bands": list(bands),
+            "has_alpha_band": "A" in bands,
+            "loader": "pillow_convert_rgba",
+        }
+
+
+def load_uncompressed_chunky_rgba_tiff(path: Path):
+    from PIL import Image
+
+    with Image.open(path) as im:
+        tags = im.tag_v2
+        width = int(tags.get(256, im.width))
+        height = int(tags.get(257, im.height))
+        bits_per_sample = tuple(int(value) for value in force_tuple(tags.get(258, ())))
+        compression = int(tags.get(259, 1))
+        samples_per_pixel = int(tags.get(277, len(bits_per_sample) or len(im.getbands())))
+        planar_configuration = int(tags.get(284, 1))
+        extra_samples = tuple(int(value) for value in force_tuple(tags.get(338, ())))
+        if (
+            width <= 0
+            or height <= 0
+            or compression != 1
+            or planar_configuration != 1
+            or samples_per_pixel != 4
+            or bits_per_sample != (8, 8, 8, 8)
+        ):
+            return None
+        offsets = [int(value) for value in force_tuple(tags.get(273, ()))]
+        byte_counts = [int(value) for value in force_tuple(tags.get(279, ()))]
+        if not offsets or len(offsets) != len(byte_counts):
+            return None
+
+    blob = path.read_bytes()
+    data = bytearray()
+    for offset, byte_count in zip(offsets, byte_counts):
+        if offset < 0 or byte_count < 0 or offset + byte_count > len(blob):
+            return None
+        data.extend(blob[offset : offset + byte_count])
+    expected = width * height * samples_per_pixel
+    if len(data) < expected:
+        return None
+    if len(data) > expected:
+        data = data[:expected]
+    return (
+        width,
+        height,
+        bytes(data),
+        {
+            "tiff_samples_per_pixel": samples_per_pixel,
+            "tiff_bits_per_sample": list(bits_per_sample),
+            "tiff_extra_samples": list(extra_samples),
+        },
+    )
+
+
+def force_tuple(value) -> tuple:
+    if value is None:
+        return ()
+    if isinstance(value, tuple):
+        return value
+    if isinstance(value, list):
+        return tuple(value)
+    return (value,)
 
 
 def score_cases(
@@ -506,11 +616,93 @@ def score_cases_rgb_over_black(
     }
 
 
+def score_cases_unpremultiply_observed_export(
+    rows: Iterable[dict[str, object]],
+    images: dict[str, object],
+    source_pixels: dict[str, list[tuple[int, int, int, int]]],
+    candidate: Candidate,
+    sample_step: int,
+) -> dict[str, object]:
+    totals = 0
+    max_delta = 0
+    changed_pixels = 0
+    total_pixels = 0
+    per_case = []
+    for row in rows:
+        source = source_by_id(str(row["source_id"]))
+        transform = TRANSFORM_BY_ID[str(row["transform_id"])]
+        image = images[str(row["case_id"])]
+        pixels = image.load()
+        width, height = image.size
+        case_total = 0
+        case_max = 0
+        case_changed = 0
+        for y in range(0, height, sample_step):
+            for x in range(0, width, sample_step):
+                observed = unpremultiply_rgba(tuple(int(c) for c in pixels[x, y]))
+                pred = candidate.sample(
+                    source_pixels[source.id],
+                    width,
+                    height,
+                    source_uv(transform, x, y),
+                    candidate.edge,
+                    candidate.round_mode,
+                    **candidate.params,
+                )
+                pixel_changed = False
+                for channel in range(CHANNELS):
+                    delta = abs(observed[channel] - pred[channel])
+                    totals += delta
+                    case_total += delta
+                    max_delta = max(max_delta, delta)
+                    case_max = max(case_max, delta)
+                    pixel_changed = pixel_changed or delta != 0
+                if pixel_changed:
+                    changed_pixels += 1
+                    case_changed += 1
+                total_pixels += 1
+        per_case.append(
+            {
+                "case_id": row["case_id"],
+                "mean_abs_channel_delta": round(case_total / max(total_pixels_for_step(width, height, sample_step) * CHANNELS, 1), 6),
+                "max_channel_delta": case_max,
+                "changed_pixel_count": case_changed,
+            }
+        )
+    denom = max(total_pixels * CHANNELS, 1)
+    return {
+        "id": candidate.id,
+        "sampler": candidate.sampler,
+        "edge": candidate.edge,
+        "round_mode": candidate.round_mode,
+        "params": candidate.params,
+        "case_count": len(per_case),
+        "sample_step": sample_step,
+        "metric_policy": "straight_rgba_from_premultiplied_export",
+        "mean_abs_channel_delta": round(totals / denom, 6),
+        "max_channel_delta": max_delta,
+        "changed_pixel_count": changed_pixels,
+        "per_case": per_case[:12],
+    }
+
+
 def project_rgb_over_black(rgba: tuple[int, int, int, int], candidate: Candidate) -> tuple[int, int, int]:
     if "premult_keep" in candidate.sampler:
         return rgba[:3]
     alpha = rgba[3] / 255.0
     return tuple(quantize(rgba[channel] * alpha, candidate.round_mode) for channel in range(3))
+
+
+def unpremultiply_rgba(rgba: tuple[int, int, int, int]) -> tuple[int, int, int, int]:
+    alpha = rgba[3]
+    if alpha <= 0:
+        return (0, 0, 0, 0)
+    return (
+        quantize(rgba[0] * 255.0 / alpha, "round"),
+        quantize(rgba[1] * 255.0 / alpha, "round"),
+        quantize(rgba[2] * 255.0 / alpha, "round"),
+        alpha,
+    )
 
 
 def summarize_alpha_output(

@@ -26,7 +26,7 @@ Do the Geometry2 bicubic pass in one fact loop:
 | Diff/native PNGs | `target/ae_agents/geometry2_sampling2_fit_20260506/winner_diffs` |
 | Alpha AE render output | `target/ae_remote/ae_trace_batch_28_b84356833885_20260506_125433` |
 | Alpha Frida trace | `target/dynamic_tools_85/geometry2_sampling2_alpha_trace_20260506/batch_28_b84356833885.jsonl` |
-| Combined alpha fit report | `target/ae_agents/geometry2_sampling2_fit_combined_alpha_20260506/report/fit_report.json` |
+| Combined alpha fit report | `target/ae_agents/geometry2_sampling2_fit_combined_alpha_20260506/report_alpha_tiff_raw/fit_report.json` |
 
 ## Frida Gate
 
@@ -95,30 +95,44 @@ Frida-gated CPU path:
 - Stalker again confirmed `Transform.aex+0x5f30 -> 0x5b20`
 - `PF_ParamDef[12]` still reports `Sampling`
 
-The output module on AE85 produced RGB-only PNG/TIFF files for these cases:
+The first local read appeared RGB-only because Pillow treats AE's Photoshop
+Sequence TIFF alpha as `ExtraSamples=(0)` and drops the fourth sample when
+opening it normally. The AE files themselves are alpha-preserving:
 
 ```text
-mode_counts = {"RGB:R,G,B": 28}
-has_alpha_band_case_count = 0
+SamplesPerPixel = 4
+BitsPerSample = [8, 8, 8, 8]
+ExtraSamples = [0]
+AE output log = Channels: RGB + Alpha, Color: Premultiplied
 ```
 
-So raw RGBA comparisons are diagnostic only: Pillow converts those RGB frames
-to synthetic `A=255`, which makes direct alpha deltas meaningless.
+The fitter now has an AE-TIFF raw loader for uncompressed chunky RGBA TIFFs and
+records `mode_counts = {"RGBA:R,G,B,A": 28}` with `has_alpha_band_case_count =
+28`.
 
-The harness now records an explicit `rgb_over_black_projection` metric for
-these cases. That metric compares AE's actual RGB output against each native
-candidate after source-over projection on black:
+This gives three different, intentionally separate signals:
+
+- `raw_export`: AE's stored TIFF pixels. Because the output module says
+  `Color: Premultiplied`, this metric should favor `premult_keep`.
+- `straight_rgba_from_premultiplied_export`: unpremultiplies AE's TIFF export
+  before comparing to native straight-RGBA candidate pixels. This is the
+  internal Geometry2 sampler gate.
+- `rgb_over_black_projection`: compares visible RGB after projection on black;
+  useful when only RGB output is available.
 
 | Branch | Winner | Mean Abs Channel Delta |
 | --- | --- | ---: |
-| `0012=1` bilinear | `bilinear_premult_unpremultiply_transparent_round` | `0.140631` |
-| `0012=2` bicubic | `keys_a_-0.700_premult_unpremultiply_transparent_round` | `0.371739` |
+| `raw_export`, `0012=1` bilinear | `bilinear_premult_keep_transparent_round` | `0.176187` |
+| `raw_export`, `0012=2` bicubic | `keys_a_-0.700_premult_keep_transparent_round` | `0.647574` |
+| `straight_rgba_from_premultiplied_export`, `0012=1` bilinear | `bilinear_premult_unpremultiply_transparent_round` | `0.498435` |
+| `straight_rgba_from_premultiplied_export`, `0012=2` bicubic | `keys_a_-0.700_premult_unpremultiply_transparent_round` | `0.710423` |
+| `rgb_over_black_projection`, `0012=1` bilinear | `bilinear_premult_unpremultiply_transparent_round` | `0.140631` |
+| `rgb_over_black_projection`, `0012=2` bicubic | `keys_a_-0.700_premult_unpremultiply_transparent_round` | `0.371739` |
 
-For identity and most subpixel bilinear cases the projection is exact or within
-1 code value. The bicubic alpha cases remain within low single-code deltas for
-the reported per-case sample, with larger residuals isolated to scale/rotation
-cases that still need a true alpha-preserving export before internal alpha can
-be locked.
+For `straight_rgba_from_premultiplied_export`, identity and subpixel cases stay
+within low single-code deltas. This locks the effect-local Geometry2 rule:
+sample in premultiplied color space, then unpremultiply back to the renderer's
+straight-RGBA boundary.
 
 ## Native Change
 
@@ -158,10 +172,7 @@ primary formula-tuning gate.
 Geometry2 is now past the parameter-mapping blocker and has a fitted bicubic
 branch plus an alpha-aware sampler wrapper. The remaining work is narrow:
 
-1. Get an alpha-preserving AE output-template/export path for the alpha steps
-   pack so internal alpha can be compared directly instead of through RGB-only
-   black projection.
-2. Re-render a composed scene that actually uses `0012=2` and check the native
+1. Re-render a composed scene that actually uses `0012=2` and check the native
    delta drop.
-3. If `0012=2` still has residuals, tune only edge handling/alpha wrapper,
+2. If `0012=2` still has residuals, tune only edge handling/alpha wrapper,
    leaving matrix math frozen.
