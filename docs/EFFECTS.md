@@ -4,7 +4,7 @@ Initial first-party AE matchName support:
 
 ```text
 ADBE Drop Shadow       approximate
-ADBE Glo2              approximate
+ADBE Glo2              approximate with traced radius route + native Gaussian blur
 ADBE Box Blur2         approximate
 ADBE Turbulent Displace approximate
 ADBE Posterize Time     temporal quantization in render-core
@@ -29,6 +29,14 @@ Effect params accept both generated payload values (`{ "0001": { "value": ... } 
 Scalar numbered params support direct numbers, wrapped `value`, and the existing simple scalar keyframe shape where the renderer already evaluates it. Color params accept normalized `0..1` channels or byte `0..255` channels.
 
 `ADBE Box Blur2` currently uses a clipped sample window at layer bounds for edge pixels, reported in the effect debug trace as `clip_to_layer_bounds`. AE repeat-edge behavior still needs an isolated probe before changing this policy.
+
+`ADBE Glo2` uses the recovered AE radius routing from Frida/Ghidra:
+`ir_gaussian_radius = glow_radius * 0.4`. Native now runs a Glow-local separable
+Gaussian approximation with support radius `ceil(ir_gaussian_radius * 2)`, while
+Box Blur and Drop Shadow keep their separate GF/alpha-blur paths. The remaining
+Glow mismatch is not considered a global alpha/M19 issue; it belongs to the
+effect-local ImageRenderer recursive Gaussian, threshold source, intensity, and
+IR composite contract.
 
 `ADBE Geometry2` uses the recovered `GPUFoundation.dll` transform matrix order.
 The 2026-05-06 isolated edge probe selected integer pixel centers and a

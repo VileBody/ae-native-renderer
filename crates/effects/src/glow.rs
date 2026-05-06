@@ -1,5 +1,5 @@
 use crate::{
-    box_blur::{blur_canvas, blur_radius, canvas_alpha_stats, canvas_debug_hash, CanvasAlphaStats},
+    box_blur::{canvas_alpha_stats, canvas_debug_hash, CanvasAlphaStats},
     param_f32_at_any, param_value, Effect, EffectContext,
 };
 use raster_cpu::{composite_normal, Canvas};
@@ -23,12 +23,11 @@ impl Effect for Glow {
     ) -> anyhow::Result<Canvas> {
         let params = GlowParams::from_json(params, ctx.time);
         let threshold = params.threshold.clamp(0.0, 255.0);
-        let radius = glow_kernel_radius(params.radius);
         let intensity = params.intensity.max(0.0);
 
         let source = glow_source(input, threshold, params.based_on);
 
-        let mut glow = blur_canvas(&source, radius);
+        let mut glow = glow_blur_canvas(&source, glow_ir_gaussian_radius(params.radius));
         scale_canvas(&mut glow, intensity);
 
         let mut output = glow;
@@ -182,10 +181,10 @@ pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugT
     let params = GlowParams::from_json(params, time);
     let threshold = params.threshold.clamp(0.0, 255.0);
     let ir_gaussian_radius = glow_ir_gaussian_radius(params.radius);
-    let kernel_radius = blur_radius(ir_gaussian_radius);
+    let kernel_radius = glow_kernel_radius(params.radius);
     let intensity = params.intensity.max(0.0);
     let source = glow_source(input, threshold, params.based_on);
-    let blurred = blur_canvas(&source, kernel_radius);
+    let blurred = glow_blur_canvas(&source, ir_gaussian_radius);
     let mut scaled = blurred.clone();
     scale_canvas(&mut scaled, intensity);
 
@@ -225,7 +224,101 @@ fn glow_ir_gaussian_radius(radius: f32) -> f32 {
 }
 
 fn glow_kernel_radius(radius: f32) -> u32 {
-    blur_radius(glow_ir_gaussian_radius(radius))
+    glow_gaussian_support_radius(glow_ir_gaussian_radius(radius))
+}
+
+fn glow_gaussian_support_radius(sigma: f32) -> u32 {
+    if sigma.is_nan() || sigma <= 0.0 {
+        return 0;
+    }
+    (sigma * 2.0).ceil().clamp(1.0, 128.0) as u32
+}
+
+fn glow_blur_canvas(input: &Canvas, sigma: f32) -> Canvas {
+    let radius = glow_gaussian_support_radius(sigma);
+    if radius == 0 || input.width == 0 || input.height == 0 {
+        return input.clone();
+    }
+
+    let weights = gaussian_weights(sigma.max(0.000_001), radius);
+    let horizontal = gaussian_pass_horizontal(input, &weights, radius);
+    gaussian_pass_vertical(&horizontal, &weights, radius)
+}
+
+fn gaussian_weights(sigma: f32, radius: u32) -> Vec<f32> {
+    let mut weights = Vec::with_capacity((radius * 2 + 1) as usize);
+    let sigma2 = 2.0 * sigma * sigma;
+    let mut sum = 0.0_f32;
+    for offset in -(radius as i32)..=(radius as i32) {
+        let x = offset as f32;
+        let weight = (-x * x / sigma2).exp();
+        weights.push(weight);
+        sum += weight;
+    }
+    for weight in &mut weights {
+        *weight /= sum;
+    }
+    weights
+}
+
+fn gaussian_pass_horizontal(input: &Canvas, weights: &[f32], radius: u32) -> Canvas {
+    let mut output = Canvas::transparent(input.width, input.height);
+    for y in 0..input.height {
+        for x in 0..input.width {
+            let mut sum = [0.0_f32; 4];
+            let mut weight_sum = 0.0_f32;
+            for offset in -(radius as i32)..=(radius as i32) {
+                let sx = x as i32 + offset;
+                if sx < 0 || sx >= input.width as i32 {
+                    continue;
+                }
+                let weight = weights[(offset + radius as i32) as usize];
+                let pixel = input.pixel(sx as u32, y);
+                for channel in 0..4 {
+                    sum[channel] += pixel[channel] as f32 * weight;
+                }
+                weight_sum += weight;
+            }
+            output.set_pixel(x, y, weighted_pixel(sum, weight_sum));
+        }
+    }
+    output
+}
+
+fn gaussian_pass_vertical(input: &Canvas, weights: &[f32], radius: u32) -> Canvas {
+    let mut output = Canvas::transparent(input.width, input.height);
+    for y in 0..input.height {
+        for x in 0..input.width {
+            let mut sum = [0.0_f32; 4];
+            let mut weight_sum = 0.0_f32;
+            for offset in -(radius as i32)..=(radius as i32) {
+                let sy = y as i32 + offset;
+                if sy < 0 || sy >= input.height as i32 {
+                    continue;
+                }
+                let weight = weights[(offset + radius as i32) as usize];
+                let pixel = input.pixel(x, sy as u32);
+                for channel in 0..4 {
+                    sum[channel] += pixel[channel] as f32 * weight;
+                }
+                weight_sum += weight;
+            }
+            output.set_pixel(x, y, weighted_pixel(sum, weight_sum));
+        }
+    }
+    output
+}
+
+fn weighted_pixel(sum: [f32; 4], weight_sum: f32) -> [u8; 4] {
+    if weight_sum <= 0.0 {
+        return [0, 0, 0, 0];
+    }
+    [
+        (sum[0] / weight_sum).round().clamp(0.0, 255.0) as u8,
+        (sum[1] / weight_sum).round().clamp(0.0, 255.0) as u8,
+        (sum[2] / weight_sum).round().clamp(0.0, 255.0) as u8,
+        (sum[3] / weight_sum).round().clamp(0.0, 255.0) as u8,
+    ]
 }
 
 fn glow_source(input: &Canvas, threshold: f32, based_on: GlowBasedOn) -> Canvas {
@@ -489,7 +582,7 @@ mod tests {
         assert_eq!(small.params.kernel_radius, 1);
         assert_eq!(large.params.radius, 10.0);
         assert_eq!(large.params.ir_gaussian_radius, 4.0);
-        assert_eq!(large.params.kernel_radius, 4);
+        assert_eq!(large.params.kernel_radius, 8);
     }
 
     #[test]
