@@ -1,6 +1,6 @@
 # Math Parity Status
 
-Status date: 2026-05-06.
+Status date: 2026-05-07.
 
 This document separates two different kinds of work:
 
@@ -35,10 +35,9 @@ Rules:
   `docs/reverse_engineering/MATH_CONTRACTS_GUARDRAILS.md`: Frida/Ghidra evidence
   first, metrics second. SDK/probes support validation; open-ended optimization
   against final diffs is not a valid promotion path.
-- As of this document date, `M14` is in transitional `formula tuning` because it
-  has Rust-native vector telemetry and a fitted baseline; future M14 changes
-  must recover the AE kernel/table contract through Frida/Ghidra evidence before
-  changing constants.
+- As of this document date, `M14` has a reverse-implemented FracAll
+  table/state/pinning subset. Future M14 changes must continue from
+  Frida/Ghidra evidence before changing constants or branch behavior.
 - A final-frame PNG diff is useful, but not enough for complex operators.
 - Temporal, glyph, graph, procedural, and coordinate operators need internal
   checkpoints such as sample times, matrices, selector weights, UV fields, or
@@ -71,7 +70,7 @@ nearby AE math backlog. Template status is derived from this table.
 | `M11` | Glow | `instrumented/testable` | `template_4th` | Effect module, typed/numbered params, unit tests, effects conformance scaffold, time-aware params, straight-RGBA alpha-policy sidecar, threshold/blurred/scaled/final alpha stats, Frida-confirmed Glow radius route `IR_GaussianBlur(radius * 0.4)`, and native separable Gaussian approximation for the Glow blur stage. | Remaining work is effect-local Glow formula tuning: exact ImageRenderer recursive Gaussian coefficients/edge policy, `Glow Based On` default/enum threshold source, intensity clamp, and final IR composite/blend route. |
 | `M12` | Geometry2 | `reverse implemented (isolated sampler/matrix)` | `scenes_3rd` | Adjustment effect module with transform-like params, time-varying scalar support, matrix/sample debug data, adjustment-stack debug sidecars, isolated coordinate-field edge probe, integer pixel-center evidence, Frida CPU-path trace (`Transform.aex+0x5f30`), wrapper ABI trace (`Transform.aex+0x5b20`), confirmed `0012` Sampling mapping (`1` bilinear, `2` bicubic), fitted `0012=2` Keys cubic kernel (`a=-0.7`), AE-TIFF raw alpha loader, alpha-aware premultiplied-sample/unpremultiply wrapper, and durable `EFF_041` AE/native gate with primary visible RGB mean `0.043613`. | Keep Geometry2 matrix/sampling frozen; composed adjustment-layer residuals now route through `M16`, not M12 retuning. |
 | `M13` | Minimax | `instrumented/testable` | `scenes_3rd` | Effect module with AE operation/channel/direction enum surface, time-aware radius, AE discriminator probe for fractional radius/direction/channel/edge behavior, native `Don't Shrink Edges` edge policy, and stable isolated gate `EFF_050` primary visible RGB mean `0.073972`. | Commit durable goldens if needed, add deep internal-alpha edge probe, then GPU/CPU path parity only if template evidence shows divergence. |
-| `M14` | Turbulent Displace | `reverse implemented (FracAll table/state subset)` | `scenes_3rd` | Frida/Ghidra recovered the CPU `PF_CMD_RENDER` route (`cmd11 -> df30 -> 3410/7de0/d070/e340/d120`), AE LCG table build, bspline interpolation, octave/fractal constants, `FracAll` field pair, fixed16 displacement scale, source-UV sign/swap rules, default offset-center, and source-space-before-transform routing for footage Turbulent-only stacks. Added Frida table regression against AE state words. `EFF_060` visible mean is now `0.659897` with alpha `0`; composed `STK_030` is `1.017883`; Geometry2 gates remain stable. | Remaining M14 work: recover/lock antialiasing footprint branch, `Frac1D` lookup branch, pinning/resize edge helpers, cycle-evolution/nonzero-seed probes, and then rerun full master gate. Do not continue by metric-only fitting. |
+| `M14` | Turbulent Displace | `reverse implemented (FracAll table/state/pinning subset)` | `scenes_3rd` | Frida/Ghidra recovered the CPU `PF_CMD_RENDER` route (`cmd11 -> df30 -> 3410/7de0/d070/e340/d120`), AE LCG table build, bspline interpolation, octave/fractal constants, `FracAll` field pair, fixed16 displacement scale, source-UV sign/swap rules, default offset-center, source-space-before-transform routing for footage Turbulent-only stacks, and `FUN_180007840` pinning fade. Added Frida table and pin-radius/corner-fade regressions. `EFF_060` visible mean is now `0.166828` with alpha `0` and max diff `1..2`; composed `STK_030` is `1.017883`; Geometry2 gates remain stable. | Remaining M14 work: recover/lock antialiasing footprint branch, `Frac1D` lookup branch, resize-layer edge helpers, cycle-evolution/nonzero-seed probes, and then rerun full master gate. Do not continue by metric-only fitting. |
 | `M15` | Posterize Time true temporal behavior | `instrumented/testable` | `scenes_3rd` | Posterize Time quantizes layer/source/effect time above stateless canvas effects, including adjustment-layer lower-stack resampling; temporal telemetry includes source-frame quantization policy/time/subframe. Post-M16 batch keeps `TMP_020` exact and `STK_030` temporal contract green. | Add only boundary-stress AE micro-scenes if future payloads expose bucket-edge drift; current `STK_030` residual is not a Posterize blocker. |
 | `M16` | Adjustment layer pipeline and effect-stack order | `reverse implemented (Geometry2 origin routing)` | `scenes_3rd` | Adjustment layers apply known effects to accumulated canvas; per-effect input/output hashes, bucket/live param times, and Geometry2/Minimax/Turbulent debug checkpoints are logged for adjustment stacks. `ADJ_010..052` isolate the canvas contract. Geometry2-on-adjustment now forces comp/adjustment origin `(0,0)` instead of alpha-bounds origin: `STK_031` primary visible RGB mean dropped from `8.511274` to `0.032308`, and `ADJ_040` from `20.167969` to `0.087540`. | Keep this origin routing locked; route remaining `STK_030` residuals to `M13`/`M14`/`M15` and only revisit M16 for new effect classes or non-normal adjustment semantics. |
 | `M17` | Collapse transformations / text precomp graph | `instrumented/testable` | payload structure for `template_4th`, `impulse_2nd`; future nested cases | Nested graph validation, cycle detection, text/solid-only collapse, parent matrix composition, scale-aware collapsed text rasterization, collapse micro-scene scaffold. | AE collapsed/rasterized pair goldens, vector/text deferred-raster telemetry, wider nested-case coverage. |
@@ -89,7 +88,7 @@ Observed from the current imported scene snapshots in
 | --- | --- | --- | --- |
 | `template_4th` | `M01`, `M02`, `M03`, `M04`, `M05`, `M06`, `M10`, `M11`, `M17`, `M19` | `implemented approximate` | All observed core modules exist natively. The weakest used modules are text/glyph layout, Range Selector reveal, transform/composite, and final AE effect tuning. `M10`/`M11` already have scaffolding, but no AE goldens. |
 | `impulse_2nd` | `M01`, `M02`, `M03`, `M04`, `M05`, `M07`, `M08`, `M10`, `M17`, `M19` | `implemented approximate` | Native output covers the observed feature set, but glyph animator math, generated bounce selector, blur animator, Drop Shadow, and compositing are still approximations without AE telemetry/goldens. |
-| `scenes_3rd` | `M01`, `M02`, `M03`, `M04`, `M05`, `M06`, `M09`, `M12`, `M13`, `M14`, `M15`, `M16`, `M19` | `implemented approximate` | All observed modules now have native behavior. Geometry2, Minimax, Posterize Time, adjustment routing, alpha compositing, and Turbulent Displace are testable; M14 has entered formula tuning, but the template remains approximate until Turbulent field parity and expression/text residuals are locked. |
+| `scenes_3rd` | `M01`, `M02`, `M03`, `M04`, `M05`, `M06`, `M09`, `M12`, `M13`, `M14`, `M15`, `M16`, `M19` | `implemented approximate` | All observed modules now have native behavior. Geometry2, Minimax, Posterize Time, adjustment routing, alpha compositing, and the isolated Turbulent FracAll/pinning subset are testable/reverse-backed; the template remains approximate until composed stack spikes plus expression/text residuals are locked. |
 
 ## Master Gate Snapshot
 
@@ -112,7 +111,7 @@ Current dashboard:
 | --- | --- | --- |
 | `template_4th` | `approximate` | Text/layout, Glow, Drop Shadow, collapse/text graph remain formula-tuning candidates. |
 | `impulse_2nd` | `approximate` | Point-Light glyph animator, expression selector, and Drop Shadow remain approximate. |
-| `scenes_3rd` | `approximate` | `TMP_020` is accepted; `STK_030` improved from `3.741755` to `3.424827` after M14 sine fit v1 but is still dominated by Turbulent Displace field parity. |
+| `scenes_3rd` | `approximate` | `TMP_020` is accepted; isolated `EFF_060` FracAll/pinning is now near-locked (`0.166828`, max `1..2`), while `STK_030` remains `1.017883` with spikes on frames `1` and `59`, so the next blocker is composed stack/edge timing rather than isolated Turbulent field math. |
 
 ### Step 1 Component Passport
 

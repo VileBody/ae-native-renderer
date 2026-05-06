@@ -6,7 +6,7 @@ Initial first-party AE matchName support:
 ADBE Drop Shadow       approximate
 ADBE Glo2              approximate with traced radius route + native Gaussian blur
 ADBE Box Blur2         approximate
-ADBE Turbulent Displace recovered FracAll table/state subset
+ADBE Turbulent Displace recovered FracAll table/state/pinning subset
 ADBE Posterize Time     temporal quantization in render-core
 ADBE Geometry2          approximate
 ADBE Minimax            approximate
@@ -68,8 +68,9 @@ window samples transparent black outside image bounds; with `0005 = 1`, the
 window clips to image bounds. `minimax_debug_trace` reports the resolved edge
 policy for stack telemetry.
 
-`ADBE Turbulent Displace` is still approximate, but it is now in formula tuning
-rather than telemetry-only mode. Its field telemetry includes the AE-wrapper
+`ADBE Turbulent Displace` is still approximate for the full AE surface, but the
+current FracAll/pinning subset is reverse implemented rather than telemetry-only.
+Its field telemetry includes the AE-wrapper
 contract block from the Ghidra pass: inferred internal displacement mode, kernel
 path (`FracAll` vs `Frac1D`), fixed16 amount/size/offset/evolution, complexity
 integer/fraction split, H/V lookup lengths, and control slots
@@ -82,11 +83,15 @@ The current field model is the recovered AE `FracAll` table/state subset, not
 the older fitted sine approximation. Frida/Ghidra evidence now covers the CPU
 render route, table build, bspline interpolation, octave/fractal constants,
 fixed16 displacement scale, default offset-center, source-UV sign/swap rules,
-and source-space-before-transform routing for footage Turbulent-only stacks.
-The isolated `EFF_060` primary visible mean is `0.659897` with alpha `0`, and
-composed `STK_030` is `1.017883`. `0008` cycle evolution and `0009` cycle
-revolutions are recorded, with non-default-cycle parity still pending. Future
-changes must stay reverse-first: recover remaining sampler/edge/`Frac1D`
+source-space-before-transform routing for footage Turbulent-only stacks, and
+the `FUN_180007840` pinning fade: fixed16 displacement radius divided by
+`49152`, octave amplitude sum, smoothstep attenuation near pinned edges, and
+AE enum-to-edge flags. The isolated `EFF_060` primary visible mean is now
+`0.166828` with alpha `0` and max diff `1..2`; composed `STK_030` remains
+`1.017883`, which points its residual away from isolated FracAll/pinning field
+math. `0008` cycle evolution and `0009` cycle revolutions are recorded, with
+non-default-cycle parity still pending. Future changes must stay reverse-first:
+recover remaining sampler/resize/`Frac1D`
 contracts through Frida/Ghidra evidence, then use coordinate-field vectors and
 master-gate metrics
 only to validate the recovered implementation.
@@ -120,4 +125,4 @@ only to validate the recovered implementation.
 4. `ADBE Minimax` — AE enum/channel/direction/radius edge surface with remaining GPU/CPU and deep alpha probes.
 5. `ADBE Posterize Time` — temporal frame quantization above canvas effects.
 6. `ADBE Geometry2` — transform-like adjustment effect.
-7. `ADBE Turbulent Displace` — Rust-sampled sine/noise displacement approximation with AE control slots, AE-wrapper telemetry, and fitted type-1 field constants.
+7. `ADBE Turbulent Displace` — recovered FracAll table/state/pinning subset with remaining Frac1D/resize/AA/cycle branches.

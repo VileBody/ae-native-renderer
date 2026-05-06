@@ -145,7 +145,7 @@
       "title": "Turbulent Displace coordinate-field warp",
       "ladder": "operator_static",
       "modules": ["M14"],
-      "frames_to_compare": [0, 15, 30, 45],
+      "frames_to_compare": [0, 1, 15, 30, 45, 59],
       "assets": ["coordinate_field", "checkerboard_16"]
     },
     {

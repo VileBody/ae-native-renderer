@@ -290,7 +290,7 @@ pub fn turbulent_displace_field_telemetry(
     let resolved = raw.resolved_for_input(input);
     let ae_wrapper = ae_wrapper_telemetry(input, raw);
     let field_state = field_state_telemetry(resolved, ae_wrapper);
-    let model = AeTurbulentFieldModel::new(resolved);
+    let model = AeTurbulentFieldModel::new(input, resolved);
     let samples = turbulent_probe_points(input)
         .into_iter()
         .map(|[x, y]| field_sample(input, &model, x, y))
@@ -332,7 +332,7 @@ pub fn turbulent_displace_field_samples(
     points: &[[u32; 2]],
 ) -> Vec<TurbulentDisplaceFieldSample> {
     let resolved = TurbulentDisplaceParams::from_json(params, time).resolved_for_input(input);
-    let model = AeTurbulentFieldModel::new(resolved);
+    let model = AeTurbulentFieldModel::new(input, resolved);
     points
         .iter()
         .map(|&[x, y]| field_sample(input, &model, x, y))
@@ -415,7 +415,7 @@ fn to_fixed16(value: f32) -> i32 {
 
 fn displace_canvas(input: &Canvas, resolved: TurbulentDisplaceResolvedParams) -> Canvas {
     let mut output = Canvas::transparent(input.width, input.height);
-    let model = AeTurbulentFieldModel::new(resolved);
+    let model = AeTurbulentFieldModel::new(input, resolved);
 
     for y in 0..input.height {
         for x in 0..input.width {
@@ -454,17 +454,20 @@ struct AeTurbulentFieldModel {
     resolved: TurbulentDisplaceResolvedParams,
     amount_pixels: f64,
     coordinate_scale: f64,
+    pinning: AeTurbulentPinningState,
     table: Vec<f64>,
 }
 
 impl AeTurbulentFieldModel {
-    fn new(resolved: TurbulentDisplaceResolvedParams) -> Self {
+    fn new(input: &Canvas, resolved: TurbulentDisplaceResolvedParams) -> Self {
         let coordinate_scale = ae_coordinate_scale(resolved);
+        let pinning = AeTurbulentPinningState::new(input, resolved);
         let table = ae_turbulent_table(resolved);
         Self {
             amount_pixels: resolved.amplitude as f64,
             resolved,
             coordinate_scale,
+            pinning,
             table,
         }
     }
@@ -485,6 +488,13 @@ impl AeTurbulentFieldModel {
         let y_coord =
             (y as f64 - self.resolved.offset[1] as f64) * self.coordinate_scale + AE_NOISE_Y_BIAS;
         let [first, second] = self.field_pair(x_coord, y_coord);
+        let [first, second] = self.pinning.apply(
+            x as f64,
+            y as f64,
+            first,
+            second,
+            matches!(self.resolved.displacement_type, 3 | 7),
+        );
         [first as f32, second as f32]
     }
 
@@ -547,6 +557,136 @@ impl AeTurbulentFieldModel {
         } else {
             ae_table_lookup_bilinear(&self.table, x, y)
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AeTurbulentPinningState {
+    mode: u32,
+    left: bool,
+    right: bool,
+    top: bool,
+    bottom: bool,
+    left_threshold: f64,
+    top_threshold: f64,
+    inv_width: f64,
+    inv_height: f64,
+    right_threshold: f64,
+    bottom_threshold: f64,
+}
+
+impl AeTurbulentPinningState {
+    fn new(input: &Canvas, resolved: TurbulentDisplaceResolvedParams) -> Self {
+        let pinning = resolved.pinning;
+        let mode = if pinning > 9 {
+            2
+        } else if pinning > 2 {
+            1
+        } else {
+            0
+        };
+        let (left, right, top, bottom) = ae_pinning_flags(pinning);
+        let raw_radius = ae_pinning_radius(resolved);
+        let width_radius = raw_radius.min(input.width as f64 * 0.5).max(0.0);
+        let height_radius = raw_radius.min(input.height as f64 * 0.5).max(0.0);
+
+        Self {
+            mode,
+            left,
+            right,
+            top,
+            bottom,
+            left_threshold: width_radius,
+            top_threshold: height_radius,
+            inv_width: if width_radius > 0.0 {
+                1.0 / width_radius
+            } else {
+                0.0
+            },
+            inv_height: if height_radius > 0.0 {
+                1.0 / height_radius
+            } else {
+                0.0
+            },
+            right_threshold: input.width as f64 - width_radius - 1.0,
+            bottom_threshold: input.height as f64 - height_radius - 1.0,
+        }
+    }
+
+    fn apply(
+        &self,
+        x: f64,
+        y: f64,
+        mut dx_noise: f64,
+        mut dy_noise: f64,
+        swirl_mode: bool,
+    ) -> [f64; 2] {
+        if self.mode == 0 {
+            return [dx_noise, dy_noise];
+        }
+
+        let horizontal_edge_affects_x = !swirl_mode;
+        let vertical_edge_affects_x = swirl_mode;
+
+        if self.left && x < self.left_threshold {
+            let factor = ae_smoothstep(x * self.inv_width);
+            ae_apply_pinning_factor(
+                self.mode,
+                horizontal_edge_affects_x,
+                factor,
+                &mut dx_noise,
+                &mut dy_noise,
+            );
+        }
+        if self.right && self.right_threshold < x {
+            let factor = ae_smoothstep(1.0 - (x - self.right_threshold) * self.inv_width);
+            ae_apply_pinning_factor(
+                self.mode,
+                horizontal_edge_affects_x,
+                factor,
+                &mut dx_noise,
+                &mut dy_noise,
+            );
+        }
+        if self.top && y < self.top_threshold {
+            let factor = ae_smoothstep(y * self.inv_height);
+            ae_apply_pinning_factor(
+                self.mode,
+                vertical_edge_affects_x,
+                factor,
+                &mut dx_noise,
+                &mut dy_noise,
+            );
+        }
+        if self.bottom && self.bottom_threshold < y {
+            let factor = ae_smoothstep(1.0 - (y - self.bottom_threshold) * self.inv_height);
+            ae_apply_pinning_factor(
+                self.mode,
+                vertical_edge_affects_x,
+                factor,
+                &mut dx_noise,
+                &mut dy_noise,
+            );
+        }
+
+        [dx_noise, dy_noise]
+    }
+}
+
+fn ae_apply_pinning_factor(
+    mode: u32,
+    component_is_x: bool,
+    factor: f64,
+    dx_noise: &mut f64,
+    dy_noise: &mut f64,
+) {
+    if mode == 2 {
+        *dx_noise *= factor;
+        *dy_noise *= factor;
+    } else if component_is_x {
+        *dx_noise *= factor;
+    } else {
+        *dy_noise *= factor;
     }
 }
 
@@ -667,6 +807,7 @@ const AE_DERIVATIVE_STEP: f64 = 0.25;
 const AE_LACUNARITY: f64 = 1.77;
 const AE_OCTAVE_INITIAL_AMPLITUDE: f64 = 0.25;
 const AE_OCTAVE_PERSISTENCE: f64 = 0.7;
+const AE_PINNING_RADIUS_FIXED16_DIVISOR: f64 = 49_152.0;
 const AE_TABLE_SIZE: usize = 64;
 const AE_TABLE_LEN: usize = AE_TABLE_SIZE * AE_TABLE_SIZE;
 const AE_EVOLUTION_STEP_FIXED16: i32 = 0x5a0000;
@@ -698,6 +839,30 @@ fn ae_coordinate_scale(resolved: TurbulentDisplaceResolvedParams) -> f64 {
         scale *= AE_RADIAL_COORD_SCALE;
     }
     scale
+}
+
+fn ae_pinning_radius(resolved: TurbulentDisplaceResolvedParams) -> f64 {
+    let mut amplitude_sum = 0.0;
+    let mut octave_amplitude = AE_OCTAVE_INITIAL_AMPLITUDE;
+    for _ in 0..resolved.complexity {
+        amplitude_sum += octave_amplitude;
+        octave_amplitude *= AE_OCTAVE_PERSISTENCE;
+    }
+    amplitude_sum += octave_amplitude * resolved.complexity_fraction as f64;
+    resolved.amplitude as f64 * AE_FIXED16 / AE_PINNING_RADIUS_FIXED16_DIVISOR * amplitude_sum
+}
+
+fn ae_pinning_flags(pinning: u32) -> (bool, bool, bool, bool) {
+    match pinning {
+        3 | 11 => (true, true, true, true),
+        4 | 12 => (false, false, true, true),
+        5 | 13 => (true, true, false, false),
+        6 | 14 => (true, false, false, false),
+        7 | 15 => (false, true, false, false),
+        8 | 16 => (false, false, true, false),
+        9 | 17 => (false, false, false, true),
+        _ => (false, false, false, false),
+    }
 }
 
 fn ae_turbulent_table(resolved: TurbulentDisplaceResolvedParams) -> Vec<f64> {
@@ -1309,8 +1474,8 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 0.0,
                 evolution: 0.0,
-                field_hash: 2683613110696052001,
-                out_of_bounds_count: 11351,
+                field_hash: 3028150081714970098,
+                out_of_bounds_count: 0,
                 center_displacement: [7.687488, -6.037524],
                 center_source_uv: [263.6875, 249.96248],
                 center_sample_xy: [264, 250],
@@ -1318,8 +1483,8 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 0.5,
                 evolution: 45.0,
-                field_hash: 15425239775886312303,
-                out_of_bounds_count: 7082,
+                field_hash: 10862748942888375438,
+                out_of_bounds_count: 0,
                 center_displacement: [-1.7932884, -5.3806043],
                 center_source_uv: [254.20671, 250.6194],
                 center_sample_xy: [254, 251],
@@ -1327,8 +1492,8 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 1.0,
                 evolution: 90.0,
-                field_hash: 1218132080864211637,
-                out_of_bounds_count: 3103,
+                field_hash: 7140164094812065403,
+                out_of_bounds_count: 0,
                 center_displacement: [-4.21859, -3.4364386],
                 center_source_uv: [251.7814, 252.56357],
                 center_sample_xy: [252, 253],
@@ -1336,8 +1501,8 @@ mod tests {
             Eff060TraceSidecarFrame {
                 time: 1.5,
                 evolution: 135.0,
-                field_hash: 4697150789677612090,
-                out_of_bounds_count: 4222,
+                field_hash: 12438177449885630029,
+                out_of_bounds_count: 0,
                 center_displacement: [1.5609949, -4.2884946],
                 center_source_uv: [257.561, 251.7115],
                 center_sample_xy: [258, 252],
@@ -1414,5 +1579,35 @@ mod tests {
                 table[index]
             );
         }
+    }
+
+    #[test]
+    fn ae_pinning_radius_and_corner_fade_match_frida_state() {
+        let input = Canvas::transparent(512, 512);
+        let params = json!({
+            "0002": 45,
+            "0003": 65,
+            "0005": 2,
+            "0006": 0,
+            "0012": 3
+        });
+        let resolved = turbulent_displace_resolved_params_for_input(&input, &params, 0.0);
+
+        assert_close(ae_pinning_radius(resolved) as f32, 82.875);
+        assert_eq!(ae_pinning_flags(resolved.pinning), (true, true, true, true));
+
+        let samples = turbulent_displace_field_samples(
+            &input,
+            &params,
+            0.0,
+            &[[0, 0], [256, 256], [511, 511]],
+        );
+
+        assert_eq!(samples[0].displacement, [0.0, 0.0]);
+        assert_eq!(samples[0].source_uv, [0.0, 0.0]);
+        assert_close(samples[1].displacement[0], 7.687488);
+        assert_close(samples[1].displacement[1], -6.037524);
+        assert_eq!(samples[2].displacement, [-0.0, 0.0]);
+        assert_eq!(samples[2].source_uv, [511.0, 511.0]);
     }
 }

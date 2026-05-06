@@ -460,12 +460,20 @@ fn turbulent_samples(request: PathBuf, out: Option<PathBuf>) -> anyhow::Result<(
             frame.time,
             &frame.points,
         );
+        let telemetry = effects::turbulent_displace::turbulent_displace_field_telemetry(
+            &input,
+            &frame.params,
+            frame.time,
+        );
         frames.push(json!({
             "case_id": frame.case_id,
             "frame": frame.frame,
             "time": frame.time,
             "params": frame.params,
             "resolved": turbulent_resolved_params_json(resolved),
+            "field_hash": format!("{:016x}", telemetry.field_hash),
+            "field_hash_u64": telemetry.field_hash,
+            "out_of_bounds_count": telemetry.out_of_bounds_count,
             "sampler_mode": "nearest_round",
             "sample_count": samples.len(),
             "samples": samples.into_iter().map(turbulent_sample_json).collect::<Vec<_>>()
