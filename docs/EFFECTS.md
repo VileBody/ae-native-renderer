@@ -46,7 +46,10 @@ path. A follow-up Frida dump of the `Transform.aex+0x5b20` wrapper confirmed
 `PF_ParamDef[12]` as `Sampling`; word offset `56` low `s32` carries `1` for
 Bilinear and `2` for Bicubic. Native dispatches on that value. The 2026-05-06
 Sampling=2 fit pass selected a Keys cubic kernel with `a=-0.7`, transparent
-partial-footprint edges, and round quantization for the bicubic branch.
+partial-footprint edges, and round quantization for the bicubic branch. The
+alpha follow-up selected an effect-local sampler wrapper: accumulate
+premultiplied color, then unpremultiply back to the renderer's straight-RGBA
+boundary.
 
 `ADBE Minimax` implements the enum surface recovered from the AEX strings and
 CPU callbacks. The native pass model is one-dimensional horizontal/vertical

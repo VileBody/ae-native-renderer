@@ -180,6 +180,7 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
 
     source_pixels = {source.id: primitive_pixels(source.id) for source in SOURCES}
     images: dict[str, object] = {}
+    image_meta: dict[str, dict[str, object]] = {}
     case_rows: list[dict[str, object]] = []
     missing = []
     for expected in expected_cases():
@@ -195,6 +196,12 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
             missing.append(cid)
             continue
         with Image.open(png) as im:
+            bands = im.getbands()
+            image_meta[cid] = {
+                "mode": im.mode,
+                "bands": list(bands),
+                "has_alpha_band": "A" in bands,
+            }
             images[cid] = im.convert("RGBA").copy()
         case_rows.append(
             {
@@ -212,6 +219,8 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
     q2_cases = [row for row in case_rows if row["sampling_id"] == "Q2_BICUBIC"]
     opaque_q1_cases = [row for row in q1_cases if row["source_id"] == "fit_texture"]
     opaque_q2_cases = [row for row in q2_cases if row["source_id"] == "fit_texture"]
+    alpha_q1_cases = [row for row in q1_cases if row["source_id"] == "alpha_steps"]
+    alpha_q2_cases = [row for row in q2_cases if row["source_id"] == "alpha_steps"]
     q1_sanity = score_cases(
         q1_cases,
         images,
@@ -259,10 +268,36 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
         ),
         None,
     )
+    alpha_q1_scores = [
+        score_cases(alpha_q1_cases, images, source_pixels, candidate, sample_step=1)
+        for candidate in build_alpha_candidates("bilinear")
+    ]
+    alpha_q1_scores.sort(key=lambda item: (item["mean_abs_channel_delta"], item["max_channel_delta"], item["id"]))
+    alpha_q2_scores = [
+        score_cases(alpha_q2_cases, images, source_pixels, candidate, sample_step=1)
+        for candidate in build_alpha_candidates("bicubic")
+    ]
+    alpha_q2_scores.sort(key=lambda item: (item["mean_abs_channel_delta"], item["max_channel_delta"], item["id"]))
+    alpha_q1_rgb_projection_scores = [
+        score_cases_rgb_over_black(alpha_q1_cases, images, source_pixels, candidate, sample_step=1)
+        for candidate in build_alpha_candidates("bilinear")
+    ]
+    alpha_q1_rgb_projection_scores.sort(
+        key=lambda item: (item["mean_abs_channel_delta"], item["max_channel_delta"], item["id"])
+    )
+    alpha_q2_rgb_projection_scores = [
+        score_cases_rgb_over_black(alpha_q2_cases, images, source_pixels, candidate, sample_step=1)
+        for candidate in build_alpha_candidates("bicubic")
+    ]
+    alpha_q2_rgb_projection_scores.sort(
+        key=lambda item: (item["mean_abs_channel_delta"], item["max_channel_delta"], item["id"])
+    )
 
     out_dir.mkdir(parents=True, exist_ok=True)
     write_candidate_csv(out_dir / "fit_candidates.csv", candidate_scores)
     write_candidate_csv(out_dir / "fit_candidates_refined_top16.csv", refined_scores)
+    write_candidate_csv(out_dir / "alpha_rgb_projection_candidates_q1.csv", alpha_q1_rgb_projection_scores)
+    write_candidate_csv(out_dir / "alpha_rgb_projection_candidates_q2.csv", alpha_q2_rgb_projection_scores)
     write_case_csv(out_dir / "measured_cases.csv", case_rows)
     if winner and write_diffs > 0:
         winner_candidate = next(candidate for candidate in candidates if candidate.id == winner["id"])
@@ -293,6 +328,29 @@ def fit_pack(pack: Path, png_root: Path, out_dir: Path, *, write_diffs: int) -> 
                 "current_native_catmull_rom": opaque_current,
                 "top_candidates": opaque_scores[:12],
                 "note": "Opaque texture cases avoid alpha/premultiply ambiguity and are the primary kernel-family signal.",
+            },
+            "alpha_steps_fit": {
+                "q1_bilinear": {
+                    "winner": alpha_q1_scores[0] if alpha_q1_scores else None,
+                    "top_candidates": alpha_q1_scores[:12],
+                },
+                "q2_bicubic": {
+                    "winner": alpha_q2_scores[0] if alpha_q2_scores else None,
+                    "top_candidates": alpha_q2_scores[:12],
+                },
+                "rgb_over_black_projection": {
+                    "q1_bilinear": {
+                        "winner": alpha_q1_rgb_projection_scores[0] if alpha_q1_rgb_projection_scores else None,
+                        "top_candidates": alpha_q1_rgb_projection_scores[:12],
+                    },
+                    "q2_bicubic": {
+                        "winner": alpha_q2_rgb_projection_scores[0] if alpha_q2_rgb_projection_scores else None,
+                        "top_candidates": alpha_q2_rgb_projection_scores[:12],
+                    },
+                    "note": "Compares AE RGB-only outputs against candidate pixels projected over black. This is the acceptance metric when the output module did not preserve alpha.",
+                },
+                "output_observation": summarize_alpha_output(alpha_q1_cases + alpha_q2_cases, images, image_meta),
+                "note": "Raw RGBA candidates compare straight/premult variants directly. If output_observation.has_alpha_band_case_count is zero, raw RGBA includes synthetic opaque alpha from RGB-only exports and must not drive internal alpha-policy changes.",
             },
             "top_candidates_refined_full_frame": refined_scores[:16],
             "top_candidates": candidate_scores[:24],
@@ -377,6 +435,112 @@ def score_cases(
     }
 
 
+def score_cases_rgb_over_black(
+    rows: Iterable[dict[str, object]],
+    images: dict[str, object],
+    source_pixels: dict[str, list[tuple[int, int, int, int]]],
+    candidate: Candidate,
+    sample_step: int,
+) -> dict[str, object]:
+    totals = 0
+    max_delta = 0
+    changed_pixels = 0
+    total_pixels = 0
+    per_case = []
+    for row in rows:
+        source = source_by_id(str(row["source_id"]))
+        transform = TRANSFORM_BY_ID[str(row["transform_id"])]
+        image = images[str(row["case_id"])]
+        pixels = image.load()
+        width, height = image.size
+        case_total = 0
+        case_max = 0
+        case_changed = 0
+        for y in range(0, height, sample_step):
+            for x in range(0, width, sample_step):
+                observed = tuple(int(c) for c in pixels[x, y][:3])
+                rgba = candidate.sample(
+                    source_pixels[source.id],
+                    width,
+                    height,
+                    source_uv(transform, x, y),
+                    candidate.edge,
+                    candidate.round_mode,
+                    **candidate.params,
+                )
+                pred = project_rgb_over_black(rgba, candidate)
+                pixel_changed = False
+                for channel in range(3):
+                    delta = abs(observed[channel] - pred[channel])
+                    totals += delta
+                    case_total += delta
+                    max_delta = max(max_delta, delta)
+                    case_max = max(case_max, delta)
+                    pixel_changed = pixel_changed or delta != 0
+                if pixel_changed:
+                    changed_pixels += 1
+                    case_changed += 1
+                total_pixels += 1
+        per_case.append(
+            {
+                "case_id": row["case_id"],
+                "mean_abs_channel_delta": round(case_total / max(total_pixels_for_step(width, height, sample_step) * 3, 1), 6),
+                "max_channel_delta": case_max,
+                "changed_pixel_count": case_changed,
+            }
+        )
+    denom = max(total_pixels * 3, 1)
+    return {
+        "id": candidate.id,
+        "sampler": candidate.sampler,
+        "edge": candidate.edge,
+        "round_mode": candidate.round_mode,
+        "params": candidate.params,
+        "case_count": len(per_case),
+        "sample_step": sample_step,
+        "metric_policy": "rgb_over_black_projection",
+        "mean_abs_channel_delta": round(totals / denom, 6),
+        "max_channel_delta": max_delta,
+        "changed_pixel_count": changed_pixels,
+        "per_case": per_case[:12],
+    }
+
+
+def project_rgb_over_black(rgba: tuple[int, int, int, int], candidate: Candidate) -> tuple[int, int, int]:
+    if "premult_keep" in candidate.sampler:
+        return rgba[:3]
+    alpha = rgba[3] / 255.0
+    return tuple(quantize(rgba[channel] * alpha, candidate.round_mode) for channel in range(3))
+
+
+def summarize_alpha_output(
+    rows: list[dict[str, object]],
+    images: dict[str, object],
+    image_meta: dict[str, dict[str, object]],
+) -> dict[str, object]:
+    modes: dict[str, int] = {}
+    alpha_band_cases = 0
+    alpha_extrema = []
+    for row in rows:
+        cid = str(row["case_id"])
+        meta = image_meta.get(cid, {})
+        mode = str(meta.get("mode") or "unknown")
+        bands = ",".join(str(part) for part in meta.get("bands", []))
+        modes[f"{mode}:{bands}"] = modes.get(f"{mode}:{bands}", 0) + 1
+        if bool(meta.get("has_alpha_band")):
+            alpha_band_cases += 1
+        image = images[cid]
+        extrema = image.getchannel("A").getextrema()
+        alpha_extrema.append({"case_id": cid, "min": int(extrema[0]), "max": int(extrema[1])})
+    return {
+        "case_count": len(rows),
+        "mode_counts": modes,
+        "has_alpha_band_case_count": alpha_band_cases,
+        "all_cases_have_alpha_band": alpha_band_cases == len(rows) if rows else False,
+        "converted_rgba_alpha_extrema_sample": alpha_extrema[:12],
+    }
+
+
 def total_pixels_for_step(width: int, height: int, step: int) -> int:
     return len(range(0, width, step)) * len(range(0, height, step))
 
@@ -413,6 +577,98 @@ def build_candidates() -> list[Candidate]:
                         )
                     )
     return out
+
+
+def build_alpha_candidates(sampler: str) -> list[Candidate]:
+    if sampler == "bilinear":
+        return [
+            Candidate("bilinear_straight_transparent_round", "bilinear_straight", "transparent", "round", {}, bilinear_sample),
+            Candidate(
+                "bilinear_premult_unpremultiply_transparent_round",
+                "bilinear_premult_unpremultiply",
+                "transparent",
+                "round",
+                {},
+                bilinear_sample_premult_unpremultiply,
+            ),
+            Candidate(
+                "bilinear_premult_keep_transparent_round",
+                "bilinear_premult_keep",
+                "transparent",
+                "round",
+                {},
+                bilinear_sample_premult_keep,
+            ),
+            Candidate("bilinear_straight_clamp_round", "bilinear_straight", "clamp", "round", {}, bilinear_sample),
+            Candidate(
+                "bilinear_premult_unpremultiply_clamp_round",
+                "bilinear_premult_unpremultiply",
+                "clamp",
+                "round",
+                {},
+                bilinear_sample_premult_unpremultiply,
+            ),
+            Candidate(
+                "bilinear_premult_keep_clamp_round",
+                "bilinear_premult_keep",
+                "clamp",
+                "round",
+                {},
+                bilinear_sample_premult_keep,
+            ),
+        ]
+    if sampler == "bicubic":
+        return [
+            Candidate(
+                "keys_a_-0.700_straight_transparent_round",
+                "keys_cubic_straight",
+                "transparent",
+                "round",
+                {"a": -0.7},
+                keys_cubic_sample,
+            ),
+            Candidate(
+                "keys_a_-0.700_premult_unpremultiply_transparent_round",
+                "keys_cubic_premult_unpremultiply",
+                "transparent",
+                "round",
+                {"a": -0.7},
+                keys_cubic_sample_premult_unpremultiply,
+            ),
+            Candidate(
+                "keys_a_-0.700_premult_keep_transparent_round",
+                "keys_cubic_premult_keep",
+                "transparent",
+                "round",
+                {"a": -0.7},
+                keys_cubic_sample_premult_keep,
+            ),
+            Candidate(
+                "keys_a_-0.700_straight_clamp_round",
+                "keys_cubic_straight",
+                "clamp",
+                "round",
+                {"a": -0.7},
+                keys_cubic_sample,
+            ),
+            Candidate(
+                "keys_a_-0.700_premult_unpremultiply_clamp_round",
+                "keys_cubic_premult_unpremultiply",
+                "clamp",
+                "round",
+                {"a": -0.7},
+                keys_cubic_sample_premult_unpremultiply,
+            ),
+            Candidate(
+                "keys_a_-0.700_premult_keep_clamp_round",
+                "keys_cubic_premult_keep",
+                "clamp",
+                "round",
+                {"a": -0.7},
+                keys_cubic_sample_premult_keep,
+            ),
+        ]
+    raise ValueError(sampler)
 
 
 def source_by_id(source_id: str) -> SourceDef:
@@ -456,6 +712,44 @@ def bilinear_sample(
     return weighted_sample(pixels, width, height, weights_x, weights_y, edge, round_mode)
 
 
+def bilinear_sample_premult_unpremultiply(
+    pixels: list[tuple[int, int, int, int]],
+    width: int,
+    height: int,
+    uv: tuple[float, float],
+    edge: str,
+    round_mode: str,
+    **_params: float,
+) -> tuple[int, int, int, int]:
+    x, y = uv
+    x0 = math.floor(x)
+    y0 = math.floor(y)
+    tx = x - x0
+    ty = y - y0
+    weights_x = [(x0, 1.0 - tx), (x0 + 1, tx)]
+    weights_y = [(y0, 1.0 - ty), (y0 + 1, ty)]
+    return weighted_sample_premult(pixels, width, height, weights_x, weights_y, edge, round_mode, "unpremultiply")
+
+
+def bilinear_sample_premult_keep(
+    pixels: list[tuple[int, int, int, int]],
+    width: int,
+    height: int,
+    uv: tuple[float, float],
+    edge: str,
+    round_mode: str,
+    **_params: float,
+) -> tuple[int, int, int, int]:
+    x, y = uv
+    x0 = math.floor(x)
+    y0 = math.floor(y)
+    tx = x - x0
+    ty = y - y0
+    weights_x = [(x0, 1.0 - tx), (x0 + 1, tx)]
+    weights_y = [(y0, 1.0 - ty), (y0 + 1, ty)]
+    return weighted_sample_premult(pixels, width, height, weights_x, weights_y, edge, round_mode, "keep")
+
+
 def keys_cubic_sample(
     pixels: list[tuple[int, int, int, int]],
     width: int,
@@ -481,6 +775,64 @@ def keys_cubic_sample(
         [(y0 + i - 1, wy[i]) for i in range(4)],
         edge,
         round_mode,
+    )
+
+
+def keys_cubic_sample_premult_unpremultiply(
+    pixels: list[tuple[int, int, int, int]],
+    width: int,
+    height: int,
+    uv: tuple[float, float],
+    edge: str,
+    round_mode: str,
+    *,
+    a: float,
+) -> tuple[int, int, int, int]:
+    x, y = uv
+    x0 = math.floor(x)
+    y0 = math.floor(y)
+    tx = x - x0
+    ty = y - y0
+    wx = keys_weights(tx, a)
+    wy = keys_weights(ty, a)
+    return weighted_sample_premult(
+        pixels,
+        width,
+        height,
+        [(x0 + i - 1, wx[i]) for i in range(4)],
+        [(y0 + i - 1, wy[i]) for i in range(4)],
+        edge,
+        round_mode,
+        "unpremultiply",
+    )
+
+
+def keys_cubic_sample_premult_keep(
+    pixels: list[tuple[int, int, int, int]],
+    width: int,
+    height: int,
+    uv: tuple[float, float],
+    edge: str,
+    round_mode: str,
+    *,
+    a: float,
+) -> tuple[int, int, int, int]:
+    x, y = uv
+    x0 = math.floor(x)
+    y0 = math.floor(y)
+    tx = x - x0
+    ty = y - y0
+    wx = keys_weights(tx, a)
+    wy = keys_weights(ty, a)
+    return weighted_sample_premult(
+        pixels,
+        width,
+        height,
+        [(x0 + i - 1, wx[i]) for i in range(4)],
+        [(y0 + i - 1, wy[i]) for i in range(4)],
+        edge,
+        round_mode,
+        "keep",
     )
 
 
@@ -559,6 +911,51 @@ def weighted_sample(
             for channel in range(CHANNELS):
                 accum[channel] += sample[channel] * weight
     return tuple(quantize(value, round_mode) for value in accum)
+
+
+def weighted_sample_premult(
+    pixels: list[tuple[int, int, int, int]],
+    width: int,
+    height: int,
+    weights_x: list[tuple[int, float]],
+    weights_y: list[tuple[int, float]],
+    edge: str,
+    round_mode: str,
+    output_policy: str,
+) -> tuple[int, int, int, int]:
+    premult = [0.0, 0.0, 0.0]
+    alpha = 0.0
+    for sy, wy in weights_y:
+        for sx, wx in weights_x:
+            weight = wx * wy
+            if edge == "clamp":
+                ix = min(width - 1, max(0, sx))
+                iy = min(height - 1, max(0, sy))
+                sample = pixels[iy * width + ix]
+            elif edge == "transparent":
+                if sx < 0 or sy < 0 or sx >= width or sy >= height:
+                    sample = (0, 0, 0, 0)
+                else:
+                    sample = pixels[sy * width + sx]
+            else:
+                raise ValueError(edge)
+            sample_alpha = sample[3] / 255.0
+            for channel in range(3):
+                premult[channel] += sample[channel] * sample_alpha * weight
+            alpha += sample[3] * weight
+    if output_policy == "keep":
+        rgb = premult
+    elif output_policy == "unpremultiply":
+        alpha_norm = alpha / 255.0
+        rgb = [0.0, 0.0, 0.0] if alpha_norm <= 1e-9 else [value / alpha_norm for value in premult]
+    else:
+        raise ValueError(output_policy)
+    return (
+        quantize(rgb[0], round_mode),
+        quantize(rgb[1], round_mode),
+        quantize(rgb[2], round_mode),
+        quantize(alpha, round_mode),
+    )
 
 
 def quantize(value: float, mode: str) -> int:

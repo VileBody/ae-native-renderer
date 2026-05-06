@@ -570,22 +570,9 @@ fn sample_geometry2_bilinear(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
     let y0 = source_uv.1.floor() as i32;
     let tx = source_uv.0 - x0 as f32;
     let ty = source_uv.1 - y0 as f32;
-    let mut out = [0_u8; 4];
-    for channel in 0..4 {
-        let mut accum = 0.0_f32;
-        for (dy, wy) in [(0_i32, 1.0 - ty), (1_i32, ty)] {
-            for (dx, wx) in [(0_i32, 1.0 - tx), (1_i32, tx)] {
-                let sx = x0 + dx;
-                let sy = y0 + dy;
-                if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
-                    continue;
-                }
-                accum += input.pixel(sx as u32, sy as u32)[channel] as f32 * wx * wy;
-            }
-        }
-        out[channel] = accum.round().clamp(0.0, 255.0) as u8;
-    }
-    out
+    let weights_x = [(x0, 1.0 - tx), (x0 + 1, tx)];
+    let weights_y = [(y0, 1.0 - ty), (y0 + 1, ty)];
+    sample_geometry2_premult_unpremultiply(input, &weights_x, &weights_y)
 }
 
 fn sample_geometry2(input: &Canvas, source_uv: (f32, f32), mode: Geometry2SamplerMode) -> [u8; 4] {
@@ -605,21 +592,51 @@ fn sample_geometry2_bicubic(input: &Canvas, source_uv: (f32, f32)) -> [u8; 4] {
     let ty = source_uv.1 - y0 as f32;
     let wx = cubic_keys_weights(tx, GEOMETRY2_BICUBIC_KEYS_A);
     let wy = cubic_keys_weights(ty, GEOMETRY2_BICUBIC_KEYS_A);
-    let mut out = [0_u8; 4];
-    for channel in 0..4 {
-        let mut accum = 0.0_f32;
-        for (ky, wy_value) in wy.into_iter().enumerate() {
-            for (kx, wx_value) in wx.into_iter().enumerate() {
-                let sx = x0 + kx as i32 - 1;
-                let sy = y0 + ky as i32 - 1;
-                if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
-                    continue;
-                }
-                accum += input.pixel(sx as u32, sy as u32)[channel] as f32 * wx_value * wy_value;
+    let weights_x = [
+        (x0 - 1, wx[0]),
+        (x0, wx[1]),
+        (x0 + 1, wx[2]),
+        (x0 + 2, wx[3]),
+    ];
+    let weights_y = [
+        (y0 - 1, wy[0]),
+        (y0, wy[1]),
+        (y0 + 1, wy[2]),
+        (y0 + 2, wy[3]),
+    ];
+    sample_geometry2_premult_unpremultiply(input, &weights_x, &weights_y)
+}
+
+fn sample_geometry2_premult_unpremultiply(
+    input: &Canvas,
+    weights_x: &[(i32, f32)],
+    weights_y: &[(i32, f32)],
+) -> [u8; 4] {
+    let mut premult = [0.0_f32; 3];
+    let mut alpha = 0.0_f32;
+    for (sy, wy) in weights_y {
+        for (sx, wx) in weights_x {
+            if *sx < 0 || *sy < 0 || *sx >= input.width as i32 || *sy >= input.height as i32 {
+                continue;
             }
+            let weight = wx * wy;
+            let sample = input.pixel(*sx as u32, *sy as u32);
+            let sample_alpha = sample[3] as f32 / 255.0;
+            for channel in 0..3 {
+                premult[channel] += sample[channel] as f32 * sample_alpha * weight;
+            }
+            alpha += sample[3] as f32 * weight;
         }
-        out[channel] = accum.round().clamp(0.0, 255.0) as u8;
     }
+
+    let alpha_norm = alpha / 255.0;
+    let mut out = [0_u8; 4];
+    if alpha_norm > 1e-9 {
+        for channel in 0..3 {
+            out[channel] = (premult[channel] / alpha_norm).round().clamp(0.0, 255.0) as u8;
+        }
+    }
+    out[3] = alpha.round().clamp(0.0, 255.0) as u8;
     out
 }
 
@@ -746,8 +763,10 @@ fn nearly_eq(left: f32, right: f32) -> bool {
     (left - right).abs() < 0.001
 }
 
-const GEOMETRY2_BILINEAR_SAMPLER_MODE: &str = "bilinear_partial_footprint_transparent";
-const GEOMETRY2_BICUBIC_SAMPLER_MODE: &str = "bicubic_keys_a_-0.7_partial_footprint_transparent";
+const GEOMETRY2_BILINEAR_SAMPLER_MODE: &str =
+    "bilinear_premult_unpremultiply_partial_footprint_transparent";
+const GEOMETRY2_BICUBIC_SAMPLER_MODE: &str =
+    "bicubic_keys_a_-0.7_premult_unpremultiply_partial_footprint_transparent";
 const GEOMETRY2_BICUBIC_KEYS_A: f32 = -0.7;
 
 #[cfg(test)]
@@ -1075,7 +1094,7 @@ mod tests {
         );
         assert_eq!(
             sample_geometry2_bilinear(&input, (1.5, 0.0)),
-            [50, 10, 0, 128]
+            [100, 20, 0, 128]
         );
         assert!(geometry2_out_of_bounds(
             &input,
@@ -1097,6 +1116,18 @@ mod tests {
             (2.0, 0.0),
             Geometry2SamplerMode::Bilinear
         ));
+    }
+
+    #[test]
+    fn geometry_sampler_interpolates_premultiplied_color_and_returns_straight_rgba() {
+        let mut input = Canvas::transparent(2, 1);
+        input.set_pixel(0, 0, [200, 100, 0, 128]);
+        input.set_pixel(1, 0, [0, 0, 200, 255]);
+
+        assert_eq!(
+            sample_geometry2_bilinear(&input, (0.5, 0.0)),
+            [67, 33, 133, 192]
+        );
     }
 
     #[test]

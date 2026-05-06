@@ -64,15 +64,18 @@ Candidate scores:
 
 ## Native Change
 
-`ADBE Geometry2` now samples bilinear taps independently:
+`ADBE Geometry2` now uses partial-footprint transparent bilinear sampling:
 
 - inside-source taps contribute normal source pixels;
 - outside-source taps contribute transparent black;
 - a sample is fully out of bounds only when the whole bilinear footprint cannot touch the source.
 
+A later alpha-step pass upgraded color accumulation to premultiplied sampling
+with unpremultiply back to straight RGBA; the edge policy above is unchanged.
+
 Telemetry labels:
 
-- `sampler_mode`: `bilinear_partial_footprint_transparent`
+- `sampler_mode`: `bilinear_premult_unpremultiply_partial_footprint_transparent`
 - `edge_policy`: `partial_footprint_transparent_out_of_bounds`
 
 ## Conformance Check

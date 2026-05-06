@@ -24,6 +24,9 @@ Do the Geometry2 bicubic pass in one fact loop:
 | Fit report | `target/ae_agents/geometry2_sampling2_fit_20260506/fit_report.json` |
 | Candidate CSV | `target/ae_agents/geometry2_sampling2_fit_20260506/fit_candidates_refined_top16.csv` |
 | Diff/native PNGs | `target/ae_agents/geometry2_sampling2_fit_20260506/winner_diffs` |
+| Alpha AE render output | `target/ae_remote/ae_trace_batch_28_b84356833885_20260506_125433` |
+| Alpha Frida trace | `target/dynamic_tools_85/geometry2_sampling2_alpha_trace_20260506/batch_28_b84356833885.jsonl` |
+| Combined alpha fit report | `target/ae_agents/geometry2_sampling2_fit_combined_alpha_20260506/report/fit_report.json` |
 
 ## Frida Gate
 
@@ -82,6 +85,41 @@ Q1 bilinear sanity on the opaque texture is `1.687966` mean channel delta. The
 remaining Q1 error is concentrated at fractional/edge samples, so this pass
 does not reopen the recovered matrix order.
 
+## Alpha Sampler Follow-Up
+
+The alpha-specific rerun rendered 28 `G2S_ALPHA_STEPS_*` cases under the same
+Frida-gated CPU path:
+
+- `gpu_render_path_seen=false`
+- `Transform.aex+0x5f30` and `Transform.aex+0x5b20` were both hit 1237 times
+- Stalker again confirmed `Transform.aex+0x5f30 -> 0x5b20`
+- `PF_ParamDef[12]` still reports `Sampling`
+
+The output module on AE85 produced RGB-only PNG/TIFF files for these cases:
+
+```text
+mode_counts = {"RGB:R,G,B": 28}
+has_alpha_band_case_count = 0
+```
+
+So raw RGBA comparisons are diagnostic only: Pillow converts those RGB frames
+to synthetic `A=255`, which makes direct alpha deltas meaningless.
+
+The harness now records an explicit `rgb_over_black_projection` metric for
+these cases. That metric compares AE's actual RGB output against each native
+candidate after source-over projection on black:
+
+| Branch | Winner | Mean Abs Channel Delta |
+| --- | --- | ---: |
+| `0012=1` bilinear | `bilinear_premult_unpremultiply_transparent_round` | `0.140631` |
+| `0012=2` bicubic | `keys_a_-0.700_premult_unpremultiply_transparent_round` | `0.371739` |
+
+For identity and most subpixel bilinear cases the projection is exact or within
+1 code value. The bicubic alpha cases remain within low single-code deltas for
+the reported per-case sample, with larger residuals isolated to scale/rotation
+cases that still need a true alpha-preserving export before internal alpha can
+be locked.
+
 ## Native Change
 
 `Geometry2SamplerMode::Bicubic` now uses a Keys cubic kernel with:
@@ -89,13 +127,15 @@ does not reopen the recovered matrix order.
 ```text
 a = -0.7
 edge = transparent partial footprint
+alpha policy = premultiplied accumulation, then unpremultiply to straight RGBA
 quantization = round to nearest after clamp
 ```
 
-The sampler label is now:
+The sampler labels are now:
 
 ```text
-bicubic_keys_a_-0.7_partial_footprint_transparent
+bilinear_premult_unpremultiply_partial_footprint_transparent
+bicubic_keys_a_-0.7_premult_unpremultiply_partial_footprint_transparent
 ```
 
 ## Verification
@@ -104,19 +144,23 @@ bicubic_keys_a_-0.7_partial_footprint_transparent
 cargo test -p effects geometry -- --nocapture
 cargo test -p render-core adjustment_stack_debug_records_geometry_minimax_and_turbulent_checkpoints -- --nocapture
 cargo run -p render-cli -- conformance-pack --case EFF_040
-python3 -m py_compile fixtures/ae_probe_pack/geometry2_sampling2_fit/scripts/measure_geometry2_sampling2_fit.py scripts/ae_trace_drop_shadow_softness.py
+python3 -m py_compile fixtures/ae_probe_pack/geometry2_sampling2_fit/scripts/measure_geometry2_sampling2_fit.py scripts/ae_trace_drop_shadow_softness.py scripts/summarize_ae_frida_trace.py
 ```
 
-`EFF_040` stays unchanged (`rgba_mean=0.060292`, visible RGB mean `0.045086`,
-max `61`) because that fixture resolves `sampling=1`.
+After the alpha wrapper patch, `EFF_040` remains close on the M19-preferred
+visible metric: `rgb_straight_source_over_ae_background=0.054426`,
+`background_alpha_normalized=0.100533`, raw `rgba_mean=0.100533`, max `250`.
+The max delta is raw/foreground RGB under partial alpha and is not used as the
+primary formula-tuning gate.
 
 ## Next
 
 Geometry2 is now past the parameter-mapping blocker and has a fitted bicubic
-branch. The remaining work is narrow:
+branch plus an alpha-aware sampler wrapper. The remaining work is narrow:
 
-1. Add alpha-specific sampler cases separately, because transparent impulse
-   cases show alpha/premultiply ambiguity and should not tune the cubic kernel.
+1. Get an alpha-preserving AE output-template/export path for the alpha steps
+   pack so internal alpha can be compared directly instead of through RGB-only
+   black projection.
 2. Re-render a composed scene that actually uses `0012=2` and check the native
    delta drop.
 3. If `0012=2` still has residuals, tune only edge handling/alpha wrapper,

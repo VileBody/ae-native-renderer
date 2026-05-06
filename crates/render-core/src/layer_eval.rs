@@ -4741,7 +4741,7 @@ mod tests {
         );
         assert_eq!(
             geometry.trace["sampler_mode"],
-            "bilinear_partial_footprint_transparent"
+            "bilinear_premult_unpremultiply_partial_footprint_transparent"
         );
         assert!(geometry.trace["samples"].as_array().unwrap().len() > 0);
 
