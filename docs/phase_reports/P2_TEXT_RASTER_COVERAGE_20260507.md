@@ -87,3 +87,21 @@ and partially implemented at the glyph-id API boundary, but not parity locked.
 The next unknown is not glyph id or layout; it is the BEE/TXT cached coverage
 handoff after outline bounds. The next reverse pass should trace/predecode that
 cache/fill path rather than tuning fontdue coverage by final PNG metrics.
+
+## Follow-Up: BEE Fill Path Found
+
+The follow-up pass found and live-confirmed the cached fill path:
+
+```text
+BEE_TextRenderNode::ctor              0x1805c0780
+BEE_SubLayerRenderNode::Render        0x1804c2720
+BEE_TextRenderNode vtable +0xd8       0x1805c0c20
+BEE IAT TXT_DrawChar target           TXT.dll + 0x413d0
+```
+
+Details and samples are in:
+
+```text
+docs/phase_reports/P2_BEE_TEXT_RASTER_FILL_PATH_20260507.md
+target/dynamic_tools_85/bee_text_rendernode_RAS010_20260507/RAS_010.jsonl
+```

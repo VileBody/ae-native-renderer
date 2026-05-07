@@ -503,6 +503,104 @@
       ]
     },
     {
+      "id": "bee_text_raster_backtrace_ras010",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_bee_temporal",
+      "project": "agent_bee_temporal",
+      "process": "BEE.dll",
+      "notes": "BEE call-chain offsets captured by Frida from RAS_010 TXT_PlayCharOutlines/CoreTextOutlines backtraces. Target is the cached text coverage/fill path after TXT bounds-outline playback.",
+      "targets": [
+        { "label": "BEE_text_outline_caller_5bcf29", "address": "0x1805bcf29" },
+        { "label": "BEE_text_outline_chain_5bf1a1", "address": "0x1805bf1a1" },
+        { "label": "BEE_text_render_chain_49779e", "address": "0x18049779e" },
+        { "label": "BEE_text_render_chain_49bfa3", "address": "0x18049bfa3" },
+        { "label": "BEE_text_render_chain_4a2be3", "address": "0x1804a2be3" },
+        { "label": "BEE_text_render_chain_49aeb2", "address": "0x18049aeb2" },
+        { "label": "BEE_text_render_chain_49efed", "address": "0x18049efed" }
+      ]
+    },
+    {
+      "id": "bee_text_raster_render_node_strings",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_bee_temporal",
+      "project": "agent_bee_temporal",
+      "process": "BEE.dll",
+      "notes": "String/data xrefs for likely final text/vector raster execution nodes discovered after BEE/TXT RAS_010 trace: RasterizeAVLayerNode, SubLayerRenderNode, and PSLRasterizeLayer.",
+      "targets": [
+        { "label": "BEE_string_RasterizeAVLayerNode_Render", "address": "0x180f60258" },
+        { "label": "BEE_string_SubLayerRenderNode_missing_cache", "address": "0x180fb05c8" },
+        { "label": "BEE_string_SubLayerRenderNode_Render", "address": "0x180fb05f0" },
+        { "label": "BEE_string_PSLRasterizeLayer_primary", "address": "0x18107e668" },
+        { "label": "BEE_string_PSLRasterizeLayer_secondary", "address": "0x181501f74" }
+      ]
+    },
+    {
+      "id": "bee_text_raster_render_node_functions",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_bee_temporal",
+      "project": "agent_bee_temporal",
+      "process": "BEE.dll",
+      "notes": "Concrete render-node functions found from string xrefs: likely final raster/fill execution after TXT grid/bounds creation.",
+      "targets": [
+        { "label": "BEE_RasterizeAVLayerNode_Render_2a3550", "address": "0x1802a3550" },
+        { "label": "BEE_SubLayerRenderNode_missing_cache_4bfba0", "address": "0x1804bfba0" },
+        { "label": "BEE_SubLayerRenderNode_Render_4c1a60", "address": "0x1804c1a60" },
+        { "label": "BEE_PSLRasterizeLayer_825d20", "address": "0x180825d20" }
+      ]
+    },
+    {
+      "id": "bee_text_raster_render_node_impls",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_bee_temporal",
+      "project": "agent_bee_temporal",
+      "process": "BEE.dll",
+      "notes": "Follow-up from SubLayer/Rasterize node constructors and vtables. These are candidates for actual cached vector/text sublayer raster execution.",
+      "targets": [
+        { "label": "BEE_RasterizeAVLayerNode_builder_2a2920", "address": "0x1802a2920" },
+        { "label": "BEE_RasterizeAVLayerNode_render_impl_2a3ca0", "address": "0x1802a3ca0" },
+        { "label": "BEE_RasterizeAVLayerNode_vtable_candidate_2a44c0", "address": "0x1802a44c0" },
+        { "label": "BEE_SubLayerRenderNode_ctor_text_caller_5c0780", "address": "0x1805c0780" },
+        { "label": "BEE_SubLayerRenderNode_vtable_00_4c0110", "address": "0x1804c0110" },
+        { "label": "BEE_SubLayerRenderNode_vtable_28_4c0a70", "address": "0x1804c0a70" },
+        { "label": "BEE_SubLayerRenderNode_vtable_50_4c17f0", "address": "0x1804c17f0" },
+        { "label": "BEE_SubLayerRenderNode_vtable_70_4c21d0", "address": "0x1804c21d0" },
+        { "label": "BEE_SubLayerRenderNode_render_impl_4c2720", "address": "0x1804c2720" },
+        { "label": "BEE_SubLayerRenderNode_purge_callback_4c2670", "address": "0x1804c2670" },
+        { "label": "BEE_SubLayerRenderNode_vtable_f0_4c1f10", "address": "0x1804c1f10" }
+      ]
+    },
+    {
+      "id": "bee_text_render_node_vtable_impls",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_bee_temporal",
+      "project": "agent_bee_temporal",
+      "process": "BEE.dll",
+      "notes": "BEE_TextRenderNode vtable slots discovered from ctor 0x1805c0780. These are likely cached glyph coverage/fill payload hooks reached by the base SubLayerRenderNode render loop.",
+      "targets": [
+        { "label": "BEE_TextRenderNode_dtor_or_reset_5c0870", "address": "0x1805c0870" },
+        { "label": "BEE_TextRenderNode_bounds_or_grid_5c0920", "address": "0x1805c0920" },
+        { "label": "BEE_TextRenderNode_vtable_88_5c08f0", "address": "0x1805c08f0" },
+        { "label": "BEE_TextRenderNode_vtable_90_5c0960", "address": "0x1805c0960" },
+        { "label": "BEE_TextRenderNode_vtable_98_5c0990", "address": "0x1805c0990" },
+        { "label": "BEE_TextRenderNode_vtable_a0_5c0aa0", "address": "0x1805c0aa0" },
+        { "label": "BEE_TextRenderNode_vtable_a8_5c0b40", "address": "0x1805c0b40" },
+        { "label": "BEE_TextRenderNode_vtable_b0_5c0b60", "address": "0x1805c0b60" },
+        { "label": "BEE_TextRenderNode_vtable_b8_5c0b80", "address": "0x1805c0b80" },
+        { "label": "BEE_TextRenderNode_sublayer_opacity_c0_5c0a80", "address": "0x1805c0a80" },
+        { "label": "BEE_TextRenderNode_vtable_c8_5c0930", "address": "0x1805c0930" },
+        { "label": "BEE_TextRenderNode_composite_mode_d0_5c0b00", "address": "0x1805c0b00" },
+        { "label": "BEE_TextRenderNode_render_payload_d8_5c0c20", "address": "0x1805c0c20" },
+        { "label": "BEE_TextRenderNode_secondary_00_5c08e0", "address": "0x1805c08e0" },
+        { "label": "BEE_TextRenderNode_secondary_08_5c0c04", "address": "0x1805c0c04" },
+        { "label": "BEE_TextRenderNode_secondary_10_5c0864", "address": "0x1805c0864" }
+      ]
+    },
+    {
       "id": "scripting_expression_host",
       "area": "expression",
       "enabled": true,

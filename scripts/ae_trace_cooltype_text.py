@@ -89,9 +89,64 @@ const TXT_HOOKS = [
   {module: "TXT.dll", name: "TXT_Grid_InitializeAnchorPoints", offset: 0x056110, surface: "txt_grid_anchor_points"}
 ];
 
+const BEE_HOOKS = [
+  {module: "BEE.dll", name: "BEE_TextLayer_GetTextGrid_entry_5bccb0", offset: 0x5bccb0, surface: "bee_text_entry"},
+  {module: "BEE.dll", name: "BEE_TextLayer_SubLayerRenderCount_entry_5bf0e0", offset: 0x5bf0e0, surface: "bee_text_entry"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_ctor_5c0780", offset: 0x5c0780, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_SubLayerRenderNode_ctor_4bfba0", offset: 0x4bfba0, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_SubLayerRenderNode_render_impl_4c2720", offset: 0x4c2720, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_SubLayerRenderNode_vtable_f0_4c1f10", offset: 0x4c1f10, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_RasterizeAVSubLayerNode_builder_2a2920", offset: 0x2a2920, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_RasterizeAVLayerNode_render_impl_2a3ca0", offset: 0x2a3ca0, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_PSLRasterizeLayer_wrapper_825d20", offset: 0x825d20, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_dtor_or_reset_5c0870", offset: 0x5c0870, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_bounds_or_grid_5c0920", offset: 0x5c0920, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_vtable_88_5c08f0", offset: 0x5c08f0, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_vtable_90_5c0960", offset: 0x5c0960, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_vtable_98_5c0990", offset: 0x5c0990, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_vtable_a0_5c0aa0", offset: 0x5c0aa0, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_vtable_a8_5c0b40", offset: 0x5c0b40, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_vtable_b0_5c0b60", offset: 0x5c0b60, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_vtable_b8_5c0b80", offset: 0x5c0b80, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_sublayer_opacity_c0_5c0a80", offset: 0x5c0a80, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_vtable_c8_5c0930", offset: 0x5c0930, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_composite_mode_d0_5c0b00", offset: 0x5c0b00, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_TextRenderNode_render_payload_d8_5c0c20", offset: 0x5c0c20, surface: "bee_text_render_node"},
+  {module: "BEE.dll", name: "BEE_render_graph_entry_497510", offset: 0x497510, surface: "bee_render_graph_entry"},
+  {module: "BEE.dll", name: "BEE_render_graph_entry_49bba0", offset: 0x49bba0, surface: "bee_render_graph_entry"},
+  {module: "BEE.dll", name: "BEE_render_graph_entry_4a2580", offset: 0x4a2580, surface: "bee_render_graph_entry"},
+  {module: "BEE.dll", name: "BEE_render_graph_entry_49abf0", offset: 0x49abf0, surface: "bee_render_graph_entry"},
+  {module: "BEE.dll", name: "BEE_render_graph_entry_49eee0", offset: 0x49eee0, surface: "bee_render_graph_entry"},
+  {module: "BEE.dll", name: "BEE_text_outline_callsite_5bcf29", offset: 0x5bcf29, surface: "bee_text_callsite"},
+  {module: "BEE.dll", name: "BEE_text_outline_callsite_5bf1a1", offset: 0x5bf1a1, surface: "bee_text_callsite"},
+  {module: "BEE.dll", name: "BEE_text_render_callsite_49779e", offset: 0x49779e, surface: "bee_text_callsite"},
+  {module: "BEE.dll", name: "BEE_text_render_callsite_49bfa3", offset: 0x49bfa3, surface: "bee_text_callsite"},
+  {module: "BEE.dll", name: "BEE_text_render_callsite_4a2be3", offset: 0x4a2be3, surface: "bee_text_callsite"},
+  {module: "BEE.dll", name: "BEE_text_render_callsite_49aeb2", offset: 0x49aeb2, surface: "bee_text_callsite"},
+  {module: "BEE.dll", name: "BEE_text_render_callsite_49efed", offset: 0x49efed, surface: "bee_text_callsite"}
+];
+
+const BEE_IMPORT_HOOKS = [
+  {module: "BEE.dll", name: "BEE_IMPORT_TXT_DrawChar_edf6b0", iatOffset: 0xedf6b0, surface: "bee_text_drawchar_target"}
+];
+
 function hookEnabled(hook) {
   if (hookProfile === "all") {
     return true;
+  }
+  if (hookProfile === "bee-text-render") {
+    return [
+      "bee_text_render_node",
+      "bee_text_drawchar_target"
+    ].indexOf(hook.surface) !== -1;
+  }
+  if (hookProfile === "bee-text-raster") {
+    return hook.module === "BEE.dll" || [
+      "core_text_outlines",
+      "core_text_outlines_v2",
+      "txt_play_char_outlines",
+      "txt_play_char_outlines_impl"
+    ].indexOf(hook.surface) !== -1;
   }
   if (hookProfile === "txt-source-rect") {
     return hook.module === "TXT.dll" || ["core_widths", "core_bboxes"].indexOf(hook.surface) !== -1;
@@ -153,7 +208,7 @@ function hookEnabled(hook) {
 }
 
 function allHooks() {
-  return COOLTYPE_HOOKS.concat(TXT_HOOKS);
+  return COOLTYPE_HOOKS.concat(TXT_HOOKS).concat(BEE_HOOKS);
 }
 
 function selectedHooks(moduleName) {
@@ -310,6 +365,14 @@ function readMatrix3D64(p) {
     out.push(safeReadDouble(q.add(i * 8)));
   }
   return out;
+}
+
+function readPixelFloat4(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return [safeReadFloat(q), safeReadFloat(q.add(4)), safeReadFloat(q.add(8)), safeReadFloat(q.add(12))];
 }
 
 function dumpGridChar(p) {
@@ -566,6 +629,161 @@ function dumpTextRasterSignature(ctx, hook) {
   return out;
 }
 
+function dumpBeePointerSnapshot(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    words: memoryWords(q, 24),
+    pointer_targets: pointerArrayWithModules(q, 16),
+    bytes_0x00_0x80: memoryBytes(q, 0x80)
+  };
+}
+
+function readI32Array(p, count) {
+  if (isNullPtr(p)) {
+    return [];
+  }
+  const q = ptr(p);
+  const n = Math.max(0, Math.min(count || 0, 64));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const r = q.add(i * 4);
+    out.push({
+      index: i,
+      s32: safeReadS32(r),
+      u32: safeReadU32(r)
+    });
+  }
+  return out;
+}
+
+function dumpBeeRenderNodeSnapshot(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const sublayerCount = safeReadS32(q.add(0x27c));
+  const sublayerStatePtr = safeReadPointer(q.add(0x280));
+  return {
+    ptr: q.toString(),
+    vtable_0x00: moduleOffset(safeReadPointer(q)),
+    secondary_cookie_0x10: safeReadPointerString(q.add(0x10)),
+    layer_ptr_0x110: safeReadPointerString(q.add(0x110)),
+    selected_sublayer_0x118_s32: safeReadS32(q.add(0x118)),
+    selected_sublayer_0x118_u32: safeReadU32(q.add(0x118)),
+    cache_time_or_key_0x120: safeReadPointerString(q.add(0x120)),
+    cache_ptr_0x128: safeReadPointerString(q.add(0x128)),
+    render_options_0x130_words: memoryWords(q.add(0x130), 12),
+    sublayer_count_0x27c: sublayerCount,
+    sublayer_state_ptr_0x280: sublayerStatePtr === null ? null : sublayerStatePtr.toString(),
+    sublayer_state_i32: sublayerStatePtr === null ? [] : readI32Array(sublayerStatePtr, sublayerCount || 0),
+    text_layer_ptr_0x290: safeReadPointerString(q.add(0x290)),
+    refcount_iface_0x298: safeReadPointerString(q.add(0x298)),
+    words_0x00_0x180: memoryWords(q, 48),
+    words_0x180_0x2c0: memoryWords(q.add(0x180), 40)
+  };
+}
+
+function dumpBeeTxtDrawCharCallsite(ctx) {
+  const stack = preCallStackArgs(ctx);
+  const arg0 = nativeArgU32(ctx.rcx);
+  return {
+    regs: regSnapshot(ctx),
+    pre_call_stack: stack,
+    field_is_two_arg0_u32: arg0,
+    field_is_two_arg0_u8: arg0 === null ? null : arg0 & 0xff,
+    clip_or_status_arg1_s32: nativeArgS32(ctx.rdx),
+    glyph_id_arg2_u32: nativeArgU32(ctx.r8),
+    glyph_id_arg2_s32: nativeArgS32(ctx.r8),
+    glyph_matrix_arg3: readMatrix3D64(ptr(ctx.r9)),
+    text_matrix_arg5: readMatrix3D64(stack.p5_0x20),
+    draw_fill_arg6_s32: stack.p6_0x28_s32,
+    draw_stroke_arg7_s32: stack.p7_0x30_s32,
+    gridchar_flag_arg8_s32: stack.p8_0x38_s32,
+    fill_color_arg9_f32: readPixelFloat4(stack.p9_0x40),
+    stroke_color_arg10_f32: readPixelFloat4(stack.p10_0x48),
+    stroke_width_arg11_f64: stack.p11_0x50_f64,
+    line_join_arg12_s32: stack.p12_0x58_s32,
+    miter_limit_arg13_f64: stack.p13_0x60_f64,
+    orientation_arg14_s32: stack.p14_0x68_s32,
+    font_dict_ref_arg15: stack.p15_0x70,
+    vector_float_arg16: stack.p16_0x78,
+    pf_world_arg17: stack.p17_0x80
+  };
+}
+
+function drawCharEntryStackArgs(ctx) {
+  const rsp = ptr(ctx.rsp);
+  return {
+    p5_matrix_0x28: safeReadPointerString(rsp.add(0x28)),
+    p6_draw_fill_0x30_s32: safeReadS32(rsp.add(0x30)),
+    p7_draw_stroke_0x38_s32: safeReadS32(rsp.add(0x38)),
+    p8_gridchar_flag_0x40_s32: safeReadS32(rsp.add(0x40)),
+    p9_fill_color_0x48: safeReadPointerString(rsp.add(0x48)),
+    p10_stroke_color_0x50: safeReadPointerString(rsp.add(0x50)),
+    p11_stroke_width_0x58_f64: safeReadDouble(rsp.add(0x58)),
+    p12_line_join_0x60_s32: safeReadS32(rsp.add(0x60)),
+    p13_miter_limit_0x68_f64: safeReadDouble(rsp.add(0x68)),
+    p14_orientation_0x70_s32: safeReadS32(rsp.add(0x70)),
+    p15_font_dict_ref_0x78: safeReadPointerString(rsp.add(0x78)),
+    p16_vector_float_0x80: safeReadPointerString(rsp.add(0x80)),
+    p17_pf_world_0x88: safeReadPointerString(rsp.add(0x88))
+  };
+}
+
+function dumpTxtDrawCharEntry(ctx) {
+  const stack = drawCharEntryStackArgs(ctx);
+  const arg0 = nativeArgU32(ctx.rcx);
+  return {
+    regs: regSnapshot(ctx),
+    stack: stack,
+    field_is_two_arg0_u32: arg0,
+    field_is_two_arg0_u8: arg0 === null ? null : arg0 & 0xff,
+    clip_or_status_arg1_s32: nativeArgS32(ctx.rdx),
+    glyph_id_arg2_u32: nativeArgU32(ctx.r8),
+    glyph_id_arg2_s32: nativeArgS32(ctx.r8),
+    glyph_matrix_arg3: readMatrix3D64(ptr(ctx.r9)),
+    text_matrix_arg5: readMatrix3D64(stack.p5_matrix_0x28),
+    draw_fill_arg6_s32: stack.p6_draw_fill_0x30_s32,
+    draw_stroke_arg7_s32: stack.p7_draw_stroke_0x38_s32,
+    gridchar_flag_arg8_s32: stack.p8_gridchar_flag_0x40_s32,
+    fill_color_arg9_f32: readPixelFloat4(stack.p9_fill_color_0x48),
+    stroke_color_arg10_f32: readPixelFloat4(stack.p10_stroke_color_0x50),
+    stroke_width_arg11_f64: stack.p11_stroke_width_0x58_f64,
+    line_join_arg12_s32: stack.p12_line_join_0x60_s32,
+    miter_limit_arg13_f64: stack.p13_miter_limit_0x68_f64,
+    orientation_arg14_s32: stack.p14_orientation_0x70_s32,
+    font_dict_ref_arg15: stack.p15_font_dict_ref_0x78,
+    vector_float_arg16: stack.p16_vector_float_0x80,
+    pf_world_arg17: stack.p17_pf_world_0x88
+  };
+}
+
+function dumpBeeSignature(ctx, hook) {
+  const stack = stackArgs(ctx);
+  return {
+    hook: hook.name,
+    surface: hook.surface,
+    regs: regSnapshot(ctx),
+    stack: stack,
+    rcx_object: dumpBeePointerSnapshot(ptr(ctx.rcx)),
+    rdx_object: dumpBeePointerSnapshot(ptr(ctx.rdx)),
+    r8_object: dumpBeePointerSnapshot(ptr(ctx.r8)),
+    r9_object: dumpBeePointerSnapshot(ptr(ctx.r9)),
+    stack_p5_object: dumpBeePointerSnapshot(stack.p5_0x28),
+    stack_p6_object: dumpBeePointerSnapshot(stack.p6_0x30),
+    stack_p7_object: dumpBeePointerSnapshot(stack.p7_0x38),
+    stack_p8_object: dumpBeePointerSnapshot(stack.p8_0x40_ptr),
+    rcx_render_node: dumpBeeRenderNodeSnapshot(ptr(ctx.rcx)),
+    rdx_render_node: dumpBeeRenderNodeSnapshot(ptr(ctx.rdx)),
+    txt_draw_char_callsite: hook.name === "BEE_TextRenderNode_TXT_DrawChar_callsite_5c100a" ? dumpBeeTxtDrawCharCallsite(ctx) : null,
+    backtrace: backtrace(ctx)
+  };
+}
+
 function dumpTextObject(p) {
   if (isNullPtr(p)) {
     return null;
@@ -602,6 +820,25 @@ function stackArgs(ctx) {
     p8_0x40_s32: safeReadS32(rsp.add(0x40)),
     p9_0x48: safeReadPointerString(rsp.add(0x48)),
     p10_0x50: safeReadPointerString(rsp.add(0x50))
+  };
+}
+
+function preCallStackArgs(ctx) {
+  const rsp = ptr(ctx.rsp);
+  return {
+    p5_0x20: safeReadPointerString(rsp.add(0x20)),
+    p6_0x28_s32: safeReadS32(rsp.add(0x28)),
+    p7_0x30_s32: safeReadS32(rsp.add(0x30)),
+    p8_0x38_s32: safeReadS32(rsp.add(0x38)),
+    p9_0x40: safeReadPointerString(rsp.add(0x40)),
+    p10_0x48: safeReadPointerString(rsp.add(0x48)),
+    p11_0x50_f64: safeReadDouble(rsp.add(0x50)),
+    p12_0x58_s32: safeReadS32(rsp.add(0x58)),
+    p13_0x60_f64: safeReadDouble(rsp.add(0x60)),
+    p14_0x68_s32: safeReadS32(rsp.add(0x68)),
+    p15_0x70: safeReadPointerString(rsp.add(0x70)),
+    p16_0x78: safeReadPointerString(rsp.add(0x78)),
+    p17_0x80: safeReadPointerString(rsp.add(0x80))
   };
 }
 
@@ -718,6 +955,9 @@ function dumpEnterCommon(ctx, hook) {
   }
   if (hook.module === "TXT.dll") {
     payload.txt_signature = txtSignatureSnapshot(ctx, hook);
+  }
+  if (hook.module === "BEE.dll") {
+    payload.bee_signature = dumpBeeSignature(ctx, hook);
   }
   if (hook.surface.indexOf("core_text_") === 0 || hook.surface.indexOf("txt_play_char_outlines") === 0) {
     payload.text_raster_signature = dumpTextRasterSignature(ctx, hook);
@@ -853,6 +1093,9 @@ function installHook(module, hook) {
         if (hook.module === "TXT.dll") {
           payload.txt_signature_after = txtSignatureSnapshot(this.ctx, hook);
         }
+        if (hook.module === "BEE.dll") {
+          payload.bee_signature_after = dumpBeeSignature(this.ctx, hook);
+        }
         if (hook.surface.indexOf("core_text_") === 0 || hook.surface.indexOf("txt_play_char_outlines") === 0) {
           payload.text_raster_signature_after = dumpTextRasterSignature(this.ctx, hook);
           if (hook.name === "CoreTextEmitGlyphRecord") {
@@ -880,8 +1123,73 @@ function installHook(module, hook) {
   }
 }
 
+function installBeeImportHooks(module) {
+  BEE_IMPORT_HOOKS.filter(hookEnabled).forEach(function (hook) {
+    const iatAddress = module.base.add(hook.iatOffset);
+    const target = safeReadPointer(iatAddress);
+    if (target === null || target.isNull()) {
+      return;
+    }
+    const key = hook.name + "@" + target.toString();
+    if (installedHooks[key]) {
+      return;
+    }
+    try {
+      Interceptor.attach(target, {
+        onEnter: function () {
+          this.hook = hook;
+          this.ctx = {
+            rcx: ptr(this.context.rcx),
+            rdx: ptr(this.context.rdx),
+            r8: ptr(this.context.r8),
+            r9: ptr(this.context.r9),
+            rsp: ptr(this.context.rsp)
+          };
+          emit("cooltype_hook_enter", {
+            hook: hook.name,
+            surface: hook.surface,
+            regs: regSnapshot(this.context),
+            target: moduleOffset(target),
+            iat_address: iatAddress.toString(),
+            txt_draw_char_entry: dumpTxtDrawCharEntry(this.context),
+            backtrace: backtrace(this.context)
+          });
+        },
+        onLeave: function (retval) {
+          emit("cooltype_hook_leave", {
+            hook: hook.name,
+            surface: hook.surface,
+            retval: ptr(retval).toString(),
+            target: moduleOffset(target),
+            txt_draw_char_entry_after: dumpTxtDrawCharEntry(this.ctx)
+          });
+        }
+      });
+      installedHooks[key] = true;
+      meta("cooltype_hook_installed", {
+        hook: hook.name,
+        surface: hook.surface,
+        iat_offset: "0x" + hook.iatOffset.toString(16),
+        iat_address: iatAddress.toString(),
+        target: target.toString(),
+        target_module: moduleOffset(target)
+      });
+    } catch (e) {
+      installedHooks[key] = true;
+      meta("cooltype_hook_error", {
+        hook: hook.name,
+        iat_offset: "0x" + hook.iatOffset.toString(16),
+        iat_address: iatAddress.toString(),
+        target: target.toString(),
+        target_module: moduleOffset(target),
+        error: String(e)
+      });
+    }
+  });
+}
+
 function installAll() {
-  ["CoolType.dll", "TXT.dll"].forEach(function (moduleName) {
+  ["CoolType.dll", "TXT.dll", "BEE.dll"].forEach(function (moduleName) {
     const module = Process.findModuleByName(moduleName);
     if (module === null) {
       return;
@@ -890,13 +1198,16 @@ function installAll() {
     selectedHooks(module.name).forEach(function (hook) {
       installHook(module, hook);
     });
+    if (module.name === "BEE.dll") {
+      installBeeImportHooks(module);
+    }
   });
 }
 
 if (typeof Process.attachModuleObserver === "function") {
   Process.attachModuleObserver({
     onAdded: function (module) {
-      if (module.name === "CoolType.dll" || module.name === "TXT.dll") {
+      if (module.name === "CoolType.dll" || module.name === "TXT.dll" || module.name === "BEE.dll") {
         installAll();
       }
     }
@@ -913,7 +1224,7 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--attach-delay", type=float, default=0.0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "all"], default="source-rect")
     # Accepted for compatibility with ae_trace_drop_shadow_softness helpers.
     ap.add_argument("--generic-hook-limit", type=int, default=0)
     ap.add_argument("--max-stalk-render-calls", type=int, default=0)
@@ -1166,7 +1477,7 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=240)
     ap.add_argument("--attach-delay", type=int, default=0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "all"], default="source-rect")
     ap.add_argument("--allow-render-failure", action="store_true")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--live-tail", action="store_true")
