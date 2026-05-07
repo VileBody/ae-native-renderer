@@ -341,3 +341,22 @@ Medium priority:
 | Glow `0001` branch existence | High | Round 5 AE outputs for `GLO_090/100/101` differ materially. |
 | Glow default/source/radius/intensity/blend math | Low-medium | Strong diagnostics exist, but first AE intermediate is not isolated yet. |
 | Text Animator Blur exact math | Low | Current implementation is explicitly a splat approximation. |
+
+## 2026-05-07 Glow Addendum
+
+The previous Glow notes are partially superseded for the blur and operation
+mapping layer:
+
+- Frida/Ghidra route remains `IR_GaussianBlur(radius * 0.4)`.
+- `IR_GaussianBlur` is not a finite separable convolution in the native subset;
+  Ghidra shows ImageRenderer recursive causal/anti-causal float passes with
+  zero padding.
+- Native Glow now implements that recursive Gaussian subset in
+  `crates/effects/src/glow.rs`.
+- Glow.aex strings and the tables at `DAT_180012030` / `DAT_180011f60` map
+  `Glow Operation` as `1=None`, `2=Normal`, `3=Add`, `6=Screen`; the old
+  `2=Screen` native mapping was wrong.
+- Focused gate
+  `target/conformance_tmp/glow_shadow_ir_recursive_composite_table_20260507`
+  has `EFF_020` primary visible mean `1.628605`, `EFF_070` `0.352847`, and no
+  Drop Shadow regression.

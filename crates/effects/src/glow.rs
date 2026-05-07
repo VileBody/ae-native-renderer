@@ -9,6 +9,12 @@ use serde_json::Value;
 pub struct Glow;
 
 const AE_GLOW_IR_GAUSSIAN_RADIUS_SCALE: f32 = 0.4;
+const IR_GAUSSIAN_MIN_RADIUS: f32 = 0.1;
+const IR_GAUSSIAN_THETA: f64 = 0.844_799_995_422_363_3;
+const IR_GAUSSIAN_EXP1: f64 = -1.259_999_990_463_256_8;
+const IR_GAUSSIAN_EXP2: f64 = -2.519_999_980_926_513_7;
+const IR_GAUSSIAN_K0: f64 = 0.962_899_982_929_229_7;
+const IR_GAUSSIAN_K1: f64 = 1.942_000_031_471_252_4;
 
 impl Effect for Glow {
     fn match_name(&self) -> &'static str {
@@ -175,6 +181,7 @@ impl GlowCompositeOriginal {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(crate) enum GlowOperation {
     None,
+    Normal,
     Add,
     Screen,
 }
@@ -190,6 +197,9 @@ impl GlowOperation {
                 if text.contains("none") {
                     return Self::None;
                 }
+                if text.contains("normal") {
+                    return Self::Normal;
+                }
                 if text.contains("screen") {
                     return Self::Screen;
                 }
@@ -203,7 +213,9 @@ impl GlowOperation {
             {
                 return match number {
                     1 => Self::None,
-                    2 => Self::Screen,
+                    2 => Self::Normal,
+                    3 => Self::Add,
+                    6 => Self::Screen,
                     _ => Self::Add,
                 };
             }
@@ -238,6 +250,7 @@ fn composite_original_label(composite_original: GlowCompositeOriginal) -> &'stat
 fn operation_label(operation: GlowOperation) -> &'static str {
     match operation {
         GlowOperation::None => "none",
+        GlowOperation::Normal => "normal",
         GlowOperation::Add => "add",
         GlowOperation::Screen => "screen",
     }
@@ -341,89 +354,155 @@ fn glow_gaussian_support_radius(sigma: f32) -> u32 {
 }
 
 fn glow_blur_canvas(input: &Canvas, sigma: f32) -> Canvas {
-    let radius = glow_gaussian_support_radius(sigma);
-    if radius == 0 || input.width == 0 || input.height == 0 {
+    if sigma.is_nan() || sigma <= 0.0 || input.width == 0 || input.height == 0 {
         return input.clone();
     }
 
-    let weights = gaussian_weights(sigma.max(0.000_001), radius);
-    let horizontal = gaussian_pass_horizontal(input, &weights, radius);
-    gaussian_pass_vertical(&horizontal, &weights, radius)
+    let coeffs = ir_recursive_gaussian_coefficients(sigma.max(IR_GAUSSIAN_MIN_RADIUS));
+    let horizontal = ir_recursive_gaussian_pass_horizontal(input, coeffs);
+    ir_recursive_gaussian_pass_vertical(&horizontal, coeffs)
 }
 
-fn gaussian_weights(sigma: f32, radius: u32) -> Vec<f32> {
-    let mut weights = Vec::with_capacity((radius * 2 + 1) as usize);
-    let sigma2 = 2.0 * sigma * sigma;
-    let mut sum = 0.0_f32;
-    for offset in -(radius as i32)..=(radius as i32) {
-        let x = offset as f32;
-        let weight = (-x * x / sigma2).exp();
-        weights.push(weight);
-        sum += weight;
-    }
-    for weight in &mut weights {
-        *weight /= sum;
-    }
-    weights
+#[derive(Debug, Clone, Copy)]
+struct IrRecursiveGaussianCoefficients {
+    causal_current: f32,
+    causal_previous_source: f32,
+    feedback_previous: f32,
+    feedback_previous2: f32,
+    anticausal_next_source: f32,
+    anticausal_next2_source: f32,
 }
 
-fn gaussian_pass_horizontal(input: &Canvas, weights: &[f32], radius: u32) -> Canvas {
+fn ir_recursive_gaussian_coefficients(radius: f32) -> IrRecursiveGaussianCoefficients {
+    let radius = radius.max(IR_GAUSSIAN_MIN_RADIUS) as f64;
+    let theta = IR_GAUSSIAN_THETA / radius;
+    let exp1 = (IR_GAUSSIAN_EXP1 / radius).exp();
+    let exp2 = (IR_GAUSSIAN_EXP2 / radius).exp();
+    let sin_theta = theta.sin();
+    let cos_theta = theta.cos();
+    let denominator = 1.0 - 2.0 * exp1 * cos_theta + exp2;
+    let gain = (((1.0 - exp1 * cos_theta) / denominator) * IR_GAUSSIAN_K0
+        + ((exp1 * sin_theta) / denominator) * IR_GAUSSIAN_K1)
+        * 2.0
+        - IR_GAUSSIAN_K0;
+    let norm = 1.0 / gain;
+    let causal_current = norm * IR_GAUSSIAN_K0;
+    let causal_previous_source =
+        (sin_theta * (norm * IR_GAUSSIAN_K1) - cos_theta * causal_current) * exp1;
+    let feedback_previous = -2.0 * exp1 * cos_theta;
+    let feedback_previous2 = exp2;
+    let anticausal_next_source = causal_previous_source - feedback_previous * causal_current;
+    let anticausal_next2_source = -feedback_previous2 * causal_current;
+
+    IrRecursiveGaussianCoefficients {
+        causal_current: causal_current as f32,
+        causal_previous_source: causal_previous_source as f32,
+        feedback_previous: feedback_previous as f32,
+        feedback_previous2: feedback_previous2 as f32,
+        anticausal_next_source: anticausal_next_source as f32,
+        anticausal_next2_source: anticausal_next2_source as f32,
+    }
+}
+
+fn ir_recursive_gaussian_pass_horizontal(
+    input: &Canvas,
+    coeffs: IrRecursiveGaussianCoefficients,
+) -> Canvas {
     let mut output = Canvas::transparent(input.width, input.height);
     for y in 0..input.height {
+        let mut line = Vec::with_capacity(input.width as usize);
         for x in 0..input.width {
-            let mut sum = [0.0_f32; 4];
-            let mut weight_sum = 0.0_f32;
-            for offset in -(radius as i32)..=(radius as i32) {
-                let sx = x as i32 + offset;
-                if sx < 0 || sx >= input.width as i32 {
-                    continue;
-                }
-                let weight = weights[(offset + radius as i32) as usize];
-                let pixel = input.pixel(sx as u32, y);
-                for channel in 0..4 {
-                    sum[channel] += pixel[channel] as f32 * weight;
-                }
-                weight_sum += weight;
-            }
-            output.set_pixel(x, y, weighted_pixel(sum, weight_sum));
+            line.push(pixel_to_float(input.pixel(x, y)));
+        }
+        let filtered = ir_recursive_gaussian_filter_line(&line, coeffs);
+        for (x, pixel) in filtered.into_iter().enumerate() {
+            output.set_pixel(x as u32, y, float_pixel_to_u8(pixel));
         }
     }
     output
 }
 
-fn gaussian_pass_vertical(input: &Canvas, weights: &[f32], radius: u32) -> Canvas {
+fn ir_recursive_gaussian_pass_vertical(
+    input: &Canvas,
+    coeffs: IrRecursiveGaussianCoefficients,
+) -> Canvas {
     let mut output = Canvas::transparent(input.width, input.height);
-    for y in 0..input.height {
-        for x in 0..input.width {
-            let mut sum = [0.0_f32; 4];
-            let mut weight_sum = 0.0_f32;
-            for offset in -(radius as i32)..=(radius as i32) {
-                let sy = y as i32 + offset;
-                if sy < 0 || sy >= input.height as i32 {
-                    continue;
-                }
-                let weight = weights[(offset + radius as i32) as usize];
-                let pixel = input.pixel(x, sy as u32);
-                for channel in 0..4 {
-                    sum[channel] += pixel[channel] as f32 * weight;
-                }
-                weight_sum += weight;
-            }
-            output.set_pixel(x, y, weighted_pixel(sum, weight_sum));
+    for x in 0..input.width {
+        let mut line = Vec::with_capacity(input.height as usize);
+        for y in 0..input.height {
+            line.push(pixel_to_float(input.pixel(x, y)));
+        }
+        let filtered = ir_recursive_gaussian_filter_line(&line, coeffs);
+        for (y, pixel) in filtered.into_iter().enumerate() {
+            output.set_pixel(x, y as u32, float_pixel_to_u8(pixel));
         }
     }
     output
 }
 
-fn weighted_pixel(sum: [f32; 4], weight_sum: f32) -> [u8; 4] {
-    if weight_sum <= 0.0 {
-        return [0, 0, 0, 0];
+fn ir_recursive_gaussian_filter_line(
+    source: &[[f32; 4]],
+    coeffs: IrRecursiveGaussianCoefficients,
+) -> Vec<[f32; 4]> {
+    let len = source.len();
+    if len == 0 {
+        return Vec::new();
     }
+
+    let mut causal = vec![[0.0_f32; 4]; len];
+    let mut prev_source = [0.0_f32; 4];
+    let mut prev = [0.0_f32; 4];
+    let mut prev2 = [0.0_f32; 4];
+    for (index, pixel) in source.iter().enumerate() {
+        let mut next = [0.0_f32; 4];
+        for channel in 0..4 {
+            next[channel] = pixel[channel] * coeffs.causal_current
+                + prev_source[channel] * coeffs.causal_previous_source
+                - prev[channel] * coeffs.feedback_previous
+                - prev2[channel] * coeffs.feedback_previous2;
+        }
+        causal[index] = next;
+        prev_source = *pixel;
+        prev2 = prev;
+        prev = next;
+    }
+
+    let mut output = vec![[0.0_f32; 4]; len];
+    let mut reverse_next = [0.0_f32; 4];
+    let mut reverse_next2 = [0.0_f32; 4];
+    for index in (0..len).rev() {
+        let source_next = source.get(index + 1).copied().unwrap_or([0.0; 4]);
+        let source_next2 = source.get(index + 2).copied().unwrap_or([0.0; 4]);
+        let mut reverse = [0.0_f32; 4];
+        for channel in 0..4 {
+            reverse[channel] = source_next[channel] * coeffs.anticausal_next_source
+                + source_next2[channel] * coeffs.anticausal_next2_source
+                - reverse_next[channel] * coeffs.feedback_previous
+                - reverse_next2[channel] * coeffs.feedback_previous2;
+            output[index][channel] = causal[index][channel] + reverse[channel];
+        }
+        reverse_next2 = reverse_next;
+        reverse_next = reverse;
+    }
+
+    output
+}
+
+fn pixel_to_float(pixel: [u8; 4]) -> [f32; 4] {
     [
-        (sum[0] / weight_sum).round().clamp(0.0, 255.0) as u8,
-        (sum[1] / weight_sum).round().clamp(0.0, 255.0) as u8,
-        (sum[2] / weight_sum).round().clamp(0.0, 255.0) as u8,
-        (sum[3] / weight_sum).round().clamp(0.0, 255.0) as u8,
+        pixel[0] as f32,
+        pixel[1] as f32,
+        pixel[2] as f32,
+        pixel[3] as f32,
+    ]
+}
+
+fn float_pixel_to_u8(pixel: [f32; 4]) -> [u8; 4] {
+    [
+        pixel[0].round().clamp(0.0, 255.0) as u8,
+        pixel[1].round().clamp(0.0, 255.0) as u8,
+        pixel[2].round().clamp(0.0, 255.0) as u8,
+        pixel[3].round().clamp(0.0, 255.0) as u8,
     ]
 }
 
@@ -468,6 +547,11 @@ fn composite_glow(
 ) -> Canvas {
     let mut operated = match operation {
         GlowOperation::None => glow.clone(),
+        GlowOperation::Normal => {
+            let mut output = input.clone();
+            composite_normal(&mut output, glow, 100.0);
+            output
+        }
         GlowOperation::Add => blend_glow_with_input(input, glow, add_channel),
         GlowOperation::Screen => blend_glow_with_input(input, glow, screen_channel),
     };
@@ -651,6 +735,26 @@ mod tests {
         assert_eq!(color_source.pixel(1, 0), [240, 240, 240, 64]);
         assert_eq!(alpha_source.pixel(0, 0), [32, 32, 32, 255]);
         assert_eq!(alpha_source.pixel(1, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn operation_numeric_values_follow_glow_aex_blend_table() {
+        assert_eq!(
+            GlowOperation::from_params(&json!({ "0006": { "value": 1 } })),
+            GlowOperation::None
+        );
+        assert_eq!(
+            GlowOperation::from_params(&json!({ "0006": { "value": 2 } })),
+            GlowOperation::Normal
+        );
+        assert_eq!(
+            GlowOperation::from_params(&json!({ "0006": { "value": 3 } })),
+            GlowOperation::Add
+        );
+        assert_eq!(
+            GlowOperation::from_params(&json!({ "0006": { "value": 6 } })),
+            GlowOperation::Screen
+        );
     }
 
     #[test]
