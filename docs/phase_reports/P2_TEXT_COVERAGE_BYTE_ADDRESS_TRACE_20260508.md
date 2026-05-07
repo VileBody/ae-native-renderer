@@ -72,6 +72,59 @@ sample using the plane snapshot and `+0x30`; on this stroke case it is not the
 bytes AE actually consumes. The authoritative bytes are from the `3ba80`
 sample-byte hook.
 
+Second trace:
+
+```text
+target/dynamic_tools_85/p2_transfill_live_whta128_sample_byte_trace_20260508_001/TRFLIVE_WHT_A128_FILL_OPACITY.jsonl
+target/ae_agents/p2_row_compare_transfill_sample_byte_20260508/ae_rows.json
+```
+
+Observed alpha-fill type-2 row:
+
+```json
+{
+  "pass_role": "fill",
+  "source_pixel_raw": "80ffffff",
+  "y": 0,
+  "start_x": 0,
+  "end_x": 10,
+  "coverage_sample_hex": "5bd0d0d0d0d0d0d0d0b6",
+  "actual_coverage_sample_hex": "5bd0d0d0d0d0d0d0d0",
+  "actual_coverage_sample_count": 9
+}
+```
+
+For this first-row fill sample, the legacy plane heuristic and the actual
+`3ba80` byte stream agree on the prefix. That explains why earlier fill-only
+traces looked sane, but it does not make the snapshot formula safe for stroke
+or later rows.
+
+Third trace:
+
+```text
+target/dynamic_tools_85/p2_cov_w_sample_byte_trace_20260508_001/COV_W.jsonl
+target/ae_agents/p2_row_compare_covw_sample_byte_20260508/ae_rows.json
+```
+
+Observed full-opacity `COV_W` first row:
+
+```json
+{
+  "pass_role": "fill",
+  "source_pixel_raw": "ffffffff",
+  "y": 0,
+  "start_x": 0,
+  "end_x": 16,
+  "coverage_sample_hex": "2440404040404040404040404040403c",
+  "actual_coverage_sample_hex": "2440404040404040404040404040403c"
+}
+```
+
+This confirms the parser/hook pair works on the original coverage fixture too.
+The current AE job only emitted the first type-2 span for this pack on the
+GUI API route, so a dense multi-row fill capture still needs a smaller
+single-comp JSX or a trace mode that does not stop at the first emitted render.
+
 ## Recovered Semantics
 
 For this live stroke case:
@@ -82,6 +135,8 @@ For this live stroke case:
   `base_0x10 + start_x`, then increments by one byte per covered pixel.
 - Therefore `+0x30` is a useful plane snapshot field, but not a safe proxy for
   the hot coverage-byte address in every text path.
+- Formula tuning must prefer `actual_coverage_sample_hex` when present; a fill
+  first-row match is not enough to validate the plane snapshot heuristic.
 - The row base may already be row-local by the time type-2 coverage is consumed;
   the next runner should prefer the `3ba80` byte stream when available.
 
@@ -109,8 +164,9 @@ Closed in this pass:
 Still open:
 
 - Run the same `3ba80` sample-byte hook on a fill case with many type-2 rows.
+  Current fill captures (`TRFLIVE_*`, `COV_W`) prove first-row byte parity, but
+  the GUI API route emitted only one type-2 span for these focused packs.
 - Compare `actual_coverage_sample_hex` against native `coverage_rows` for
   matched glyph rows.
 - Use the diff to tune native coverage generation/hinting instead of the
   legacy plane `+0x30` heuristic.
-
