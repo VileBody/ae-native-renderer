@@ -82,6 +82,13 @@ pub fn rasterize_text_with_layout(
         .as_deref()
         .and_then(|bytes| Face::parse(bytes, 0).ok());
     let mut canvas = Canvas::transparent(width, height);
+    let uses_temp_world_transfer = color[3] > 0 && color[3] < u8::MAX;
+    let mut temp_world = uses_temp_world_transfer.then(|| Canvas::transparent(width, height));
+    let draw_color = if uses_temp_world_transfer {
+        [color[0], color[1], color[2], u8::MAX]
+    } else {
+        color
+    };
     let mut draw_chars = Vec::with_capacity(layout.glyphs.len());
     let chars = req.text.chars().collect::<Vec<_>>();
     let fill_rgba = rgba_u8_to_f32(color);
@@ -182,18 +189,34 @@ pub fn rasterize_text_with_layout(
             output_semantics: "recovered_txt_are_pf_pixel8_integer_source_over_v1".to_string(),
         };
         if will_draw {
-            blend_bitmap(
-                &mut canvas,
-                coverage.raster_x,
-                coverage.raster_y,
-                coverage.width,
-                coverage.height,
-                coverage.bitmap.as_ref(),
-                color,
-                clipped_bounds,
-            );
+            if let Some(temp_world) = temp_world.as_mut() {
+                blend_bitmap(
+                    temp_world,
+                    coverage.raster_x,
+                    coverage.raster_y,
+                    coverage.width,
+                    coverage.height,
+                    coverage.bitmap.as_ref(),
+                    draw_color,
+                    clipped_bounds,
+                );
+            } else {
+                blend_bitmap(
+                    &mut canvas,
+                    coverage.raster_x,
+                    coverage.raster_y,
+                    coverage.width,
+                    coverage.height,
+                    coverage.bitmap.as_ref(),
+                    draw_color,
+                    clipped_bounds,
+                );
+            }
         }
         draw_chars.push(plan);
+    }
+    if let Some(temp_world) = temp_world.as_ref() {
+        transfer_text_temp_world_ae_u8(&mut canvas, temp_world, color[3]);
     }
 
     Ok((
@@ -210,8 +233,12 @@ pub fn rasterize_text_with_layout(
                 "fontdue_rasterize_indexed_fallback"
             }
             .to_string(),
-            pf_world_semantics: "TXT_DrawChar ARE PF_Pixel8 fill/composite recovered from TXT.dll"
-                .to_string(),
+            pf_world_semantics: if uses_temp_world_transfer {
+                "TXT_DrawChar ARE PF_Pixel8 temp-world fill then PF_TransferRect opacity"
+            } else {
+                "TXT_DrawChar ARE PF_Pixel8 fill/composite recovered from TXT.dll"
+            }
+            .to_string(),
             draw_chars,
         },
     ))
@@ -562,14 +589,16 @@ fn blend_bitmap(
     clip: Option<[i32; 4]>,
 ) {
     let clip = clip.unwrap_or([0, 0, canvas.width as i32, canvas.height as i32]);
+    let origin_x = x.round() as i32;
+    let origin_y = y.round() as i32;
     for by in 0..height {
         for bx in 0..width {
             let coverage = bitmap[by * width + bx];
             if coverage == 0 || color[3] == 0 {
                 continue;
             }
-            let px = (x + bx as f32).round() as i32;
-            let py = (y + by as f32).round() as i32;
+            let px = origin_x + bx as i32;
+            let py = origin_y + by as i32;
             if px < clip[0] || py < clip[1] || px >= clip[2] || py >= clip[3] {
                 continue;
             }
@@ -580,6 +609,29 @@ fn blend_bitmap(
             let dst = canvas.pixel(px as u32, py as u32);
             let out = blend_text_pixel_ae_u8(dst, color, coverage);
             canvas.set_pixel(px as u32, py as u32, out);
+        }
+    }
+}
+
+fn transfer_text_temp_world_ae_u8(dst: &mut Canvas, src: &Canvas, opacity: u8) {
+    if opacity == 0 {
+        return;
+    }
+    let width = dst.width.min(src.width);
+    let height = dst.height.min(src.height);
+    for y in 0..height {
+        for x in 0..width {
+            let src_px = src.pixel(x, y);
+            if src_px[3] == 0 {
+                continue;
+            }
+            let dst_px = dst.pixel(x, y);
+            let out = blend_text_pixel_ae_u8(
+                dst_px,
+                [src_px[0], src_px[1], src_px[2], opacity],
+                src_px[3],
+            );
+            dst.set_pixel(x, y, out);
         }
     }
 }
@@ -788,5 +840,40 @@ mod tests {
             blend_text_pixel_ae_u8([20, 40, 80, 128], [220, 80, 20, 128], 90),
             [80, 53, 61, 150]
         );
+    }
+
+    #[test]
+    fn semitransparent_fill_uses_temp_world_before_transfer() {
+        let mut direct = Canvas::transparent(1, 1);
+        blend_bitmap(
+            &mut direct,
+            0.0,
+            0.0,
+            1,
+            1,
+            &[255],
+            [200, 100, 50, 128],
+            None,
+        );
+        blend_bitmap(
+            &mut direct,
+            0.0,
+            0.0,
+            1,
+            1,
+            &[255],
+            [200, 100, 50, 128],
+            None,
+        );
+
+        let mut temp = Canvas::transparent(1, 1);
+        blend_bitmap(&mut temp, 0.0, 0.0, 1, 1, &[255], [200, 100, 50, 255], None);
+        blend_bitmap(&mut temp, 0.0, 0.0, 1, 1, &[255], [200, 100, 50, 255], None);
+        let mut transferred = Canvas::transparent(1, 1);
+        transfer_text_temp_world_ae_u8(&mut transferred, &temp, 128);
+
+        assert_eq!(temp.pixel(0, 0), [200, 100, 50, 255]);
+        assert_eq!(transferred.pixel(0, 0), [200, 100, 50, 128]);
+        assert!(direct.pixel(0, 0)[3] > transferred.pixel(0, 0)[3]);
     }
 }

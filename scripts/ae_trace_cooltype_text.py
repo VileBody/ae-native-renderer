@@ -78,6 +78,11 @@ const TXT_HOOKS = [
   {module: "TXT.dll", name: "TXTp_DrawChar3_ARE_42110", offset: 0x042110, surface: "txt_drawchar_are"},
   {module: "TXT.dll", name: "TXT_DrawChar_outline_core_42b80", offset: 0x042b80, surface: "txt_drawchar_outline_core"},
   {module: "TXT.dll", name: "TXT_Font_HaveOutlines_47e20", offset: 0x047e20, surface: "txt_font_have_outlines"},
+  {module: "TXT.dll", name: "TXT_ARE_Render_8bpc_3c360", offset: 0x03c360, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_Render_8bpc_fill_3d200", offset: 0x03d200, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_Render_8bpc_stroke_3d960", offset: 0x03d960, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_OutputComposite_8bpc_3de50", offset: 0x03de50, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_span_3b8c0", offset: 0x03b8c0, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_PlayCharOutlines", offset: 0x0416c0, surface: "txt_play_char_outlines"},
   {module: "TXT.dll", name: "TXT_PlayCharOutlines_impl", offset: 0x042ab0, surface: "txt_play_char_outlines_impl"},
   {module: "TXT.dll", name: "TXT_FUN_sourceRect_batch_bboxes_214120", offset: 0x214120, surface: "txt_source_rect_batch_bboxes"},
@@ -136,6 +141,10 @@ const BEE_IMPORT_HOOKS = [
   {module: "BEE.dll", name: "BEE_IMPORT_TXT_DrawChar_edf6b0", iatOffset: 0xedf6b0, surface: "bee_text_drawchar_target"}
 ];
 
+const TXT_IMPORT_HOOKS = [
+  {module: "TXT.dll", name: "TXT_IMPORT_PF_TransferRect_694f30", iatOffset: 0x694f30, surface: "txt_pf_transferrect"}
+];
+
 const TXT_DYNAMIC_POINTERS = [
   {name: "TXT_malloc_or_realloc_DAT_18087c000", offset: 0x87c000},
   {name: "TXT_free_DAT_18087c008", offset: 0x87c008},
@@ -171,6 +180,15 @@ function hookEnabled(hook) {
       "txt_font_have_outlines",
       "txt_play_char_outlines",
       "txt_play_char_outlines_impl"
+    ].indexOf(hook.surface) !== -1;
+  }
+  if (hookProfile === "txt-are-spans") {
+    return [
+      "bee_text_drawchar_target",
+      "txt_drawchar_are",
+      "txt_drawchar_outline_core",
+      "txt_are_spans",
+      "txt_pf_transferrect"
     ].indexOf(hook.surface) !== -1;
   }
   if (hookProfile === "bee-text-raster") {
@@ -272,12 +290,20 @@ function safeReadU16(p) {
   try { return ptr(p).readU16(); } catch (e) { return null; }
 }
 
+function safeReadS16(p) {
+  try { return ptr(p).readS16(); } catch (e) { return null; }
+}
+
 function safeReadU32(p) {
   try { return ptr(p).readU32(); } catch (e) { return null; }
 }
 
 function safeReadS32(p) {
   try { return ptr(p).readS32(); } catch (e) { return null; }
+}
+
+function safeReadS64Number(p) {
+  try { return Number(ptr(p).readS64()); } catch (e) { return null; }
 }
 
 function nativeArgU32(p) {
@@ -408,6 +434,188 @@ function dumpPfWorldForText(p) {
       0x50, 0x58, 0x60, 0x68, 0x70, 0x78, 0x80
     ])
   };
+}
+
+function readPixel8(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    a: safeReadU8(q),
+    r: safeReadU8(q.add(1)),
+    g: safeReadU8(q.add(2)),
+    b: safeReadU8(q.add(3)),
+    u32: safeReadU32(q),
+    raw: memoryBytes(q, 4)
+  };
+}
+
+function readSpanCells(p, maxCells) {
+  if (isNullPtr(p)) {
+    return [];
+  }
+  const q = ptr(p);
+  const n = Math.max(0, Math.min(maxCells || 0, 24));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const cell = q.add(i * 8);
+    out.push({
+      index: i,
+      span_type_s32: safeReadS32(cell),
+      span_type_u32: safeReadU32(cell),
+      end_x_s32: safeReadS32(cell.add(4)),
+      end_x_u32: safeReadU32(cell.add(4)),
+      raw: memoryBytes(cell, 8)
+    });
+  }
+  return out;
+}
+
+function dumpAreObject(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    flags: {
+      fill_enabled_0x08: safeReadU8(q.add(0x08)),
+      stroke_enabled_0x09: safeReadU8(q.add(0x09)),
+      fill_stroke_order_0x0a: safeReadU8(q.add(0x0a)),
+      render_context_0x0b: safeReadU8(q.add(0x0b)),
+      parity_skip_0x1c: safeReadU32(q.add(0x1c))
+    },
+    fill_color_f32_0x20: readPixelFloat4(q.add(0x20)),
+    stroke_color_f32_0x30: readPixelFloat4(q.add(0x30)),
+    maybe_temp_or_path_0x10: safeReadPointerString(q.add(0x10)),
+    stroke_width_0x40_f64: safeReadDouble(q.add(0x40)),
+    line_join_0x48_s32: safeReadS32(q.add(0x48)),
+    miter_limit_0x50_f64: safeReadDouble(q.add(0x50)),
+    pf_world_0x58: safeReadPointerString(q.add(0x58)),
+    clip_shorts: {
+      top_0x60: safeReadS16(q.add(0x60)),
+      left_0x62: safeReadS16(q.add(0x62)),
+      bottom_0x64: safeReadS16(q.add(0x64)),
+      right_0x66: safeReadS16(q.add(0x66))
+    },
+    matrix6_f32_0x68: readMatrix6(q.add(0x68)),
+    words_0x00_0xc0: memoryWords(q, 24)
+  };
+}
+
+function dumpCoverageObject(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const plane = safeReadPointer(q.add(0x08));
+  const rowGetter = safeReadPointer(q.add(0x10));
+  const rowContext = safeReadPointer(q.add(0x18));
+  const planeLayout = plane === null ? null : {
+    width_0x08_s32: safeReadS32(plane.add(0x08)),
+    height_0x0c_s32: safeReadS32(plane.add(0x0c)),
+    base_0x10: safeReadPointerString(plane.add(0x10)),
+    base_0x28: safeReadPointerString(plane.add(0x28)),
+    stride_0x20_s64: safeReadS64Number(plane.add(0x20)),
+    stride_0x30_s64: safeReadS64Number(plane.add(0x30)),
+    aux_0x38: safeReadPointerString(plane.add(0x38))
+  };
+  return {
+    ptr: q.toString(),
+    plane_0x08: plane === null ? null : plane.toString(),
+    plane_0x08_target: plane === null ? null : moduleOffset(plane),
+    row_getter_0x10: rowGetter === null ? null : rowGetter.toString(),
+    row_getter_0x10_target: rowGetter === null ? null : moduleOffset(rowGetter),
+    row_context_0x18: rowContext === null ? null : rowContext.toString(),
+    row_context_0x18_target: rowContext === null ? null : moduleOffset(rowContext),
+    plane_layout: planeLayout,
+    plane_base_0x10: planeLayout === null ? null : planeLayout.base_0x10,
+    plane_stride_0x20: planeLayout === null ? null : planeLayout.stride_0x20_s64,
+    plane_stride_0x30: planeLayout === null ? null : planeLayout.stride_0x30_s64,
+    plane_words: plane === null ? [] : memoryWords(plane, 8),
+    words: memoryWords(q, 8)
+  };
+}
+
+function dumpPathTuple(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const coverage = safeReadPointer(q.add(0x10));
+  return {
+    ptr: q.toString(),
+    words: memoryWords(q, 8),
+    coverage_object_0x10: coverage === null ? null : coverage.toString(),
+    coverage_object: dumpCoverageObject(coverage)
+  };
+}
+
+function coverageBytesForSpan(arePtr, tuplePtr, y, startX, endX) {
+  if (isNullPtr(arePtr) || isNullPtr(tuplePtr)) {
+    return null;
+  }
+  if (y === null || startX === null || endX === null || endX <= startX) {
+    return null;
+  }
+  try {
+    const are = ptr(arePtr);
+    const tuple = ptr(tuplePtr);
+    const coverage = safeReadPointer(tuple.add(0x10));
+    if (coverage === null || coverage.isNull()) {
+      return null;
+    }
+    const plane = safeReadPointer(coverage.add(0x08));
+    if (plane === null || plane.isNull()) {
+      return null;
+    }
+    const width = safeReadS32(plane.add(0x08));
+    const height = safeReadS32(plane.add(0x0c));
+    const base = safeReadPointer(plane.add(0x10));
+    const baseMirror = safeReadPointer(plane.add(0x28));
+    const strideCandidates = [
+      {offset: "0x20", value: safeReadS64Number(plane.add(0x20))},
+      {offset: "0x30", value: safeReadS64Number(plane.add(0x30))},
+      {offset: "0x20_s32", value: safeReadS32(plane.add(0x20))},
+      {offset: "0x30_s32", value: safeReadS32(plane.add(0x30))}
+    ];
+    const minStride = width === null ? endX - startX : Math.max(width, endX - startX);
+    let strideInfo = null;
+    for (let i = 0; i < strideCandidates.length; i++) {
+      const cand = strideCandidates[i];
+      if (cand.value !== null && cand.value >= minStride && cand.value < 1048576) {
+        strideInfo = cand;
+        break;
+      }
+    }
+    const stride = strideInfo === null ? null : strideInfo.value;
+    const top = safeReadS16(are.add(0x60));
+    const left = safeReadS16(are.add(0x62));
+    if (base === null || base.isNull() || stride === null || top === null || left === null) {
+      return null;
+    }
+    const offset = (y - top) * stride + (startX - left);
+    const count = Math.max(0, Math.min(endX - startX, 64));
+    const samplePtr = base.add(offset);
+    return {
+      base: base.toString(),
+      base_mirror_0x28: baseMirror === null ? null : baseMirror.toString(),
+      width: width,
+      height: height,
+      stride: stride,
+      stride_source: strideInfo.offset,
+      stride_candidates: strideCandidates,
+      top: top,
+      left: left,
+      sample_ptr: samplePtr.toString(),
+      sample_count: count,
+      sample_hex: memoryBytes(samplePtr, count)
+    };
+  } catch (e) {
+    return {error: String(e)};
+  }
 }
 
 function readMatrix6(p) {
@@ -889,6 +1097,66 @@ function dumpTxtDrawCharEntry(ctx) {
   };
 }
 
+function dumpTxtAreSpanHook(ctx, hook) {
+  const rsp = ptr(ctx.rsp);
+  const stack = stackArgs(ctx);
+  const base = {
+    hook: hook.name,
+    regs: regSnapshot(ctx),
+    stack: stack,
+    are_object_arg1: ptr(ctx.rcx).toString(),
+    are_object: dumpAreObject(ptr(ctx.rcx)),
+    path_tuple_arg2: ptr(ctx.rdx).toString(),
+    path_tuple: dumpPathTuple(ptr(ctx.rdx)),
+    source_pixel8_arg3: readPixel8(ptr(ctx.r8)),
+    pf_world_arg4: ptr(ctx.r9).toString(),
+    pf_world_arg4_snapshot: dumpPfWorldForText(ptr(ctx.r9)),
+    stack_words: memoryWords(rsp, 12)
+  };
+  if (hook.name === "TXT_ARE_PixelWriter8_span_3b8c0") {
+    const spanType = nativeArgS32(ctx.r8);
+    const y = nativeArgS32(ctx.r9);
+    const startX = safeReadS32(rsp.add(0x28));
+    const endX = safeReadS32(rsp.add(0x30));
+    const sourcePixelPtr = safeReadPointerString(rsp.add(0x38));
+    const pfWorldPtr = safeReadPointerString(rsp.add(0x40));
+    base.pixel_writer8_span = {
+      span_type_arg3_s32: spanType,
+      y_arg4_s32: y,
+      start_x_arg5_s32: startX,
+      end_x_arg6_s32: endX,
+      source_pixel_arg7: sourcePixelPtr,
+      source_pixel8_arg7: readPixel8(sourcePixelPtr),
+      pf_world_arg8: pfWorldPtr,
+      pf_world_arg8_snapshot: dumpPfWorldForText(pfWorldPtr),
+      coverage_bytes_if_type2: spanType === 2
+        ? coverageBytesForSpan(ptr(ctx.rcx), ptr(ctx.rdx), y, startX, endX)
+        : null
+    };
+  } else if (hook.name === "TXT_ARE_OutputComposite_8bpc_3de50") {
+    base.output_composite8 = {
+      source_pixel_arg3: ptr(ctx.r8).toString(),
+      source_pixel8_arg3: readPixel8(ptr(ctx.r8)),
+      pf_world_arg4: ptr(ctx.r9).toString(),
+      pf_world_arg4_snapshot: dumpPfWorldForText(ptr(ctx.r9))
+    };
+  } else if (hook.name === "TXT_ARE_Render_8bpc_fill_3d200" || hook.name === "TXT_ARE_Render_8bpc_stroke_3d960") {
+    base.render8_fill_or_stroke = {
+      clip_or_bounds_arg2_words: memoryWords(ptr(ctx.rdx), 8),
+      source_pixel_arg3: ptr(ctx.r8).toString(),
+      source_pixel8_arg3: readPixel8(ptr(ctx.r8)),
+      pf_world_arg4: ptr(ctx.r9).toString(),
+      pf_world_arg4_snapshot: dumpPfWorldForText(ptr(ctx.r9))
+    };
+  } else if (hook.name === "TXT_ARE_Render_8bpc_3c360") {
+    base.render8_dispatch = {
+      arg2: ptr(ctx.rdx).toString(),
+      arg2_words: memoryWords(ptr(ctx.rdx), 8)
+    };
+  }
+  return base;
+}
+
 function dumpBeeSignature(ctx, hook) {
   const stack = stackArgs(ctx);
   return {
@@ -908,6 +1176,23 @@ function dumpBeeSignature(ctx, hook) {
     rdx_render_node: dumpBeeRenderNodeSnapshot(ptr(ctx.rdx)),
     txt_draw_char_callsite: hook.name === "BEE_TextRenderNode_TXT_DrawChar_callsite_5c100a" ? dumpBeeTxtDrawCharCallsite(ctx) : null,
     backtrace: backtrace(ctx)
+  };
+}
+
+function dumpPfTransferRectImport(ctx, target) {
+  const rsp = ptr(ctx.rsp);
+  return {
+    regs: regSnapshot(ctx),
+    target: moduleOffset(target),
+    arg_words: memoryWords(rsp, 18),
+    rcx_words: memoryWords(ptr(ctx.rcx), 12),
+    rdx_words: memoryWords(ptr(ctx.rdx), 12),
+    r8_words: memoryWords(ptr(ctx.r8), 12),
+    r9_words: memoryWords(ptr(ctx.r9), 12),
+    rcx_world: dumpPfWorldForText(ptr(ctx.rcx)),
+    rdx_world: dumpPfWorldForText(ptr(ctx.rdx)),
+    r8_world: dumpPfWorldForText(ptr(ctx.r8)),
+    r9_world: dumpPfWorldForText(ptr(ctx.r9))
   };
 }
 
@@ -1114,6 +1399,9 @@ function dumpEnterCommon(ctx, hook) {
   if (hook.surface.indexOf("txt_drawchar_") === 0) {
     payload.txt_draw_char_entry = dumpTxtDrawCharEntry(ctx);
   }
+  if (hook.surface === "txt_are_spans") {
+    payload.txt_are_spans = dumpTxtAreSpanHook(ctx, hook);
+  }
   if (hook.name === "TXT_DrawChar_outline_core_42b80") {
     payload.txt_draw_char_outline_core = dumpTxtDrawCharOutlineCore(ctx);
   }
@@ -1257,6 +1545,9 @@ function installHook(module, hook) {
         if (hook.surface.indexOf("txt_drawchar_") === 0) {
           payload.txt_draw_char_entry_after = dumpTxtDrawCharEntry(this.ctx);
         }
+        if (hook.surface === "txt_are_spans") {
+          payload.txt_are_spans_after = dumpTxtAreSpanHook(this.ctx, hook);
+        }
         if (hook.name === "TXT_DrawChar_outline_core_42b80") {
           payload.txt_draw_char_outline_core_after = dumpTxtDrawCharOutlineCore(this.ctx);
         }
@@ -1355,6 +1646,63 @@ function installBeeImportHooks(module) {
   });
 }
 
+function installTxtImportHooks(module) {
+  TXT_IMPORT_HOOKS.filter(hookEnabled).forEach(function (hook) {
+    const iatAddress = module.base.add(hook.iatOffset);
+    const target = safeReadPointer(iatAddress);
+    if (target === null || target.isNull()) {
+      return;
+    }
+    const key = hook.name + "@" + target.toString();
+    if (installedHooks[key]) {
+      return;
+    }
+    try {
+      Interceptor.attach(target, {
+        onEnter: function () {
+          this.hook = hook;
+          this.target = target;
+          emit("cooltype_hook_enter", {
+            hook: hook.name,
+            surface: hook.surface,
+            iat_address: iatAddress.toString(),
+            target: moduleOffset(target),
+            pf_transfer_rect: dumpPfTransferRectImport(this.context, target),
+            backtrace: backtrace(this.context)
+          });
+        },
+        onLeave: function (retval) {
+          emit("cooltype_hook_leave", {
+            hook: hook.name,
+            surface: hook.surface,
+            retval: ptr(retval).toString(),
+            target: moduleOffset(target)
+          });
+        }
+      });
+      installedHooks[key] = true;
+      meta("cooltype_hook_installed", {
+        hook: hook.name,
+        surface: hook.surface,
+        iat_offset: "0x" + hook.iatOffset.toString(16),
+        iat_address: iatAddress.toString(),
+        target: target.toString(),
+        target_module: moduleOffset(target)
+      });
+    } catch (e) {
+      installedHooks[key] = true;
+      meta("cooltype_hook_error", {
+        hook: hook.name,
+        iat_offset: "0x" + hook.iatOffset.toString(16),
+        iat_address: iatAddress.toString(),
+        target: target.toString(),
+        target_module: moduleOffset(target),
+        error: String(e)
+      });
+    }
+  });
+}
+
 function installAll() {
   ["CoolType.dll", "TXT.dll", "BEE.dll"].forEach(function (moduleName) {
     const module = Process.findModuleByName(moduleName);
@@ -1367,6 +1715,9 @@ function installAll() {
     });
     if (module.name === "BEE.dll") {
       installBeeImportHooks(module);
+    }
+    if (module.name === "TXT.dll") {
+      installTxtImportHooks(module);
     }
   });
 }
@@ -1391,7 +1742,7 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--attach-delay", type=float, default=0.0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "all"], default="source-rect")
     # Accepted for compatibility with ae_trace_drop_shadow_softness helpers.
     ap.add_argument("--generic-hook-limit", type=int, default=0)
     ap.add_argument("--max-stalk-render-calls", type=int, default=0)
@@ -1517,6 +1868,8 @@ def summarize_events(case_id: str, events: list[dict[str, Any]]) -> dict[str, An
             "glyph_rows_sample": rows[:8] if isinstance(rows, list) else [],
             "bbox_sample": (event.get("core_bbox_out_after") or [])[:4],
             "width_candidates_sample": event.get("core_width_out_candidates_after"),
+            "txt_are_spans": event.get("txt_are_spans") or event.get("txt_are_spans_after"),
+            "pf_transfer_rect": event.get("pf_transfer_rect"),
             "backtrace": backtrace[:10] if isinstance(backtrace, list) else [],
         }
 
@@ -1644,7 +1997,7 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=240)
     ap.add_argument("--attach-delay", type=int, default=0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "all"], default="source-rect")
     ap.add_argument("--allow-render-failure", action="store_true")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--live-tail", action="store_true")
