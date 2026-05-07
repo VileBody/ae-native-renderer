@@ -1,7 +1,13 @@
 use raster_cpu::Canvas;
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
+use std::fs;
+use std::sync::{Arc, Mutex, OnceLock};
+use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
-use crate::{layout_text, load_font, TextLayoutRequest, TextLayoutResult};
+use crate::{layout_text, load_font_with_telemetry, TextLayoutRequest, TextLayoutResult};
+
+const OUTLINE_COVERAGE_SUPERSAMPLE: u32 = 4;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextRasterTrace {
@@ -43,6 +49,10 @@ pub struct DrawCharPlan {
     pub bitmap_size: [u32; 2],
     pub glyph_bounds_minmax: [f32; 4],
     pub clipped_bounds_i32: Option<[i32; 4]>,
+    pub coverage_backend: String,
+    pub coverage_supersample: u32,
+    pub coverage_origin_source: String,
+    pub coverage_nonzero_pixels: u32,
     pub output_semantics: String,
 }
 
@@ -63,33 +73,52 @@ pub fn rasterize_text_with_layout(
     height: u32,
     color: [u8; 4],
 ) -> anyhow::Result<(Canvas, TextRasterTrace)> {
-    let font = load_font(&req.font_id)?;
+    let (font, font_resolution) = load_font_with_telemetry(&req.font_id)?;
+    let font_bytes = font_resolution
+        .resolved_path
+        .as_ref()
+        .and_then(|path| fs::read(path).ok());
+    let outline_face = font_bytes
+        .as_deref()
+        .and_then(|bytes| Face::parse(bytes, 0).ok());
     let mut canvas = Canvas::transparent(width, height);
     let mut draw_chars = Vec::with_capacity(layout.glyphs.len());
     let chars = req.text.chars().collect::<Vec<_>>();
     let fill_rgba = rgba_u8_to_f32(color);
     let stroke_rgba = [0.0, 0.0, 0.0, 0.0];
+    let mut used_outline_backend = false;
+    let outline_font_key = font_resolution
+        .resolved_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| req.font_id.clone());
 
     for (run_index, glyph) in layout.glyphs.iter().enumerate() {
         let ch = chars.get(glyph.char_index).copied();
         let glyph_id = glyph.glyph_id.min(u16::MAX as u32) as u16;
-        let (metrics, bitmap) = font.rasterize_indexed(glyph_id, req.font_size);
-        let raster_x = glyph.x + metrics.xmin as f32;
-        let raster_y = layout
-            .telemetry
-            .glyphs
-            .get(run_index)
-            .map(|telemetry| telemetry.baseline - metrics.ymin as f32 - metrics.height as f32)
-            .unwrap_or(glyph.bbox[1]);
         let telemetry = layout.telemetry.glyphs.get(run_index);
         let baseline = telemetry
             .map(|telemetry| telemetry.baseline)
-            .unwrap_or_else(|| raster_y + metrics.height as f32);
+            .unwrap_or_else(|| glyph.bbox[1] + glyph.bbox[3]);
+        let coverage = outline_face
+            .as_ref()
+            .and_then(|face| {
+                outline_coverage(
+                    face,
+                    &outline_font_key,
+                    glyph_id,
+                    glyph.x,
+                    baseline,
+                    req.font_size,
+                )
+            })
+            .unwrap_or_else(|| fontdue_coverage(&font, glyph_id, glyph.x, baseline, req.font_size));
+        used_outline_backend |= coverage.backend == "ttf_outline_nonzero_supersample";
         let clipped_bounds = clipped_bitmap_bounds(
-            raster_x,
-            raster_y,
-            metrics.width,
-            metrics.height,
+            coverage.raster_x,
+            coverage.raster_y,
+            coverage.width,
+            coverage.height,
             width,
             height,
         );
@@ -137,26 +166,30 @@ pub fn rasterize_text_with_layout(
             orientation: 0,
             glyph_origin: [glyph.x, glyph.y],
             baseline,
-            raster_origin: [raster_x, raster_y],
-            bitmap_size: [metrics.width as u32, metrics.height as u32],
+            raster_origin: [coverage.raster_x, coverage.raster_y],
+            bitmap_size: [coverage.width as u32, coverage.height as u32],
             glyph_bounds_minmax: [
-                raster_x,
-                raster_y,
-                raster_x + metrics.width as f32,
-                raster_y + metrics.height as f32,
+                coverage.raster_x,
+                coverage.raster_y,
+                coverage.raster_x + coverage.width as f32,
+                coverage.raster_y + coverage.height as f32,
             ],
             clipped_bounds_i32: clipped_bounds,
+            coverage_backend: coverage.backend.to_string(),
+            coverage_supersample: coverage.supersample,
+            coverage_origin_source: coverage.origin_source.to_string(),
+            coverage_nonzero_pixels: coverage.nonzero_pixels,
             output_semantics: "native_canvas_straight_rgba8_source_over_pending_pf_world_premult"
                 .to_string(),
         };
         if will_draw {
             blend_bitmap(
                 &mut canvas,
-                raster_x,
-                raster_y,
-                metrics.width,
-                metrics.height,
-                &bitmap,
+                coverage.raster_x,
+                coverage.raster_y,
+                coverage.width,
+                coverage.height,
+                coverage.bitmap.as_ref(),
                 color,
                 clipped_bounds,
             );
@@ -172,13 +205,329 @@ pub fn rasterize_text_with_layout(
             canvas_size: [width, height],
             fill_rgba,
             stroke_rgba,
-            coverage_backend: "fontdue_rasterize_indexed_pending_cooltype_TXT_DrawChar".to_string(),
+            coverage_backend: if used_outline_backend {
+                "ttf_outline_nonzero_supersample_v1"
+            } else {
+                "fontdue_rasterize_indexed_fallback"
+            }
+            .to_string(),
             pf_world_semantics:
                 "AE TXT_DrawChar boundary recovered; native Canvas is still straight RGBA8"
                     .to_string(),
             draw_chars,
         },
     ))
+}
+
+struct CoverageBitmap {
+    width: usize,
+    height: usize,
+    raster_x: f32,
+    raster_y: f32,
+    bitmap: Arc<Vec<u8>>,
+    backend: &'static str,
+    supersample: u32,
+    origin_source: &'static str,
+    nonzero_pixels: u32,
+}
+
+fn fontdue_coverage(
+    font: &fontdue::Font,
+    glyph_id: u16,
+    glyph_x: f32,
+    baseline: f32,
+    font_size: f32,
+) -> CoverageBitmap {
+    let (metrics, bitmap) = font.rasterize_indexed(glyph_id, font_size);
+    let raster_x = glyph_x + metrics.xmin as f32;
+    let raster_y = baseline - metrics.ymin as f32 - metrics.height as f32;
+    let nonzero_pixels = bitmap.iter().filter(|alpha| **alpha > 0).count() as u32;
+    CoverageBitmap {
+        width: metrics.width,
+        height: metrics.height,
+        raster_x,
+        raster_y,
+        bitmap: Arc::new(bitmap),
+        backend: "fontdue_rasterize_indexed_fallback",
+        supersample: 1,
+        origin_source: "fontdue_metrics",
+        nonzero_pixels,
+    }
+}
+
+fn outline_coverage(
+    face: &Face<'_>,
+    font_key: &str,
+    glyph_id: u16,
+    glyph_x: f32,
+    baseline: f32,
+    font_size: f32,
+) -> Option<CoverageBitmap> {
+    let key = OutlineCoverageKey {
+        font_key: font_key.to_string(),
+        glyph_id,
+        font_size_bits: font_size.to_bits(),
+        supersample: OUTLINE_COVERAGE_SUPERSAMPLE,
+    };
+    if let Some(mask) = outline_coverage_cache()
+        .lock()
+        .expect("outline coverage cache poisoned")
+        .get(&key)
+        .cloned()
+    {
+        return Some(mask.to_bitmap(glyph_x, baseline));
+    }
+    let mask = Arc::new(build_outline_coverage_mask(
+        face,
+        glyph_id,
+        font_size,
+        OUTLINE_COVERAGE_SUPERSAMPLE,
+    )?);
+    outline_coverage_cache()
+        .lock()
+        .expect("outline coverage cache poisoned")
+        .insert(key, mask.clone());
+    Some(mask.to_bitmap(glyph_x, baseline))
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct OutlineCoverageKey {
+    font_key: String,
+    glyph_id: u16,
+    font_size_bits: u32,
+    supersample: u32,
+}
+
+#[derive(Debug)]
+struct CoverageMask {
+    width: usize,
+    height: usize,
+    x_min: f32,
+    y_max: f32,
+    bitmap: Arc<Vec<u8>>,
+    nonzero_pixels: u32,
+    supersample: u32,
+}
+
+impl CoverageMask {
+    fn to_bitmap(&self, glyph_x: f32, baseline: f32) -> CoverageBitmap {
+        CoverageBitmap {
+            width: self.width,
+            height: self.height,
+            raster_x: glyph_x + self.x_min,
+            raster_y: baseline - self.y_max,
+            bitmap: self.bitmap.clone(),
+            backend: "ttf_outline_nonzero_supersample",
+            supersample: self.supersample,
+            origin_source: "ttf_outline_bbox_baseline",
+            nonzero_pixels: self.nonzero_pixels,
+        }
+    }
+}
+
+fn outline_coverage_cache() -> &'static Mutex<HashMap<OutlineCoverageKey, Arc<CoverageMask>>> {
+    static CACHE: OnceLock<Mutex<HashMap<OutlineCoverageKey, Arc<CoverageMask>>>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+fn build_outline_coverage_mask(
+    face: &Face<'_>,
+    glyph_id: u16,
+    font_size: f32,
+    supersample: u32,
+) -> Option<CoverageMask> {
+    let glyph_id = GlyphId(glyph_id);
+    let units_per_em = face.units_per_em() as f32;
+    if units_per_em <= 0.0 {
+        return None;
+    }
+    let mut outline = FlattenedOutline::default();
+    let bbox = face.outline_glyph(glyph_id, &mut outline)?;
+    outline.finish_contour();
+    if outline.contours.is_empty() {
+        return None;
+    }
+
+    let scale = font_size / units_per_em;
+    let x_min = (bbox.x_min as f32 * scale).floor();
+    let x_max = (bbox.x_max as f32 * scale).ceil();
+    let y_min = (bbox.y_min as f32 * scale).floor();
+    let y_max = (bbox.y_max as f32 * scale).ceil();
+    let width = (x_max - x_min).max(0.0) as usize;
+    let height = (y_max - y_min).max(0.0) as usize;
+    if width == 0 || height == 0 {
+        return None;
+    }
+
+    let ss = supersample.max(1);
+    let sample_count = ss * ss;
+    let sample_step = 1.0 / ss as f32;
+    let mut bitmap = vec![0u8; width * height];
+    let mut nonzero_pixels = 0u32;
+    for by in 0..height {
+        for bx in 0..width {
+            let mut covered = 0u32;
+            for sy in 0..ss {
+                for sx in 0..ss {
+                    let px = x_min + bx as f32 + (sx as f32 + 0.5) * sample_step;
+                    let py = y_max - by as f32 - (sy as f32 + 0.5) * sample_step;
+                    let design_point = Point {
+                        x: px / scale,
+                        y: py / scale,
+                    };
+                    if outline.contains_nonzero(design_point) {
+                        covered += 1;
+                    }
+                }
+            }
+            if covered > 0 {
+                nonzero_pixels += 1;
+            }
+            bitmap[by * width + bx] =
+                ((covered as f32 / sample_count as f32) * 255.0).round() as u8;
+        }
+    }
+
+    Some(CoverageMask {
+        width,
+        height,
+        x_min,
+        y_max,
+        bitmap: Arc::new(bitmap),
+        nonzero_pixels,
+        supersample: ss,
+    })
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+struct Point {
+    x: f32,
+    y: f32,
+}
+
+#[derive(Debug, Default)]
+struct FlattenedOutline {
+    contours: Vec<Vec<Point>>,
+    current: Vec<Point>,
+    current_point: Point,
+}
+
+impl FlattenedOutline {
+    fn finish_contour(&mut self) {
+        if self.current.len() >= 2 {
+            self.contours.push(std::mem::take(&mut self.current));
+        } else {
+            self.current.clear();
+        }
+    }
+
+    fn push_line(&mut self, point: Point) {
+        self.current.push(point);
+        self.current_point = point;
+    }
+
+    fn flatten_quad(&mut self, control: Point, end: Point) {
+        let start = self.current_point;
+        let steps = curve_steps(start, control, end);
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let mt = 1.0 - t;
+            self.push_line(Point {
+                x: mt * mt * start.x + 2.0 * mt * t * control.x + t * t * end.x,
+                y: mt * mt * start.y + 2.0 * mt * t * control.y + t * t * end.y,
+            });
+        }
+    }
+
+    fn flatten_cubic(&mut self, control1: Point, control2: Point, end: Point) {
+        let start = self.current_point;
+        let steps = curve_steps(start, control1, end).max(curve_steps(start, control2, end));
+        for step in 1..=steps {
+            let t = step as f32 / steps as f32;
+            let mt = 1.0 - t;
+            self.push_line(Point {
+                x: mt * mt * mt * start.x
+                    + 3.0 * mt * mt * t * control1.x
+                    + 3.0 * mt * t * t * control2.x
+                    + t * t * t * end.x,
+                y: mt * mt * mt * start.y
+                    + 3.0 * mt * mt * t * control1.y
+                    + 3.0 * mt * t * t * control2.y
+                    + t * t * t * end.y,
+            });
+        }
+    }
+
+    fn contains_nonzero(&self, point: Point) -> bool {
+        let mut winding = 0i32;
+        for contour in &self.contours {
+            winding += contour_winding(contour, point);
+        }
+        winding != 0
+    }
+}
+
+impl OutlineBuilder for FlattenedOutline {
+    fn move_to(&mut self, x: f32, y: f32) {
+        self.finish_contour();
+        let point = Point { x, y };
+        self.current.push(point);
+        self.current_point = point;
+    }
+
+    fn line_to(&mut self, x: f32, y: f32) {
+        self.push_line(Point { x, y });
+    }
+
+    fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        self.flatten_quad(Point { x: x1, y: y1 }, Point { x, y });
+    }
+
+    fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.flatten_cubic(
+            Point { x: x1, y: y1 },
+            Point { x: x2, y: y2 },
+            Point { x, y },
+        );
+    }
+
+    fn close(&mut self) {
+        self.finish_contour();
+    }
+}
+
+fn curve_steps(a: Point, b: Point, c: Point) -> u32 {
+    let length = distance(a, b) + distance(b, c);
+    ((length / 16.0).ceil() as u32).clamp(8, 48)
+}
+
+fn distance(a: Point, b: Point) -> f32 {
+    let dx = a.x - b.x;
+    let dy = a.y - b.y;
+    (dx * dx + dy * dy).sqrt()
+}
+
+fn contour_winding(contour: &[Point], point: Point) -> i32 {
+    if contour.len() < 2 {
+        return 0;
+    }
+    let mut winding = 0i32;
+    for index in 0..contour.len() {
+        let a = contour[index];
+        let b = contour[(index + 1) % contour.len()];
+        if a.y <= point.y {
+            if b.y > point.y && is_left(a, b, point) > 0.0 {
+                winding += 1;
+            }
+        } else if b.y <= point.y && is_left(a, b, point) < 0.0 {
+            winding -= 1;
+        }
+    }
+    winding
+}
+
+fn is_left(a: Point, b: Point, p: Point) -> f32 {
+    (b.x - a.x) * (p.y - a.y) - (p.x - a.x) * (b.y - a.y)
 }
 
 pub fn rasterize_text_debug(
@@ -306,6 +655,7 @@ fn draw_char_skip_reason(
 mod tests {
     use super::*;
     use crate::{layout_text, TextLayoutRequest};
+    use std::path::PathBuf;
 
     fn request(text: &str) -> TextLayoutRequest {
         TextLayoutRequest {
@@ -314,6 +664,12 @@ mod tests {
             font_size: 24.0,
             box_rect: Some([0.0, 0.0, 200.0, 80.0]),
         }
+    }
+
+    fn montserrat_bolditalic_fixture() -> Option<PathBuf> {
+        let path =
+            PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf");
+        path.exists().then_some(path)
     }
 
     #[test]
@@ -360,5 +716,28 @@ mod tests {
         );
         assert!(!first.will_draw);
         assert!(canvas.data.chunks_exact(4).all(|pixel| pixel[3] == 0));
+    }
+
+    #[test]
+    fn draw_char_trace_uses_outline_coverage_for_ttf_fonts() {
+        let Some(path) = montserrat_bolditalic_fixture() else {
+            return;
+        };
+        let req = TextLayoutRequest {
+            text: "WA".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 58.0,
+            box_rect: Some([0.0, 0.0, 256.0, 128.0]),
+        };
+        let layout = layout_text(&req).unwrap();
+        let (_canvas, trace) =
+            rasterize_text_with_layout(&req, &layout, 256, 128, [255, 255, 255, 255]).unwrap();
+
+        assert_eq!(trace.coverage_backend, "ttf_outline_nonzero_supersample_v1");
+        assert!(trace.draw_chars.iter().all(|draw_char| {
+            draw_char.coverage_backend == "ttf_outline_nonzero_supersample"
+                && draw_char.coverage_supersample == OUTLINE_COVERAGE_SUPERSAMPLE
+                && draw_char.coverage_nonzero_pixels > 0
+        }));
     }
 }
