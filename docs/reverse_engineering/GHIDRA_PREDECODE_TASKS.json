@@ -380,6 +380,55 @@
       ]
     },
     {
+      "id": "cooltype_text_layout_surface",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_turbulent_text_expr",
+      "project": "agent_turbulent_text_expr",
+      "process": "CoolType.dll",
+      "notes": "CTText layout/bounding/outlines surface recovered from CTTextInterface_register. Use this before dynamic sourceRect/glyph raster probes.",
+      "targets": [
+        { "label": "CTTextInterface_register", "address": "0x18029c450" },
+        { "label": "CTTextGetFlags", "address": "0x1802a0120" },
+        { "label": "CTTextGetBoundingBox", "address": "0x18029fb60" },
+        { "label": "CTTextGetQuickBoundingBox", "address": "0x1802a0c00" },
+        { "label": "CTTextGetOrientedBBox", "address": "0x1802a0850" },
+        { "label": "CTTextHasSyntheticBold", "address": "0x1802a16b0" },
+        { "label": "CTTextGetOutlines", "address": "0x1802a0ab0" },
+        { "label": "CTTextGetOutlinesV2", "address": "0x1802a0950" },
+        { "label": "CTTextGetTextImage", "address": "0x1802a14b0" },
+        { "label": "CTTextGetGlyphs_V2", "address": "0x1802a02a0" },
+        { "label": "CTTextGetTextGlyphs", "address": "0x1802a1380" },
+        { "label": "CTTextReleaseGlyphPointers", "address": "0x1802a1c70" }
+      ]
+    },
+    {
+      "id": "cooltype_text_layout_core",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_turbulent_text_expr",
+      "project": "agent_turbulent_text_expr",
+      "process": "CoolType.dll",
+      "notes": "Core helpers reached by CTText bbox/outlines/glyph-row APIs. These are the static targets for sourceRect/layout math before Frida probes.",
+      "targets": [
+        { "label": "CoreTextBoundingBox", "address": "0x1801239a4" },
+        { "label": "CoreTextQuickBoundingBox", "address": "0x1801261ac" },
+        { "label": "CoreTextOrientedBBox", "address": "0x180124aac" },
+        { "label": "CoreTextOutlines", "address": "0x180124e0c" },
+        { "label": "CoreTextOutlinesV2", "address": "0x1801257d4" },
+        { "label": "CoreTextGlyphRowExtract", "address": "0x180127238" },
+        { "label": "CoreTextFloatBoundingBox", "address": "0x18012417c" },
+        { "label": "CoreTextOrientedBBoxFinalize", "address": "0x180129d78" },
+        { "label": "CoreTextLayoutOrCompose", "address": "0x180120800" },
+        { "label": "CoreTextLayoutFinalize", "address": "0x180120f2c" },
+        { "label": "CoreTextGlyphRecordRender", "address": "0x180171af0" },
+        { "label": "CoreTextGlyphRunSlice", "address": "0x180171cb8" },
+        { "label": "CoreTextEmitGlyphRecord", "address": "0x18016fd54" },
+        { "label": "CoreTextBoundsTransform", "address": "0x1802577e8" },
+        { "label": "CoreTextMatrixApply", "address": "0x180258144" }
+      ]
+    },
+    {
       "id": "scripting_expression_host",
       "area": "expression",
       "enabled": true,
