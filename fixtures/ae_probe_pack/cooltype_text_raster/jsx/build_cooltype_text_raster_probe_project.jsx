@@ -11,8 +11,6 @@ Scripting/sourceRect setup.
 
     var SCRIPT_FILE = new File($.fileName);
     var PACK_DIR = SCRIPT_FILE.parent.parent;
-    var OUT_DIR = new Folder(PACK_DIR.fsName + "/ae_goldens/png/RAS_010");
-    ensureFolder(OUT_DIR);
 
     if (!app.project) {
         app.newProject();
@@ -25,32 +23,59 @@ Scripting/sourceRect setup.
     } catch (_purgeErr) {
     }
 
-    var comp = app.project.items.addComp("RAS_010", 512, 512, 1, 0.2, 30);
-    comp.bgColor = [0.02, 0.02, 0.025];
+    buildTextCase(
+        "RAS_010",
+        "RAS_010_montserrat_text",
+        "WORD RASTER\nMONTSERRAT",
+        512,
+        512,
+        72,
+        [256, 256],
+        "RAS_010_[#####].png"
+    );
 
-    var textLayer = comp.layers.addText("WORD RASTER\nMONTSERRAT");
-    textLayer.name = "RAS_010_montserrat_text";
-    textLayer.property("ADBE Transform Group").property("ADBE Position").setValue([256, 256]);
-
-    var textProp = textLayer.property("ADBE Text Properties").property("ADBE Text Document");
-    var doc = textProp.value;
-    doc.font = "Montserrat-BoldItalic";
-    doc.fontSize = 72;
-    doc.fillColor = [1, 1, 1];
-    doc.applyFill = true;
-    doc.applyStroke = false;
-    doc.justification = ParagraphJustification.CENTER_JUSTIFY;
-    textProp.setValue(doc);
-
-    var rq = app.project.renderQueue.items.add(comp);
-    var om = rq.outputModule(1);
-    try {
-        om.applyTemplate("PNG Sequence");
-    } catch (_templateErr) {
-    }
-    om.file = new File(OUT_DIR.fsName + "/RAS_010_[#####].png");
+    buildTextCase(
+        "RAS_020",
+        "RAS_020_single_glyph_W",
+        "W",
+        256,
+        256,
+        96,
+        [128, 150],
+        "RAS_020_[#####].png"
+    );
 
     app.endUndoGroup();
+
+    function buildTextCase(caseId, layerName, text, width, height, fontSize, position, fileName) {
+        var outDir = new Folder(PACK_DIR.fsName + "/ae_goldens/png/" + caseId);
+        ensureFolder(outDir);
+
+        var comp = app.project.items.addComp(caseId, width, height, 1, 0.2, 30);
+        comp.bgColor = [0, 0, 0];
+
+        var textLayer = comp.layers.addText(text);
+        textLayer.name = layerName;
+        textLayer.property("ADBE Transform Group").property("ADBE Position").setValue(position);
+
+        var textProp = textLayer.property("ADBE Text Properties").property("ADBE Text Document");
+        var doc = textProp.value;
+        doc.font = "Montserrat-BoldItalic";
+        doc.fontSize = fontSize;
+        doc.fillColor = [1, 1, 1];
+        doc.applyFill = true;
+        doc.applyStroke = false;
+        doc.justification = ParagraphJustification.CENTER_JUSTIFY;
+        textProp.setValue(doc);
+
+        var rq = app.project.renderQueue.items.add(comp);
+        var om = rq.outputModule(1);
+        try {
+            om.applyTemplate("PNG Sequence");
+        } catch (_templateErr) {
+        }
+        om.file = new File(outDir.fsName + "/" + fileName);
+    }
 
     function ensureFolder(folder) {
         if (!folder.exists) {

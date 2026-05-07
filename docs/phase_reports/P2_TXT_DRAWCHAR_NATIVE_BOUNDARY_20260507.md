@@ -29,11 +29,12 @@ PF_World / output alpha semantics
 - The raster loop now gates drawing through the plan:
   whitespace, `glyph_id < 1`, disabled fill/stroke, and empty clipped bounds
   are explicit skip reasons.
-- The current coverage backend remains
-  `fontdue_rasterize_indexed_pending_cooltype_TXT_DrawChar`; this is now a
-  named replaceable backend rather than hidden behavior.
-- The canvas/output contract is explicitly recorded as straight RGBA8 with
-  pending PF_World premult parity.
+- The current coverage backend is now a named replaceable backend rather than
+  hidden behavior. Later passes moved it to
+  `ttf_outline_nonzero_supersample_v1`.
+- The canvas/output contract is explicitly recorded. Later passes recovered
+  the render-time ARE `PF_Pixel8` writer and replaced float source-over with
+  AE-style integer source-over for 8 bpc text pixels.
 
 `crates/render-core/src/layer_eval.rs`
 
@@ -110,8 +111,8 @@ gap.
 P2 is now blocked by one concrete layer:
 
 ```text
-replace fontdue indexed coverage/fill with CoolType-compatible TXT_DrawChar
-coverage/fill semantics
+replace native outline supersample coverage with CoolType/BIB-compatible
+TXT_DrawChar coverage rows
 ```
 
 That includes:
@@ -119,5 +120,12 @@ That includes:
 - antialias coverage rows;
 - fill/stroke coverage merge rules;
 - exact clipped bounds rounding;
-- PF_World premult/output handling at text fill time;
+- semi-transparent fill temp-world/PF_TransferRect handling;
 - then a guarded switch for runtime selector geometry/collapse sharpness.
+
+Follow-up evidence:
+
+```text
+docs/phase_reports/P2_TTF_OUTLINE_TEXT_COVERAGE_20260507.md
+docs/phase_reports/P2_TXT_DRAWCHAR_ARE_PIXEL_WRITER_20260507.md
+```

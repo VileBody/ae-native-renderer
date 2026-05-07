@@ -8,6 +8,12 @@
       "title": "Large Montserrat text raster coverage",
       "modules": ["M05"],
       "frames": [0, 1, 2, 3, 4, 5]
+    },
+    {
+      "id": "RAS_020",
+      "title": "Single Montserrat W text raster coverage",
+      "modules": ["M05"],
+      "frames": [0, 1, 2, 3, 4, 5]
     }
   ]
 }

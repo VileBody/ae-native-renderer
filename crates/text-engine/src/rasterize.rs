@@ -179,8 +179,7 @@ pub fn rasterize_text_with_layout(
             coverage_supersample: coverage.supersample,
             coverage_origin_source: coverage.origin_source.to_string(),
             coverage_nonzero_pixels: coverage.nonzero_pixels,
-            output_semantics: "native_canvas_straight_rgba8_source_over_pending_pf_world_premult"
-                .to_string(),
+            output_semantics: "recovered_txt_are_pf_pixel8_integer_source_over_v1".to_string(),
         };
         if will_draw {
             blend_bitmap(
@@ -211,9 +210,8 @@ pub fn rasterize_text_with_layout(
                 "fontdue_rasterize_indexed_fallback"
             }
             .to_string(),
-            pf_world_semantics:
-                "AE TXT_DrawChar boundary recovered; native Canvas is still straight RGBA8"
-                    .to_string(),
+            pf_world_semantics: "TXT_DrawChar ARE PF_Pixel8 fill/composite recovered from TXT.dll"
+                .to_string(),
             draw_chars,
         },
     ))
@@ -566,8 +564,8 @@ fn blend_bitmap(
     let clip = clip.unwrap_or([0, 0, canvas.width as i32, canvas.height as i32]);
     for by in 0..height {
         for bx in 0..width {
-            let alpha = bitmap[by * width + bx] as f32 / 255.0 * (color[3] as f32 / 255.0);
-            if alpha <= 0.0 {
+            let coverage = bitmap[by * width + bx];
+            if coverage == 0 || color[3] == 0 {
                 continue;
             }
             let px = (x + bx as f32).round() as i32;
@@ -580,23 +578,58 @@ fn blend_bitmap(
             }
 
             let dst = canvas.pixel(px as u32, py as u32);
-            let dst_a = dst[3] as f32 / 255.0;
-            let out_a = alpha + dst_a * (1.0 - alpha);
-            let mut out = [0u8; 4];
-            for channel in 0..3 {
-                let src = color[channel] as f32 / 255.0;
-                let dst = dst[channel] as f32 / 255.0;
-                let value = if out_a <= 0.0 {
-                    0.0
-                } else {
-                    (src * alpha + dst * dst_a * (1.0 - alpha)) / out_a
-                };
-                out[channel] = (value * 255.0).round().clamp(0.0, 255.0) as u8;
-            }
-            out[3] = (out_a * 255.0).round().clamp(0.0, 255.0) as u8;
+            let out = blend_text_pixel_ae_u8(dst, color, coverage);
             canvas.set_pixel(px as u32, py as u32, out);
         }
     }
+}
+
+fn blend_text_pixel_ae_u8(dst: [u8; 4], src: [u8; 4], coverage: u8) -> [u8; 4] {
+    let src_alpha = if coverage == u8::MAX {
+        src[3]
+    } else {
+        mul_u8_ae(src[3], coverage)
+    };
+    if src_alpha == 0 {
+        return dst;
+    }
+    if src_alpha == u8::MAX {
+        return [src[0], src[1], src[2], src_alpha];
+    }
+
+    let dst_alpha = dst[3];
+    if dst_alpha == 0 {
+        return [src[0], src[1], src[2], src_alpha];
+    }
+
+    let inv_mul = mul_u8_ae(u8::MAX - src_alpha, u8::MAX - dst_alpha);
+    let out_alpha = u8::MAX - inv_mul;
+    let mut out = [0u8; 4];
+    for channel in 0..3 {
+        let dst_premul = mul_u8_ae(dst[channel], dst_alpha) as i32;
+        let src_delta = src[channel] as i32 - dst_premul;
+        let out_premul = dst_premul + div255_signed_ae(src_delta * src_alpha as i32);
+        out[channel] = unpremultiply_u8_ae(out_premul, out_alpha);
+    }
+    out[3] = out_alpha;
+    out
+}
+
+fn mul_u8_ae(a: u8, b: u8) -> u8 {
+    let x = a as u32 * b as u32 + 0x80;
+    (((x >> 8) + x) >> 8).min(255) as u8
+}
+
+fn div255_signed_ae(value: i32) -> i32 {
+    let x = value + 0x80;
+    (x + (x >> 8)) >> 8
+}
+
+fn unpremultiply_u8_ae(premul: i32, alpha: u8) -> u8 {
+    if alpha == 0 {
+        return 0;
+    }
+    ((premul * 255 + alpha as i32 / 2) / alpha as i32).clamp(0, 255) as u8
 }
 
 fn rgba_u8_to_f32(color: [u8; 4]) -> [f32; 4] {
@@ -739,5 +772,21 @@ mod tests {
                 && draw_char.coverage_supersample == OUTLINE_COVERAGE_SUPERSAMPLE
                 && draw_char.coverage_nonzero_pixels > 0
         }));
+    }
+
+    #[test]
+    fn recovered_txt_are_pixel8_blend_matches_reverse_formula() {
+        assert_eq!(
+            blend_text_pixel_ae_u8([10, 20, 30, 128], [200, 40, 80, 128], 64),
+            [51, 25, 41, 144]
+        );
+        assert_eq!(
+            blend_text_pixel_ae_u8([5, 5, 6, 0], [250, 0, 0, 128], 128),
+            [250, 0, 0, 64]
+        );
+        assert_eq!(
+            blend_text_pixel_ae_u8([20, 40, 80, 128], [220, 80, 20, 128], 90),
+            [80, 53, 61, 150]
+        );
     }
 }

@@ -104,9 +104,9 @@ Remaining exactness questions:
 - exact antialias kernel/subpixel policy;
 - exact clipped bounds rounding around `TXT_DrawChar`;
 - stroke/fill merge behavior;
-- PF_World premult/output policy inside `TXT_DrawChar`, not just at final
-  canvas composite.
+- literal CoolType/BIB coverage rows;
+- semi-transparent fill temp-world/PF_TransferRect behavior.
 
-Next useful probe is a single-glyph raster pack with Frida/TTD around
-`TXT.dll+0x413d0`, dumping enough buffer/argument state to compare native
-coverage rows against AE rows before final composition.
+Follow-up `P2_TXT_DRAWCHAR_ARE_PIXEL_WRITER_20260507` recovered and implemented
+the 8 bpc ARE `PF_Pixel8` writer. Next useful probe is therefore below the
+writer: trace or dump the BIB/CoolType coverage rows before final composition.

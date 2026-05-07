@@ -601,6 +601,101 @@
       ]
     },
     {
+      "id": "txt_drawchar_core",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_txt_text_layout",
+      "project": "agent_txt_text_layout",
+      "process": "TXT.dll",
+      "notes": "Final TXT_DrawChar implementation reached through BEE.dll IAT from BEE_TextRenderNode. This owns CoolType coverage/fill, clipped bounds, antialias/hinting, and PF_World write semantics for M05 pixel parity.",
+      "targets": [
+        { "label": "TXT_DrawChar_entry_413d0", "address": "0x1800413d0" },
+        { "label": "TXTp_DrawChar2_caller_42092", "address": "0x180042092" },
+        { "label": "TXTp_DrawChar3_caller_42266", "address": "0x180042266" },
+        { "label": "TXT_text_bbox_caller_42b80", "address": "0x180042b80" },
+        { "label": "TXT_PlayCharOutlines_416c0", "address": "0x1800416c0" },
+        { "label": "TXT_PlayCharOutlines_impl_42ab0", "address": "0x180042ab0" }
+      ]
+    },
+    {
+      "id": "txt_drawchar_are_vtable",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_txt_text_layout",
+      "project": "agent_txt_text_layout",
+      "process": "TXT.dll",
+      "notes": "Final render-time TXT_DrawOutlinePlayerARE vtable targets captured from RAS_020 by Frida: TXT_DrawChar -> TXTp_DrawChar3_ARE -> outline core with glyph matrix 96. These own path fill/stroke, clipped PF_World handoff, and coverage write semantics for M05 pixel parity.",
+      "targets": [
+        { "label": "TXT_ARE_OutlinePlayer_vtable_00_3ecd0", "address": "0x18003ecd0" },
+        { "label": "TXT_ARE_OutlinePlayer_vtable_01_3ee00", "address": "0x18003ee00" },
+        { "label": "TXT_ARE_OutlinePlayer_vtable_02_404e0", "address": "0x1800404e0" },
+        { "label": "TXT_ARE_OutlinePlayer_vtable_03_40430", "address": "0x180040430" },
+        { "label": "TXT_ARE_OutlinePlayer_vtable_04_3f050", "address": "0x18003f050" },
+        { "label": "TXT_ARE_OutlinePlayer_vtable_05_3ef60", "address": "0x18003ef60" },
+        { "label": "TXT_ARE_OutlinePlayer_vtable_06_3f310", "address": "0x18003f310" }
+      ]
+    },
+    {
+      "id": "txt_drawchar_are_helpers",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_txt_text_layout",
+      "project": "agent_txt_text_layout",
+      "process": "TXT.dll",
+      "notes": "Helper functions called by the final ARE outline-player vtable. This is the static layer for fill/stroke ordering, path buffer construction, 8/16/32 bpc PF_World writes, and clipping semantics.",
+      "targets": [
+        { "label": "TXT_ARE_OutlinePlayer_ctor_3e310", "address": "0x18003e310" },
+        { "label": "TXT_ARE_OutlinePlayer_setup_40290", "address": "0x180040290" },
+        { "label": "TXT_ARE_PathReserve_3ee10", "address": "0x18003ee10" },
+        { "label": "TXT_ARE_Render_8bpc_3c360", "address": "0x18003c360" },
+        { "label": "TXT_ARE_Render_16bpc_3c140", "address": "0x18003c140" },
+        { "label": "TXT_ARE_Fill_or_Stroke_A_3d4a0", "address": "0x18003d4a0" },
+        { "label": "TXT_ARE_Fill_or_Stroke_B_3db60", "address": "0x18003db60" }
+      ]
+    },
+    {
+      "id": "txt_drawchar_are_lower_helpers",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_txt_text_layout",
+      "project": "agent_txt_text_layout",
+      "process": "TXT.dll",
+      "notes": "Lower helpers reached from ARE Render_8/16/32 and fill/stroke functions. This layer should identify the exact Adobe rasterizer call, path object creation, and PF_World transfer/rounding behavior.",
+      "targets": [
+        { "label": "TXT_ARE_Render_8bpc_fill_3d200", "address": "0x18003d200" },
+        { "label": "TXT_ARE_Render_8bpc_stroke_3d960", "address": "0x18003d960" },
+        { "label": "TXT_ARE_Render_16bpc_fill_3cf50", "address": "0x18003cf50" },
+        { "label": "TXT_ARE_Render_16bpc_stroke_3d760", "address": "0x18003d760" },
+        { "label": "TXT_ARE_OutputComposite_3df40", "address": "0x18003df40" },
+        { "label": "TXT_ARE_PathObjectFactory_3fd40", "address": "0x18003fd40" },
+        { "label": "TXT_ARE_BufferReserve_406b0", "address": "0x1800406b0" }
+      ]
+    },
+    {
+      "id": "txt_drawchar_are_pixel_writers",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_txt_text_layout",
+      "project": "agent_txt_text_layout",
+      "process": "TXT.dll",
+      "notes": "Pixel writer variants called after the Adobe raster path returns row/span coverage. These define 8/16/f32 coverage application, alpha/color multiplication, and destination row iteration.",
+      "targets": [
+        { "label": "TXT_ARE_OutputComposite_8bpc_3de50", "address": "0x18003de50" },
+        { "label": "TXT_ARE_OutputComposite_16bpc_3dd60", "address": "0x18003dd60" },
+        { "label": "TXT_ARE_OutputComposite_f32_3df40", "address": "0x18003df40" },
+        { "label": "TXT_ARE_PathBuilder_40580", "address": "0x180040580" },
+        { "label": "TXT_ARE_BIBPathObject_refresh_408d0", "address": "0x1800408d0" },
+        { "label": "TXT_ARE_PixelWriter8_span_3b8c0", "address": "0x18003b8c0" },
+        { "label": "TXT_ARE_PixelWriter16_span_3b6b0", "address": "0x18003b6b0" },
+        { "label": "TXT_ARE_PixelBlend8_full_3cb10", "address": "0x18003cb10" },
+        { "label": "TXT_ARE_PixelBlend8_coverage_3c980", "address": "0x18003c980" },
+        { "label": "TXT_ARE_PixelBlend16_full_3c810", "address": "0x18003c810" },
+        { "label": "TXT_ARE_PixelBlend16_coverage_3c680", "address": "0x18003c680" },
+        { "label": "TXT_ARE_PixelBlend8_or_coverage_3cc80", "address": "0x18003cc80" },
+        { "label": "TXT_ARE_PixelBlendF32_or_coverage_3cdf0", "address": "0x18003cdf0" }
+      ]
+    },
+    {
       "id": "scripting_expression_host",
       "area": "expression",
       "enabled": true,
