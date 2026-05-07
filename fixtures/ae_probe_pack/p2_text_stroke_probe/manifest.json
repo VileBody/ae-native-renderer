@@ -1,0 +1,32 @@
+{
+  "id": "p2_text_stroke_probe",
+  "description": "Minimal TXT_DrawChar stroke/fill merge probe pack.",
+  "entry_script": "jsx/build_p2_text_stroke_probe_project.jsx",
+  "cases": [
+    {
+      "id": "STR_FILL_ONLY",
+      "title": "Single glyph fill only",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "STR_STROKE_ONLY",
+      "title": "Single glyph stroke only",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "STR_FILL_STROKE_FILL_OVER",
+      "title": "Single glyph fill and stroke, fill over stroke",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "STR_FILL_STROKE_STROKE_OVER",
+      "title": "Single glyph fill and stroke, stroke over fill",
+      "modules": ["M05"],
+      "frames": [0]
+    }
+  ]
+}
+

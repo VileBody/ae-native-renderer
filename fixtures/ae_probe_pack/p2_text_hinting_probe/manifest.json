@@ -1,0 +1,83 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "p2_text_hinting_probe",
+  "description": "Tiny P2 text hinting/grid-fit/AA/subpixel probe pack. Single-glyph 8 bpc renders at small, medium, and large sizes with fractional text-layer positions.",
+  "entry_script": "jsx/build_p2_text_hinting_probe_project.jsx",
+  "cases": [
+    {
+      "id": "HNT_010",
+      "title": "Montserrat I 12px x/y fraction 0.00",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_011",
+      "title": "Montserrat I 12px x/y fraction 0.25",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_012",
+      "title": "Montserrat I 12px x/y fraction 0.50",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_013",
+      "title": "Montserrat I 12px x/y fraction 0.75",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_020",
+      "title": "Montserrat H 24px x/y fraction 0.00",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_021",
+      "title": "Montserrat H 24px x/y fraction 0.25",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_022",
+      "title": "Montserrat H 24px x/y fraction 0.50",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_023",
+      "title": "Montserrat H 24px x/y fraction 0.75",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_030",
+      "title": "Montserrat W 96px x/y fraction 0.00",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_031",
+      "title": "Montserrat W 96px x/y fraction 0.25",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_032",
+      "title": "Montserrat W 96px x/y fraction 0.50",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "HNT_033",
+      "title": "Montserrat W 96px x/y fraction 0.75",
+      "modules": ["M05"],
+      "frames": [0]
+    }
+  ],
+  "render_outputs": {
+    "png": "ae_goldens/png/<case_id>/<case_id>_[#####].png"
+  }
+}

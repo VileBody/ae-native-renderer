@@ -1,0 +1,32 @@
+{
+  "id": "p2_text_clip_probe",
+  "description": "P2-C clipped TXT_DrawChar coverage bounds probe.",
+  "entry_script": "jsx/build_p2_text_clip_probe_project.jsx",
+  "cases": [
+    {
+      "id": "CLP_LEFT_N049",
+      "title": "Single glyph sourceRect left at -0.49",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "CLP_TOP_N049",
+      "title": "Single glyph sourceRect top at -0.49",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "CLP_RIGHT_P049",
+      "title": "Single glyph sourceRect right at width + 0.49",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "CLP_BOTTOM_P049",
+      "title": "Single glyph sourceRect bottom at height + 0.49",
+      "modules": ["M05"],
+      "frames": [0]
+    }
+  ]
+}
+

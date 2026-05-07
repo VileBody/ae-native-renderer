@@ -1,0 +1,19 @@
+{
+  "pack": "p2_text_transfill_probe",
+  "date": "2026-05-07",
+  "modules": ["M05", "M19"],
+  "purpose": "Focused discriminator for TXT ARE semi-transparent fill temp-world and PF_TransferRect opacity behavior.",
+  "entry_script": "jsx/build_p2_text_transfill_probe_project.jsx",
+  "cases": [
+    {"id": "TRF_WHT_A25_TRANSPARENT", "fill": [1, 1, 1, 25], "background": "transparent"},
+    {"id": "TRF_WHT_A50_TRANSPARENT", "fill": [1, 1, 1, 50], "background": "transparent"},
+    {"id": "TRF_WHT_A128_TRANSPARENT", "fill": [1, 1, 1, 128], "background": "transparent"},
+    {"id": "TRF_WHT_A255_TRANSPARENT", "fill": [1, 1, 1, 255], "background": "transparent"},
+    {"id": "TRF_RED_A128_TRANSPARENT", "fill": [1, 0, 0, 128], "background": "transparent"},
+    {"id": "TRF_WHT_A25_BLACK", "fill": [1, 1, 1, 25], "background": "black"},
+    {"id": "TRF_WHT_A50_BLACK", "fill": [1, 1, 1, 50], "background": "black"},
+    {"id": "TRF_WHT_A128_BLACK", "fill": [1, 1, 1, 128], "background": "black"},
+    {"id": "TRF_WHT_A255_BLACK", "fill": [1, 1, 1, 255], "background": "black"},
+    {"id": "TRF_RED_A128_BLUE", "fill": [1, 0, 0, 128], "background": "blue"}
+  ]
+}

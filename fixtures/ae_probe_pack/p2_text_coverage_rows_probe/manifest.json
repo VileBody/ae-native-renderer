@@ -1,0 +1,28 @@
+{
+  "pack": "p2_text_coverage_rows_probe",
+  "purpose": "Tiny CoolType/BIB coverage-row glyph probe for P2-A",
+  "cases": [
+    {
+      "case_id": "COV_W",
+      "text": "W",
+      "font": "Montserrat-BoldItalic",
+      "font_size": 96,
+      "bits_per_channel": 8
+    },
+    {
+      "case_id": "COV_I",
+      "text": "I",
+      "font": "Montserrat-BoldItalic",
+      "font_size": 96,
+      "bits_per_channel": 8
+    },
+    {
+      "case_id": "COV_O",
+      "text": "O",
+      "font": "Montserrat-BoldItalic",
+      "font_size": 96,
+      "bits_per_channel": 8
+    }
+  ]
+}
+
