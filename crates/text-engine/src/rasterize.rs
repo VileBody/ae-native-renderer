@@ -53,7 +53,23 @@ pub struct DrawCharPlan {
     pub coverage_supersample: u32,
     pub coverage_origin_source: String,
     pub coverage_nonzero_pixels: u32,
+    pub coverage_rows: Vec<CoverageRowSpan>,
     pub output_semantics: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CoverageRowSpan {
+    pub schema: String,
+    pub policy: String,
+    pub glyph_run_index: usize,
+    pub glyph_id: u32,
+    pub y: i32,
+    pub start_x: i32,
+    pub end_x: i32,
+    pub coverage_len: u32,
+    pub coverage_hash_fnv1a64: String,
+    pub coverage_sample_hex: String,
+    pub coverage_hex: Option<String>,
 }
 
 pub fn rasterize_text(
@@ -82,13 +98,6 @@ pub fn rasterize_text_with_layout(
         .as_deref()
         .and_then(|bytes| Face::parse(bytes, 0).ok());
     let mut canvas = Canvas::transparent(width, height);
-    let uses_temp_world_transfer = color[3] > 0 && color[3] < u8::MAX;
-    let mut temp_world = uses_temp_world_transfer.then(|| Canvas::transparent(width, height));
-    let draw_color = if uses_temp_world_transfer {
-        [color[0], color[1], color[2], u8::MAX]
-    } else {
-        color
-    };
     let mut draw_chars = Vec::with_capacity(layout.glyphs.len());
     let chars = req.text.chars().collect::<Vec<_>>();
     let fill_rgba = rgba_u8_to_f32(color);
@@ -128,6 +137,16 @@ pub fn rasterize_text_with_layout(
             coverage.height,
             width,
             height,
+        );
+        let coverage_rows = coverage_row_spans(
+            run_index,
+            glyph.glyph_id,
+            coverage.raster_x,
+            coverage.raster_y,
+            coverage.width,
+            coverage.height,
+            coverage.bitmap.as_ref(),
+            clipped_bounds,
         );
         let draw_fill = color[3] > 0;
         let draw_stroke = false;
@@ -186,37 +205,22 @@ pub fn rasterize_text_with_layout(
             coverage_supersample: coverage.supersample,
             coverage_origin_source: coverage.origin_source.to_string(),
             coverage_nonzero_pixels: coverage.nonzero_pixels,
+            coverage_rows,
             output_semantics: "recovered_txt_are_pf_pixel8_integer_source_over_v1".to_string(),
         };
         if will_draw {
-            if let Some(temp_world) = temp_world.as_mut() {
-                blend_bitmap(
-                    temp_world,
-                    coverage.raster_x,
-                    coverage.raster_y,
-                    coverage.width,
-                    coverage.height,
-                    coverage.bitmap.as_ref(),
-                    draw_color,
-                    clipped_bounds,
-                );
-            } else {
-                blend_bitmap(
-                    &mut canvas,
-                    coverage.raster_x,
-                    coverage.raster_y,
-                    coverage.width,
-                    coverage.height,
-                    coverage.bitmap.as_ref(),
-                    draw_color,
-                    clipped_bounds,
-                );
-            }
+            blend_bitmap(
+                &mut canvas,
+                coverage.raster_x,
+                coverage.raster_y,
+                coverage.width,
+                coverage.height,
+                coverage.bitmap.as_ref(),
+                color,
+                clipped_bounds,
+            );
         }
         draw_chars.push(plan);
-    }
-    if let Some(temp_world) = temp_world.as_ref() {
-        transfer_text_temp_world_ae_u8(&mut canvas, temp_world, color[3]);
     }
 
     Ok((
@@ -233,12 +237,9 @@ pub fn rasterize_text_with_layout(
                 "fontdue_rasterize_indexed_fallback"
             }
             .to_string(),
-            pf_world_semantics: if uses_temp_world_transfer {
-                "TXT_DrawChar ARE PF_Pixel8 temp-world fill then PF_TransferRect opacity"
-            } else {
-                "TXT_DrawChar ARE PF_Pixel8 fill/composite recovered from TXT.dll"
-            }
-            .to_string(),
+            pf_world_semantics:
+                "TXT_DrawChar ARE PF_Pixel8 direct source-over; fill opacity is source pixel alpha"
+                    .to_string(),
             draw_chars,
         },
     ))
@@ -613,27 +614,90 @@ fn blend_bitmap(
     }
 }
 
-fn transfer_text_temp_world_ae_u8(dst: &mut Canvas, src: &Canvas, opacity: u8) {
-    if opacity == 0 {
-        return;
-    }
-    let width = dst.width.min(src.width);
-    let height = dst.height.min(src.height);
-    for y in 0..height {
-        for x in 0..width {
-            let src_px = src.pixel(x, y);
-            if src_px[3] == 0 {
+fn coverage_row_spans(
+    glyph_run_index: usize,
+    glyph_id: u32,
+    x: f32,
+    y: f32,
+    width: usize,
+    height: usize,
+    bitmap: &[u8],
+    clip: Option<[i32; 4]>,
+) -> Vec<CoverageRowSpan> {
+    let Some(clip) = clip else {
+        return Vec::new();
+    };
+    let origin_x = x.round() as i32;
+    let origin_y = y.round() as i32;
+    let mut spans = Vec::new();
+
+    for by in 0..height {
+        let py = origin_y + by as i32;
+        if py < clip[1] || py >= clip[3] {
+            continue;
+        }
+
+        let mut bx = 0usize;
+        while bx < width {
+            let px = origin_x + bx as i32;
+            let coverage = bitmap[by * width + bx];
+            if coverage == 0 || px < clip[0] || px >= clip[2] {
+                bx += 1;
                 continue;
             }
-            let dst_px = dst.pixel(x, y);
-            let out = blend_text_pixel_ae_u8(
-                dst_px,
-                [src_px[0], src_px[1], src_px[2], opacity],
-                src_px[3],
-            );
-            dst.set_pixel(x, y, out);
+
+            let start_bx = bx;
+            let start_x = px;
+            bx += 1;
+            while bx < width {
+                let px = origin_x + bx as i32;
+                if px < clip[0] || px >= clip[2] || bitmap[by * width + bx] == 0 {
+                    break;
+                }
+                bx += 1;
+            }
+
+            let coverage_bytes = &bitmap[by * width + start_bx..by * width + bx];
+            spans.push(CoverageRowSpan {
+                schema: "ae-native-renderer.text-coverage-row.v1".to_string(),
+                policy: "native_nonzero_contiguous_runs_with_integer_origin".to_string(),
+                glyph_run_index,
+                glyph_id,
+                y: py,
+                start_x,
+                end_x: origin_x + bx as i32,
+                coverage_len: coverage_bytes.len() as u32,
+                coverage_hash_fnv1a64: format!("{:016x}", fnv1a64(coverage_bytes)),
+                coverage_sample_hex: hex_prefix(coverage_bytes, 64),
+                coverage_hex: (coverage_bytes.len() <= 256).then(|| bytes_hex(coverage_bytes)),
+            });
         }
     }
+
+    spans
+}
+
+fn fnv1a64(bytes: &[u8]) -> u64 {
+    let mut hash = 0xcbf29ce484222325u64;
+    for byte in bytes {
+        hash ^= u64::from(*byte);
+        hash = hash.wrapping_mul(0x100000001b3);
+    }
+    hash
+}
+
+fn hex_prefix(bytes: &[u8], max_len: usize) -> String {
+    bytes_hex(&bytes[..bytes.len().min(max_len)])
+}
+
+fn bytes_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut out = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        out.push(HEX[(byte >> 4) as usize] as char);
+        out.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    out
 }
 
 fn blend_text_pixel_ae_u8(dst: [u8; 4], src: [u8; 4], coverage: u8) -> [u8; 4] {
@@ -823,6 +887,7 @@ mod tests {
             draw_char.coverage_backend == "ttf_outline_nonzero_supersample"
                 && draw_char.coverage_supersample == OUTLINE_COVERAGE_SUPERSAMPLE
                 && draw_char.coverage_nonzero_pixels > 0
+                && !draw_char.coverage_rows.is_empty()
         }));
     }
 
@@ -843,10 +908,10 @@ mod tests {
     }
 
     #[test]
-    fn semitransparent_fill_uses_temp_world_before_transfer() {
-        let mut direct = Canvas::transparent(1, 1);
+    fn semitransparent_fill_uses_direct_source_pixel_alpha() {
+        let mut canvas = Canvas::transparent(1, 1);
         blend_bitmap(
-            &mut direct,
+            &mut canvas,
             0.0,
             0.0,
             1,
@@ -855,25 +920,37 @@ mod tests {
             [200, 100, 50, 128],
             None,
         );
+        assert_eq!(canvas.pixel(0, 0), [200, 100, 50, 128]);
+
         blend_bitmap(
-            &mut direct,
+            &mut canvas,
             0.0,
             0.0,
             1,
             1,
-            &[255],
+            &[128],
             [200, 100, 50, 128],
             None,
         );
+        assert_eq!(canvas.pixel(0, 0), [199, 100, 49, 160]);
+    }
 
-        let mut temp = Canvas::transparent(1, 1);
-        blend_bitmap(&mut temp, 0.0, 0.0, 1, 1, &[255], [200, 100, 50, 255], None);
-        blend_bitmap(&mut temp, 0.0, 0.0, 1, 1, &[255], [200, 100, 50, 255], None);
-        let mut transferred = Canvas::transparent(1, 1);
-        transfer_text_temp_world_ae_u8(&mut transferred, &temp, 128);
+    #[test]
+    fn coverage_row_spans_record_integer_runs_and_hashes() {
+        let bitmap = [0, 7, 9, 0, 0, 255, 1, 0];
+        let spans = coverage_row_spans(3, 331, 10.2, 20.7, 4, 2, &bitmap, Some([0, 0, 100, 100]));
 
-        assert_eq!(temp.pixel(0, 0), [200, 100, 50, 255]);
-        assert_eq!(transferred.pixel(0, 0), [200, 100, 50, 128]);
-        assert!(direct.pixel(0, 0)[3] > transferred.pixel(0, 0)[3]);
+        assert_eq!(spans.len(), 2);
+        assert_eq!(spans[0].glyph_run_index, 3);
+        assert_eq!(spans[0].glyph_id, 331);
+        assert_eq!(spans[0].y, 21);
+        assert_eq!(spans[0].start_x, 11);
+        assert_eq!(spans[0].end_x, 13);
+        assert_eq!(spans[0].coverage_len, 2);
+        assert_eq!(spans[0].coverage_hex.as_deref(), Some("0709"));
+        assert_eq!(spans[1].y, 22);
+        assert_eq!(spans[1].start_x, 11);
+        assert_eq!(spans[1].end_x, 13);
+        assert_eq!(spans[1].coverage_hex.as_deref(), Some("ff01"));
     }
 }

@@ -1,0 +1,56 @@
+function buildStrokeLiveCase(opts) {
+    app.beginUndoGroup("Build P2 Text Stroke Live Probe " + opts.caseId);
+
+    var SCRIPT_FILE = new File($.fileName);
+    var PACK_DIR = SCRIPT_FILE.parent.parent;
+    if (!app.project) {
+        app.newProject();
+    }
+    app.project.bitsPerChannel = 8;
+
+    var outDir = new Folder(PACK_DIR.fsName + "/ae_goldens/png/" + opts.caseId);
+    ensureStrokeLiveFolder(outDir);
+
+    var comp = app.project.items.addComp(opts.caseId, 256, 256, 1, 1.0 / 30.0, 30);
+    comp.bgColor = [0, 0, 0];
+
+    var textLayer = comp.layers.addText("W");
+    textLayer.name = opts.layerName;
+    textLayer.property("ADBE Transform Group").property("ADBE Position").setValue([128, 151]);
+
+    var textProp = textLayer.property("ADBE Text Properties").property("ADBE Text Document");
+    var doc = textProp.value;
+    try {
+        doc.font = "Montserrat-BoldItalic";
+    } catch (_fontErr) {
+        doc.font = "Arial-BoldMT";
+    }
+    doc.fontSize = 96;
+    doc.justification = ParagraphJustification.CENTER_JUSTIFY;
+    doc.applyFill = opts.applyFill;
+    doc.applyStroke = opts.applyStroke;
+    doc.fillColor = opts.fillColor;
+    doc.strokeColor = opts.strokeColor;
+    doc.strokeWidth = opts.strokeWidth;
+    doc.strokeOverFill = opts.strokeOverFill;
+    textProp.setValue(doc);
+
+    var rq = app.project.renderQueue.items.add(comp);
+    var om = rq.outputModule(1);
+    try {
+        om.applyTemplate("PNG Sequence");
+    } catch (_templateErr) {
+    }
+    om.file = new File(outDir.fsName + "/" + opts.fileName);
+
+    app.endUndoGroup();
+}
+
+function ensureStrokeLiveFolder(folder) {
+    if (!folder.exists) {
+        if (folder.parent && !folder.parent.exists) {
+            ensureStrokeLiveFolder(folder.parent);
+        }
+        folder.create();
+    }
+}

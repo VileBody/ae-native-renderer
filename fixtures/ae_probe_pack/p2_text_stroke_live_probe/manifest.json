@@ -1,0 +1,35 @@
+{
+  "id": "p2_text_stroke_live_probe",
+  "description": "Minimal TXT ARE live stroke/fill order probe pack.",
+  "entry_script": "jsx/build_p2_text_stroke_live_probe_project.jsx",
+  "cases": [
+    {
+      "id": "STR_LIVE_FILL_ONLY",
+      "title": "Single glyph fill only",
+      "entry_script": "jsx/build_p2_text_stroke_live_probe_project.jsx",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "STR_LIVE_STROKE_ONLY",
+      "title": "Single glyph stroke only",
+      "entry_script": "jsx/build_STR_LIVE_STROKE_ONLY.jsx",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "STR_LIVE_FILL_OVER",
+      "title": "Single glyph fill and stroke, fill over stroke",
+      "entry_script": "jsx/build_STR_LIVE_FILL_OVER.jsx",
+      "modules": ["M05"],
+      "frames": [0]
+    },
+    {
+      "id": "STR_LIVE_STROKE_OVER",
+      "title": "Single glyph fill and stroke, stroke over fill",
+      "entry_script": "jsx/build_STR_LIVE_STROKE_OVER.jsx",
+      "modules": ["M05"],
+      "frames": [0]
+    }
+  ]
+}

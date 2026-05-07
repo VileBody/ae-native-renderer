@@ -1,0 +1,101 @@
+function buildTransfillLiveCase(spec) {
+    app.beginUndoGroup("Build P2 Text Transfill Live Probe " + spec.id);
+
+    var SCRIPT_FILE = new File($.fileName);
+    var PACK_DIR = SCRIPT_FILE.parent.parent;
+    var OUT_DIR = new Folder(PACK_DIR.fsName + "/ae_probe_outputs/png");
+    var META_DIR = new Folder(PACK_DIR.fsName + "/ae_probe_outputs");
+    ensureTransfillLiveFolder(OUT_DIR);
+    ensureTransfillLiveFolder(META_DIR);
+
+    if (!app.project) {
+        app.newProject();
+    }
+    app.project.bitsPerChannel = 8;
+
+    var width = 128;
+    var height = 112;
+    var duration = 1.0 / 30.0;
+    var fps = 30;
+    var comp = app.project.items.addComp(spec.id, width, height, 1, duration, fps);
+    comp.bgColor = [0, 0, 0];
+
+    if (spec.bg !== null) {
+        var bg = comp.layers.addSolid(spec.bg, spec.id + "_background", width, height, 1, duration);
+        bg.property("ADBE Transform Group").property("ADBE Position").setValue([width / 2, height / 2]);
+        bg.inPoint = 0;
+        bg.outPoint = duration;
+    }
+
+    var layer = comp.layers.addText(spec.text);
+    layer.name = spec.id + "_text";
+    layer.property("ADBE Transform Group").property("ADBE Position").setValue([64, 72]);
+
+    var textProp = layer.property("ADBE Text Properties").property("ADBE Text Document");
+    var doc = textProp.value;
+    try {
+        doc.font = "Arial-BoldMT";
+    } catch (_fontErr) {
+        doc.font = "Arial";
+    }
+    doc.fontSize = 64;
+    doc.applyFill = true;
+    doc.applyStroke = false;
+    doc.fillColor = spec.fill;
+    doc.justification = ParagraphJustification.CENTER_JUSTIFY;
+    textProp.setValue(doc);
+
+    var log = [];
+    if (spec.addAnimator) {
+        addFillOpacityAnimator(layer, spec.opacity, spec.id, log);
+    } else {
+        log.push(spec.id + " no fill opacity animator; opaque control");
+    }
+    writeTransfillLiveMethodLog(new File(META_DIR.fsName + "/text_fill_alpha_method.txt"), log);
+
+    var caseDir = new Folder(OUT_DIR.fsName + "/" + spec.id);
+    ensureTransfillLiveFolder(caseDir);
+    var rq = app.project.renderQueue.items.add(comp);
+    var om = rq.outputModule(1);
+    try {
+        om.applyTemplate("PNG Sequence");
+    } catch (_templateErr) {
+    }
+    om.file = new File(caseDir.fsName + "/" + spec.id + "_[#####].png");
+
+    app.endUndoGroup();
+}
+
+function addFillOpacityAnimator(layer, opacityPercent, caseId, log) {
+    var textProps = layer.property("ADBE Text Properties");
+    var animators = textProps.property("ADBE Text Animators");
+    var animator = animators.addProperty("ADBE Text Animator");
+    animator.name = caseId + "_fill_opacity";
+
+    var props = animator.property("ADBE Text Animator Properties");
+    var prop = props.addProperty("ADBE Text Fill Opacity");
+    prop.setValue(opacityPercent);
+    log.push(caseId + " added ADBE Text Fill Opacity value=" + prop.value);
+
+    var selector = animator.property("ADBE Text Selectors").addProperty("ADBE Text Selector");
+    selector.property("ADBE Text Percent Start").setValue(0);
+    selector.property("ADBE Text Percent End").setValue(100);
+}
+
+function writeTransfillLiveMethodLog(file, lines) {
+    file.encoding = "UTF-8";
+    file.open("w");
+    for (var i = 0; i < lines.length; i++) {
+        file.writeln(lines[i]);
+    }
+    file.close();
+}
+
+function ensureTransfillLiveFolder(folder) {
+    if (!folder.exists) {
+        if (folder.parent && !folder.parent.exists) {
+            ensureTransfillLiveFolder(folder.parent);
+        }
+        folder.create();
+    }
+}

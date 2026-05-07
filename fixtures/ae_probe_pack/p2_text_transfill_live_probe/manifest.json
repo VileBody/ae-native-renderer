@@ -1,0 +1,11 @@
+{
+  "pack": "p2_text_transfill_live_probe",
+  "date": "2026-05-08",
+  "purpose": "Live AE85 probe for TXT.dll semitransparent text fill alpha through Text Animator Fill Opacity.",
+  "entry_script": "jsx/build_p2_text_transfill_live_probe_project.jsx",
+  "cases": [
+    {"id": "TRFLIVE_WHT_A255_CONTROL", "entry_script": "jsx/build_p2_text_transfill_live_probe_project.jsx", "fill": [1, 1, 1], "fill_opacity_percent": 100.0, "background": "transparent"},
+    {"id": "TRFLIVE_WHT_A128_FILL_OPACITY", "entry_script": "jsx/build_TRFLIVE_WHT_A128_FILL_OPACITY.jsx", "fill": [1, 1, 1], "fill_opacity_percent": 50.1960784314, "background": "transparent"},
+    {"id": "TRFLIVE_RED_A128_BLUE", "entry_script": "jsx/build_TRFLIVE_RED_A128_BLUE.jsx", "fill": [1, 0, 0], "fill_opacity_percent": 50.1960784314, "background": "blue"}
+  ]
+}
