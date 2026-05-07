@@ -1,0 +1,22 @@
+{
+  "schema": "ae-native-renderer.ae-probe-pack.v1",
+  "pack_id": "cooltype_text_layout_probe",
+  "purpose": "After Effects sourceRectAtTime/CoolType dynamic probe for M05/M06/M17 text layout, glyph metrics, and collapse text surfaces. The pack intentionally creates no render-queue items.",
+  "builder": {
+    "jsx": "jsx/build_cooltype_text_layout_probe_project.jsx",
+    "external_assets": [],
+    "required_installed_fonts": [
+      "Montserrat-BoldItalic",
+      "Point-Light"
+    ]
+  },
+  "cases": [
+    {"id": "TXT_010", "modules": ["M05", "M06"], "question": "Which CoolType bbox/glyph metric functions does AE use for Montserrat word reveal layout?"},
+    {"id": "TXT_020", "modules": ["M05", "M06"], "question": "Which CoolType bbox/glyph metric functions does AE use for character/line reveal layout?"},
+    {"id": "TXT_040", "modules": ["M08", "M09"], "question": "Which text layout surfaces are touched by Point-Light expression-selector text?"},
+    {"id": "GPH_010", "modules": ["M17", "M05"], "question": "Which text bbox surfaces are touched by precomp/collapse text sharpness layout?"}
+  ],
+  "metadata_outputs": {
+    "source_rect_samples": "ae_goldens/metadata/cooltype_text_layout_probe.json"
+  }
+}

@@ -2,6 +2,8 @@
 
 Date: 2026-05-07
 
+Dynamic follow-up: `docs/phase_reports/M05_M06_COOLTYPE_DYNAMIC_PROBE_20260507.md`.
+
 ## Scope
 
 This pass closes as much of the text/layout domain as possible from static
