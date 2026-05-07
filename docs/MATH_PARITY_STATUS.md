@@ -61,7 +61,7 @@ nearby AE math backlog. Template status is derived from this table.
 | `M02` | Footage source-time sampling and media frame selection | `implemented approximate` | all three | `source_start`, activity windows, sequential decode/cache, media plan logs. | Numbered-frame source fixtures, source-time telemetry, AE/reference frame-index goldens. |
 | `M03` | 2D transform matrix, anchor/position/scale/rotation sampling | `implemented approximate` | all three | Matrix convention, inverse sampling, bilinear sampler, ROI bounds, unit tests. | Operator passport, coordinate-field/UV diff fixtures, matrix telemetry, AE transform goldens. |
 | `M04` | Keyframes: hold/linear/cubic Bezier approximation | `instrumented/testable` | all three | Scalar/Vec2 keyframes, compact cubic ease, unit tests, Bezier conformance micro-scene scaffold, and `temporal.keyframe_sample` records with segment/ease/progress diagnostics. | Export AE ease telemetry/PNGs, compare temporal-ease tangent mapping, then tune solver/parameter mapping. |
-| `M05` | Text rasterization and glyph layout | `AE golden exists` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; exact static `Montserrat-BoldItalic.ttf` and `Point-Light.ttf` fixture resolution; CoolType glyph metric targets selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows; layout sidecars emit glyph-run index, advance x/y, comp-space bbox/minmax/centers/baselines, baseline delta slot, metric source, and CoolType reference status. AE sourceRect-based text telemetry refs are imported for `TXT_010`/`TXT_020`/`TXT_030`/`TXT_040`. | Recover/import deeper CoolType glyph-id/coverage rows, then replace the remaining fontdue/sourceRect metric drift. Current blocker is glyph metrics and whitespace/sourceRect distribution, not missing font identity. |
+| `M05` | Text rasterization and glyph layout | `formula tuning` | all three | Fontdue rasterization remains the stable runtime placement path; exact static `Montserrat-BoldItalic.ttf` and `Point-Light.ttf` fixture resolution are locked. CoolType-shaped metric telemetry is now implemented from TTF/CoolType evidence: glyph ids, hmtx advances, fixed16 advances, design-unit bboxes, scaled bboxes, sourceRect union, glyph-run/char/word/line indices, comp-space bbox/minmax/centers/baselines, metric source, and `cooltype_metric_verified` status. AE sourceRect-based text telemetry refs are imported for `TXT_010`/`TXT_020`/`TXT_030`/`TXT_040`. Guarded P2 run keeps PNG output stable while adding metric rows; master gate remains `regression=0`. | Recover/import deeper CoolType glyph coverage/raster rows and true AE sourceRect row partition semantics, especially whitespace/cumulative rows. Then switch runtime glyph/selector geometry from fontdue placement to CoolType metrics only behind `TXT_010`/`TXT_020`/`TXT_040`/`GPH_010` no-regression gates. |
 | `M06` | Text Range Selector reveal by words/characters/lines | `formula tuning` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, randomize/wiggly approximations, glyph/word/line bbox units, selector-unit sidecars linked to glyph-run passports, clipped-glyph selector units preserved for off-canvas text, and AE-backed Square Range Selector opacity behavior where full-range `Start=0 End=100` gives `weight=1` for every unit even when Smoothness is `100`. `TXT_020` primary visible mean improved `7.296998 -> 5.860491`; `GPH_010` improved `13.529264 -> 1.701600`. | Add focused AE selector boundary/weight refs beyond sourceRect passports; tune partial-edge conventions, line/word whitespace handling, and non-square shapes without hiding M05 glyph metric drift. |
 | `M07` | Character text animator position/scale/rotation/blur | `instrumented/testable` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles, per-unit glyph refs, final matrix, opacity alpha scale, and blur radius telemetry. | Add AE glyph animator goldens and tune per-glyph transform center, blur kernel, opacity composition, and selector weighting. |
 | `M08` | Expression selector bounce | `implemented approximate` | `impulse_2nd` | Recognized generated `per_character_bounce` selector with deterministic native evaluator path. | Expression selector amount telemetry, AE bounce curve samples, tune delay/frequency/decay semantics. |
@@ -102,15 +102,15 @@ docs/MASTER_CONFORMANCE_GATE.md
 Latest run:
 
 ```text
-target/ae_agents/p2_text_m05_m06_square_montserrat_gate_20260507/dashboard.md
+target/ae_agents/p2_cooltype_metric_guard_master_20260507/dashboard.md
 ```
 
 Current dashboard:
 
 | Template | Gate status | Notes |
 | --- | --- | --- |
-| `template_4th` | `approximate` | Glow is in formula tuning and text reveal now uses the corrected Square selector opacity behavior; remaining text residual is M05 CoolType/sourceRect glyph metrics and whitespace distribution. |
-| `impulse_2nd` | `approximate` | Point-Light glyph animator, expression selector, and Drop Shadow remain approximate; text reveal changes improved `GPH_010` but M07/M08 are still separate blockers. |
+| `template_4th` | `tuning` | Glow is in formula tuning and text reveal now uses the corrected Square selector opacity behavior. M05 has CoolType metric telemetry, but runtime geometry is still guarded on fontdue placement until sourceRect row/raster coverage parity is recovered. |
+| `impulse_2nd` | `approximate` | Point-Light glyph animator, expression selector, and Drop Shadow remain approximate; text reveal changes improved `GPH_010`, but M07/M08 are still separate blockers. |
 | `scenes_3rd` | `approximate` | `TMP_020` is accepted; isolated `EFF_060` is accepted/near-locked, and `STK_030` is low-error approximate after the Turbulent bucket-world routing fix. |
 
 ### Step 1 Component Passport
@@ -120,12 +120,19 @@ components. Text layout sidecars expose the native glyph rows with explicit
 source labels:
 
 - `glyph_run_index`, `font_glyph_id`, `char_index`, `word_index`, `line_index`;
-- `advance`, `advance_x`, `advance_y`;
+- `advance`, `advance_x`, `advance_y`, `advance_design_units`,
+  `advance_fixed16`;
+- `font_units_per_em`, `bbox_design_units`, `bbox_scaled`;
 - `bbox`, `cooltype_bbox_minmax`, `bbox_center`, normalized bbox fields;
 - `baseline`, `baseline_delta`;
-- `metric_source` (`fontdue` or `stub`);
-- `cooltype_reference_status` (`not_cooltype_verified` until AE/CoolType rows
-  are imported).
+- `metric_source` (`cooltype_shaped`, `fontdue`, or `stub`);
+- `cooltype_reference_status` (`cooltype_metric_verified` for TTF/CoolType
+  metric rows; full raster coverage is still a separate status).
+
+The runtime raster path is intentionally still guarded on the pre-existing
+fontdue bitmap placement. A naive CoolType behavior switch improved text-only
+cases but regressed `GPH_010`; see
+`docs/phase_reports/P2_COOLTYPE_METRIC_LAYOUT_GUARD_20260507.md`.
 
 Selector sidecars now attach `glyph_passport` to each animated unit. For
 characters this maps one unit to one glyph run; for words and lines it maps the

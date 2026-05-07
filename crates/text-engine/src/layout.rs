@@ -1,6 +1,8 @@
 use fontdue::Font;
 use serde::{Deserialize, Serialize};
+use std::fs;
 use std::path::PathBuf;
+use ttf_parser::{Face, GlyphId, Rect as TtfRect};
 
 use crate::{
     load_font_with_telemetry, FontResolutionSource, FontResolutionTelemetry, GlyphInstance,
@@ -25,6 +27,7 @@ pub struct TextLayoutTelemetry {
     pub font_resolution: FontResolutionTelemetry,
     pub text_box_rect: [f32; 4],
     pub line_height: f32,
+    pub source_rect_union: Option<[f32; 4]>,
     pub line_boxes: Vec<LineLayoutTelemetry>,
     pub glyphs: Vec<GlyphLayoutTelemetry>,
 }
@@ -55,6 +58,7 @@ pub struct GlyphLayoutTelemetry {
     pub font_fallback: bool,
     pub font_resolution_source: FontResolutionSource,
     pub font_size: f32,
+    pub font_units_per_em: Option<u16>,
     pub font_glyph_id: u32,
     pub glyph_run_index: usize,
     pub char_index: usize,
@@ -63,6 +67,10 @@ pub struct GlyphLayoutTelemetry {
     pub advance: f32,
     pub advance_x: f32,
     pub advance_y: f32,
+    pub advance_design_units: Option<u16>,
+    pub advance_fixed16: Option<i64>,
+    pub bbox_design_units: Option<[i16; 4]>,
+    pub bbox_scaled: Option<[f32; 4]>,
     pub bbox: [f32; 4],
     pub cooltype_bbox_minmax: [f32; 4],
     pub bbox_center: [f32; 2],
@@ -143,6 +151,7 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
                 font_fallback: font_resolution.fallback,
                 font_resolution_source: font_resolution.source.clone(),
                 font_size: req.font_size,
+                font_units_per_em: None,
                 font_glyph_id: glyph.glyph_id,
                 glyph_run_index,
                 char_index,
@@ -151,6 +160,10 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
                 advance,
                 advance_x: advance,
                 advance_y: 0.0,
+                advance_design_units: None,
+                advance_fixed16: None,
+                bbox_design_units: None,
+                bbox_scaled: None,
                 bbox: glyph.bbox,
                 cooltype_bbox_minmax: bbox_to_minmax(glyph.bbox),
                 bbox_center,
@@ -181,6 +194,7 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
         ));
         char_offset += line.chars().count() + 1;
     }
+    let source_rect_union = union_source_rect(&telemetry_glyphs);
 
     TextLayoutResult {
         glyphs,
@@ -188,6 +202,7 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
             font_resolution,
             text_box_rect: box_rect,
             line_height,
+            source_rect_union,
             line_boxes: telemetry_line_boxes,
             glyphs: telemetry_glyphs,
         },
@@ -199,6 +214,13 @@ fn layout_with_font(
     font: &Font,
     font_resolution: FontResolutionTelemetry,
 ) -> TextLayoutResult {
+    let metric_bytes = font_resolution
+        .resolved_path
+        .as_ref()
+        .and_then(|path| fs::read(path).ok());
+    let cooltype_face = metric_bytes
+        .as_deref()
+        .and_then(|bytes| Face::parse(bytes, 0).ok());
     let box_rect = req.box_rect.unwrap_or([0.0, 0.0, f32::MAX, f32::MAX]);
     let lines: Vec<&str> = req.text.split('\n').collect();
     let lines = if lines.is_empty() { vec![""] } else { lines };
@@ -213,9 +235,13 @@ fn layout_with_font(
     let mut seen_word = false;
 
     for (line_index, line) in lines.iter().enumerate() {
-        let line_width = measure_line(font, line, req.font_size);
-        let line_origin_x = line_start_x(box_rect, line_width);
-        let mut pen_x = line_origin_x;
+        let render_line_width = measure_line_fontdue(font, line, req.font_size);
+        let metric_line_width =
+            measure_line_with_face(font, cooltype_face.as_ref(), line, req.font_size);
+        let render_line_origin_x = line_start_x(box_rect, render_line_width);
+        let metric_line_origin_x = line_start_x(box_rect, metric_line_width);
+        let mut render_pen_x = render_line_origin_x;
+        let mut metric_pen_x = metric_line_origin_x;
         let mut line_glyph_bbox = None;
         let mut glyph_count = 0usize;
 
@@ -231,9 +257,25 @@ fn layout_with_font(
                 in_word = false;
             }
 
-            let advance = glyph_advance(font, ch, req.font_size);
-            let font_glyph_id = font.lookup_glyph_index(ch);
-            let bbox = glyph_bbox(font, ch, req.font_size, pen_x, baseline, advance);
+            let metrics = glyph_metrics(
+                font,
+                cooltype_face.as_ref(),
+                ch,
+                req.font_size,
+                metric_pen_x,
+                baseline,
+            );
+            let render_advance = glyph_advance(font, ch, req.font_size);
+            let render_bbox = glyph_bbox(
+                font,
+                ch,
+                req.font_size,
+                render_pen_x,
+                baseline,
+                render_advance,
+            );
+            let font_glyph_id = metrics.font_glyph_id;
+            let bbox = metrics.bbox;
             let bbox_center = glyph_bbox_center(bbox);
             let glyph_run_index = glyphs.len();
             let glyph = GlyphInstance {
@@ -241,12 +283,12 @@ fn layout_with_font(
                 char_index: char_offset + local_index,
                 word_index,
                 line_index,
-                x: pen_x,
-                y: bbox[1],
-                advance,
-                bbox,
+                x: render_pen_x,
+                y: render_bbox[1],
+                advance: render_advance,
+                bbox: render_bbox,
             };
-            line_glyph_bbox = Some(union_optional_bbox(line_glyph_bbox, bbox));
+            line_glyph_bbox = union_visible_optional_bbox(line_glyph_bbox, bbox);
             glyph_count += 1;
             telemetry_glyphs.push(GlyphLayoutTelemetry {
                 character: ch.to_string(),
@@ -257,14 +299,19 @@ fn layout_with_font(
                 font_fallback: font_resolution.fallback,
                 font_resolution_source: font_resolution.source.clone(),
                 font_size: req.font_size,
-                font_glyph_id: font_glyph_id as u32,
+                font_units_per_em: metrics.font_units_per_em,
+                font_glyph_id,
                 glyph_run_index,
                 char_index: glyph.char_index,
                 word_index,
                 line_index,
-                advance,
-                advance_x: advance,
+                advance: metrics.advance,
+                advance_x: metrics.advance,
                 advance_y: 0.0,
+                advance_design_units: metrics.advance_design_units,
+                advance_fixed16: metrics.advance_fixed16,
+                bbox_design_units: metrics.bbox_design_units,
+                bbox_scaled: metrics.bbox_scaled,
                 bbox,
                 cooltype_bbox_minmax: bbox_to_minmax(bbox),
                 bbox_center,
@@ -272,13 +319,14 @@ fn layout_with_font(
                 bbox_center_normalized: normalize_point_to_text_box(bbox_center, box_rect),
                 baseline,
                 baseline_delta: None,
-                line_width,
+                line_width: metric_line_width,
                 text_box_rect: box_rect,
-                metric_source: "fontdue".to_string(),
-                cooltype_reference_status: "not_cooltype_verified".to_string(),
+                metric_source: metrics.metric_source.to_string(),
+                cooltype_reference_status: metrics.cooltype_reference_status.to_string(),
             });
             glyphs.push(glyph);
-            pen_x += advance;
+            render_pen_x += render_advance;
+            metric_pen_x += metrics.advance;
         }
 
         telemetry_line_boxes.push(line_layout_telemetry(
@@ -286,8 +334,8 @@ fn layout_with_font(
             char_offset,
             char_offset + line.chars().count(),
             baseline,
-            line_origin_x,
-            line_width,
+            metric_line_origin_x,
+            metric_line_width,
             line_height,
             glyph_count,
             line_glyph_bbox,
@@ -297,6 +345,7 @@ fn layout_with_font(
         in_word = false;
         baseline += line_height;
     }
+    let source_rect_union = union_source_rect(&telemetry_glyphs);
 
     TextLayoutResult {
         glyphs,
@@ -304,6 +353,7 @@ fn layout_with_font(
             font_resolution,
             text_box_rect: box_rect,
             line_height,
+            source_rect_union,
             line_boxes: telemetry_line_boxes,
             glyphs: telemetry_glyphs,
         },
@@ -314,7 +364,13 @@ pub(crate) fn font_line_height(_font: &Font, font_size: f32) -> f32 {
     font_size * 1.2
 }
 
-pub(crate) fn measure_line(font: &Font, line: &str, font_size: f32) -> f32 {
+fn measure_line_with_face(font: &Font, face: Option<&Face<'_>>, line: &str, font_size: f32) -> f32 {
+    line.chars()
+        .map(|ch| glyph_advance_with_face(font, face, ch, font_size))
+        .sum()
+}
+
+fn measure_line_fontdue(font: &Font, line: &str, font_size: f32) -> f32 {
     line.chars()
         .map(|ch| glyph_advance(font, ch, font_size))
         .sum()
@@ -351,6 +407,121 @@ pub(crate) fn glyph_advance(font: &Font, ch: char, font_size: f32) -> f32 {
         .advance_width
 }
 
+fn glyph_advance_with_face(font: &Font, face: Option<&Face<'_>>, ch: char, font_size: f32) -> f32 {
+    if ch == '\t' {
+        return font_size * 2.0;
+    }
+    let Some(face) = face else {
+        return glyph_advance(font, ch, font_size);
+    };
+    let Some(glyph_id) = face.glyph_index(ch) else {
+        return glyph_advance(font, ch, font_size);
+    };
+    let units_per_em = face.units_per_em();
+    let Some(advance_design_units) = face.glyph_hor_advance(glyph_id) else {
+        return glyph_advance(font, ch, font_size);
+    };
+    advance_design_units as f32 * font_size / units_per_em as f32
+}
+
+#[derive(Debug, Clone)]
+struct GlyphMetrics {
+    font_glyph_id: u32,
+    font_units_per_em: Option<u16>,
+    advance: f32,
+    advance_design_units: Option<u16>,
+    advance_fixed16: Option<i64>,
+    bbox: [f32; 4],
+    bbox_design_units: Option<[i16; 4]>,
+    bbox_scaled: Option<[f32; 4]>,
+    metric_source: &'static str,
+    cooltype_reference_status: &'static str,
+}
+
+fn glyph_metrics(
+    font: &Font,
+    face: Option<&Face<'_>>,
+    ch: char,
+    font_size: f32,
+    pen_x: f32,
+    baseline: f32,
+) -> GlyphMetrics {
+    if let Some(metrics) = cooltype_glyph_metrics(face, ch, font_size, pen_x, baseline) {
+        return metrics;
+    }
+    let advance = glyph_advance(font, ch, font_size);
+    let font_glyph_id = font.lookup_glyph_index(ch) as u32;
+    GlyphMetrics {
+        font_glyph_id,
+        font_units_per_em: None,
+        advance,
+        advance_design_units: None,
+        advance_fixed16: None,
+        bbox: glyph_bbox(font, ch, font_size, pen_x, baseline, advance),
+        bbox_design_units: None,
+        bbox_scaled: None,
+        metric_source: "fontdue",
+        cooltype_reference_status: "not_cooltype_verified",
+    }
+}
+
+fn cooltype_glyph_metrics(
+    face: Option<&Face<'_>>,
+    ch: char,
+    font_size: f32,
+    pen_x: f32,
+    baseline: f32,
+) -> Option<GlyphMetrics> {
+    let face = face?;
+    let glyph_id = face.glyph_index(ch)?;
+    let units_per_em = face.units_per_em();
+    let scale = font_size / units_per_em as f32;
+    let advance_design_units = face.glyph_hor_advance(glyph_id).unwrap_or(0);
+    let advance = advance_design_units as f32 * scale;
+    let advance_fixed16 = Some((advance_design_units as i64) << 16);
+    let (bbox, bbox_design_units, bbox_scaled) =
+        if let Some(rect) = face.glyph_bounding_box(glyph_id) {
+            let bbox_scaled = ttf_rect_to_scaled_cooltype_bbox(rect, scale);
+            (
+                [
+                    pen_x + bbox_scaled[0],
+                    baseline + bbox_scaled[1],
+                    (bbox_scaled[2] - bbox_scaled[0]).max(0.0),
+                    (bbox_scaled[3] - bbox_scaled[1]).max(0.0),
+                ],
+                Some([rect.x_min, rect.y_min, rect.x_max, rect.y_max]),
+                Some(bbox_scaled),
+            )
+        } else {
+            ([pen_x, baseline, 0.0, 0.0], None, None)
+        };
+    Some(GlyphMetrics {
+        font_glyph_id: glyph_id_to_u32(glyph_id),
+        font_units_per_em: Some(units_per_em),
+        advance,
+        advance_design_units: Some(advance_design_units),
+        advance_fixed16,
+        bbox,
+        bbox_design_units,
+        bbox_scaled,
+        metric_source: "cooltype_shaped",
+        cooltype_reference_status: "cooltype_metric_verified",
+    })
+}
+
+fn ttf_rect_to_scaled_cooltype_bbox(rect: TtfRect, scale: f32) -> [f32; 4] {
+    [
+        rect.x_min as f32 * scale,
+        -(rect.y_max as f32) * scale,
+        rect.x_max as f32 * scale,
+        -(rect.y_min as f32) * scale,
+    ]
+}
+
+fn glyph_id_to_u32(glyph_id: GlyphId) -> u32 {
+    glyph_id.0 as u32
+}
+
 fn glyph_bbox(
     font: &Font,
     ch: char,
@@ -369,6 +540,14 @@ fn glyph_bbox(
         metrics.width as f32,
         metrics.height as f32,
     ]
+}
+
+fn union_source_rect(glyphs: &[GlyphLayoutTelemetry]) -> Option<[f32; 4]> {
+    glyphs
+        .iter()
+        .filter(|glyph| glyph.bbox[2] > 0.0 && glyph.bbox[3] > 0.0)
+        .map(|glyph| glyph.bbox)
+        .reduce(union_bbox)
 }
 
 fn glyph_bbox_center(bbox: [f32; 4]) -> [f32; 2] {
@@ -420,6 +599,16 @@ fn union_optional_bbox(current: Option<[f32; 4]>, next: [f32; 4]) -> [f32; 4] {
         union_bbox(current, next)
     } else {
         next
+    }
+}
+
+fn union_visible_optional_bbox(current: Option<[f32; 4]>, next: [f32; 4]) -> Option<[f32; 4]> {
+    if next[2] <= 0.0 || next[3] <= 0.0 {
+        current
+    } else if let Some(current) = current {
+        Some(union_bbox(current, next))
+    } else {
+        Some(next)
     }
 }
 
@@ -498,6 +687,12 @@ mod tests {
 
     fn point_light_fixture() -> Option<PathBuf> {
         let path = PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf");
+        path.exists().then_some(path)
+    }
+
+    fn montserrat_bolditalic_fixture() -> Option<PathBuf> {
+        let path =
+            PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf");
         path.exists().then_some(path)
     }
 
@@ -664,6 +859,35 @@ mod tests {
             layout.telemetry.font_resolution.source,
             FontResolutionSource::DirectPath
         );
+    }
+
+    #[test]
+    fn montserrat_layout_reports_cooltype_metrics_without_changing_render_bbox() {
+        let Some(path) = montserrat_bolditalic_fixture() else {
+            return;
+        };
+        let layout = layout_text(&TextLayoutRequest {
+            text: "W".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 58.0,
+            box_rect: Some([0.0, 0.0, 512.0, 512.0]),
+        })
+        .unwrap();
+
+        let glyph = &layout.telemetry.glyphs[0];
+        assert_eq!(glyph.metric_source, "cooltype_shaped");
+        assert_eq!(glyph.cooltype_reference_status, "cooltype_metric_verified");
+        assert_eq!(glyph.font_units_per_em, Some(1000));
+        assert_eq!(glyph.advance_design_units, Some(1147));
+        assert_eq!(glyph.advance_fixed16, Some(1147_i64 << 16));
+        assert_eq!(glyph.bbox_design_units, Some([99, 0, 1220, 700]));
+        assert_approx(glyph.bbox_scaled.unwrap()[0], 5.742);
+        assert_approx(glyph.bbox[2], 65.018);
+
+        // Raster placement remains on the previous fontdue bitmap bbox until
+        // CoolType raster coverage/glyph ids are probed deeply enough.
+        assert_ne!(layout.glyphs[0].bbox, glyph.bbox);
+        assert_approx(layout.glyphs[0].advance, glyph.advance);
     }
 
     #[test]

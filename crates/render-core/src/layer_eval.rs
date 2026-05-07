@@ -2793,6 +2793,9 @@ fn text_layout_trace_telemetry(
         line_box.baseline =
             transform_layout_point(layer_matrix, local_origin, [0.0, line_box.baseline])[1];
     }
+    telemetry.source_rect_union = telemetry
+        .source_rect_union
+        .map(|bbox| transform_layout_bbox(layer_matrix, local_origin, bbox));
     telemetry.text_box_rect =
         transform_layout_bbox(layer_matrix, local_origin, telemetry.text_box_rect);
     telemetry

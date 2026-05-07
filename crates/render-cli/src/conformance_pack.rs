@@ -1386,6 +1386,11 @@ fn push_text_layout_record(snapshot: &mut TextPassportSnapshot, record: &Value) 
             project_font_resolution(font_resolution),
         );
     }
+    if let Some(layout) = record.get("layout") {
+        for field in ["text_box_rect", "line_height", "source_rect_union"] {
+            copy_json_field(&mut projected, layout, field);
+        }
+    }
     let glyphs = record
         .pointer("/layout/glyphs")
         .and_then(Value::as_array)
@@ -1438,6 +1443,7 @@ fn project_text_glyph_row(glyph: &Value) -> Value {
     for field in [
         "character",
         "font_glyph_id",
+        "font_units_per_em",
         "glyph_run_index",
         "char_index",
         "word_index",
@@ -1445,6 +1451,10 @@ fn project_text_glyph_row(glyph: &Value) -> Value {
         "advance",
         "advance_x",
         "advance_y",
+        "advance_design_units",
+        "advance_fixed16",
+        "bbox_design_units",
+        "bbox_scaled",
         "bbox",
         "cooltype_bbox_minmax",
         "bbox_center",
@@ -1806,20 +1816,34 @@ fn text_passport_diagnostics_json(
                 .is_none_or(|status| status != "cooltype_verified")
         })
         .count();
+    let cooltype_metric_verified = glyph_rows
+        .iter()
+        .filter(|glyph| {
+            glyph
+                .get("cooltype_reference_status")
+                .and_then(Value::as_str)
+                .is_some_and(|status| status.starts_with("cooltype_metric"))
+        })
+        .count();
     json!({
         "font_instance": text_passport_font_instance_diagnostic(case_id, snapshot),
         "cooltype_metric_scope": {
             "glyph_rows": glyph_count,
+            "cooltype_metric_verified_rows": cooltype_metric_verified,
             "not_cooltype_verified_rows": not_cooltype_verified,
-            "layout_tuning_ready": glyph_count > 0,
+            "layout_tuning_ready": glyph_count > 0 && cooltype_metric_verified > 0,
             "cooltype_raster_tuning_ready": glyph_count > 0 && not_cooltype_verified == 0,
             "formula_tuning_scope": if glyph_count > 0 {
                 "sourceRect/layout advance and bbox deltas only"
             } else {
                 "no native text layout rows in this frame"
             },
-            "blocker": if not_cooltype_verified > 0 {
-                "Need deeper CoolType glyph-id/coverage probe before full raster parity tuning."
+            "blocker": if glyph_count == 0 {
+                "No native text layout rows in this frame."
+            } else if cooltype_metric_verified == 0 {
+                "Need CoolType hmtx/bbox metric rows before layout formula tuning."
+            } else if not_cooltype_verified > 0 {
+                "Metric rows are CoolType-backed; full raster coverage still needs deeper CoolType glyph-id/coverage probe."
             } else {
                 "CoolType row status is verified for all projected glyphs."
             }
