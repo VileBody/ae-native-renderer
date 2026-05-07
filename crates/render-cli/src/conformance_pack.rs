@@ -1405,6 +1405,9 @@ fn push_text_layout_record(snapshot: &mut TextPassportSnapshot, record: &Value) 
     if let Some(line_boxes) = record.pointer("/layout/line_boxes") {
         projected.insert("line_boxes".to_string(), line_boxes.clone());
     }
+    if let Some(draw_char) = record.get("draw_char") {
+        projected.insert("draw_char".to_string(), draw_char.clone());
+    }
     snapshot
         .layouts
         .entry(key)
@@ -1787,13 +1790,36 @@ fn text_passport_glyph_rows(snapshot: &TextPassportSnapshot) -> Vec<&Value> {
     rows
 }
 
+fn text_passport_draw_char_rows(snapshot: &TextPassportSnapshot) -> Vec<&Value> {
+    let mut rows = Vec::new();
+    for record in snapshot.layouts.values().flatten() {
+        if let Some(draw_chars) = record
+            .pointer("/draw_char/draw_chars")
+            .and_then(Value::as_array)
+        {
+            rows.extend(draw_chars.iter());
+        }
+    }
+    rows
+}
+
 fn text_passport_diagnostics_json(
     case_id: &str,
     snapshot: &TextPassportSnapshot,
     trace: &render_core::layer_eval::FrameRenderTrace,
 ) -> Value {
     let glyph_rows = text_passport_glyph_rows(snapshot);
+    let draw_char_rows = text_passport_draw_char_rows(snapshot);
     let glyph_count = glyph_rows.len();
+    let draw_char_count = draw_char_rows.len();
+    let draw_char_will_draw_count = draw_char_rows
+        .iter()
+        .filter(|row| {
+            row.get("will_draw")
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+        })
+        .count();
     let not_cooltype_verified = glyph_rows
         .iter()
         .filter(|glyph| {
@@ -1812,16 +1838,23 @@ fn text_passport_diagnostics_json(
                 .is_some_and(|status| status.starts_with("cooltype_metric"))
         })
         .count();
+    let txt_drawchar_boundary_ready = glyph_count > 0 && draw_char_count == glyph_count;
+    let cooltype_raster_tuning_ready =
+        glyph_count > 0 && cooltype_metric_verified == glyph_count && txt_drawchar_boundary_ready;
     json!({
         "font_instance": text_passport_font_instance_diagnostic(case_id, snapshot),
         "cooltype_metric_scope": {
             "glyph_rows": glyph_count,
+            "txt_drawchar_boundary_rows": draw_char_count,
+            "txt_drawchar_will_draw_rows": draw_char_will_draw_count,
             "cooltype_metric_verified_rows": cooltype_metric_verified,
             "not_cooltype_verified_rows": not_cooltype_verified,
             "layout_tuning_ready": glyph_count > 0 && cooltype_metric_verified > 0,
-            "cooltype_raster_tuning_ready": glyph_count > 0 && not_cooltype_verified == 0,
+            "txt_drawchar_boundary_ready": txt_drawchar_boundary_ready,
+            "cooltype_raster_tuning_ready": cooltype_raster_tuning_ready,
+            "cooltype_raster_parity_locked": false,
             "formula_tuning_scope": if glyph_count > 0 {
-                "sourceRect/layout advance and bbox deltas only"
+                "sourceRect/layout advance and bbox deltas plus TXT_DrawChar boundary rows; coverage backend is still separate"
             } else {
                 "no native text layout rows in this frame"
             },
@@ -1829,8 +1862,12 @@ fn text_passport_diagnostics_json(
                 "No native text layout rows in this frame."
             } else if cooltype_metric_verified == 0 {
                 "Need CoolType hmtx/bbox metric rows before layout formula tuning."
+            } else if !txt_drawchar_boundary_ready {
+                "Need native TXT_DrawChar boundary rows before CoolType raster coverage tuning."
+            } else if cooltype_raster_tuning_ready {
+                "TXT_DrawChar boundary is ready; remaining blocker is replacing the fontdue coverage backend with CoolType-compatible coverage/fill semantics."
             } else if not_cooltype_verified > 0 {
-                "Metric rows are CoolType-backed; full raster coverage still needs deeper CoolType glyph-id/coverage probe."
+                "Metric rows are CoolType-backed; full raster coverage still needs CoolType-compatible coverage/fill semantics."
             } else {
                 "CoolType row status is verified for all projected glyphs."
             }

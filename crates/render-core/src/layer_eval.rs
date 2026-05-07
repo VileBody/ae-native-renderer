@@ -9,7 +9,8 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::Instant;
 use text_engine::{
-    layout_text, rasterize_text, GlyphLayoutTelemetry, TextLayoutRequest, TextLayoutResult,
+    layout_text, rasterize_text, rasterize_text_with_layout, GlyphLayoutTelemetry,
+    TextLayoutRequest, TextLayoutResult, TextRasterTrace,
 };
 use transform_math::{Mat3, Transform2D, Vec2};
 
@@ -789,6 +790,16 @@ fn render_layer_stub(
                 box_rect: Some([0.0, 0.0, local_width as f32, local_height as f32]),
             };
             let layout = layout_text(&request).ok();
+            let (mut text_canvas, raster_trace) = if let Some(layout) = layout.as_ref() {
+                let (canvas, raster_trace) =
+                    rasterize_text_with_layout(&request, layout, local_width, local_height, *fill)?;
+                (canvas, Some(raster_trace))
+            } else {
+                (
+                    rasterize_text(&request, local_width, local_height, *fill)?,
+                    None,
+                )
+            };
             record_text_layout_trace(
                 trace.as_deref_mut(),
                 &comp.id,
@@ -801,9 +812,9 @@ fn render_layer_stub(
                 transform_to_matrix(&evaluated).matrix(),
                 [rect.x, rect.y],
                 layout.as_ref(),
+                raster_trace.as_ref(),
                 "layer_text",
             );
-            let mut text_canvas = rasterize_text(&request, local_width, local_height, *fill)?;
             let reveal = evaluate_scalar_keyframes(&transform.animation.reveal, layer_time, 100.0);
             if text_animators.is_empty() {
                 apply_horizontal_reveal(&mut text_canvas, reveal);
@@ -1149,6 +1160,16 @@ fn render_layer_with_parent_matrix(
                 box_rect: Some([0.0, 0.0, local_width as f32, local_height as f32]),
             };
             let layout = layout_text(&request).ok();
+            let (mut text_canvas, raster_trace) = if let Some(layout) = layout.as_ref() {
+                let (canvas, raster_trace) =
+                    rasterize_text_with_layout(&request, layout, local_width, local_height, *fill)?;
+                (canvas, Some(raster_trace))
+            } else {
+                (
+                    rasterize_text(&request, local_width, local_height, *fill)?,
+                    None,
+                )
+            };
             record_text_layout_trace(
                 trace.as_deref_mut(),
                 &parent_comp.id,
@@ -1168,9 +1189,9 @@ fn render_layer_with_parent_matrix(
                 },
                 [rect.x * raster_scale, rect.y * raster_scale],
                 layout.as_ref(),
+                raster_trace.as_ref(),
                 "collapsed_text",
             );
-            let mut text_canvas = rasterize_text(&request, local_width, local_height, *fill)?;
             let reveal = evaluate_scalar_keyframes(&transform.animation.reveal, time, 100.0);
             if text_animators.is_empty() {
                 apply_horizontal_reveal(&mut text_canvas, reveal);
@@ -2735,6 +2756,7 @@ fn record_text_layout_trace(
     layer_matrix: Mat3,
     local_origin: [f32; 2],
     layout: Option<&TextLayoutResult>,
+    raster_trace: Option<&TextRasterTrace>,
     render_path: &str,
 ) {
     let Some(trace) = trace else {
@@ -2744,6 +2766,12 @@ fn record_text_layout_trace(
         .map(|layout| {
             let telemetry = text_layout_trace_telemetry(layout, layer_matrix, local_origin);
             serde_json::to_value(&telemetry)
+                .unwrap_or_else(|err| json!({ "serialization_error": err.to_string() }))
+        })
+        .unwrap_or_else(|| json!(null));
+    let draw_char_telemetry = raster_trace
+        .map(|trace| {
+            serde_json::to_value(trace)
                 .unwrap_or_else(|err| json!({ "serialization_error": err.to_string() }))
         })
         .unwrap_or_else(|| json!(null));
@@ -2763,7 +2791,8 @@ fn record_text_layout_trace(
             "size": raster_size,
             "scale": raster_scale
         },
-        "layout": layout_telemetry
+        "layout": layout_telemetry,
+        "draw_char": draw_char_telemetry
     }));
 }
 
