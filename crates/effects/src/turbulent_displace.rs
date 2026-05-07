@@ -325,6 +325,11 @@ pub fn turbulent_displace_resolved_params_for_input(
     TurbulentDisplaceParams::from_json(params, time).resolved_for_input(input)
 }
 
+pub fn turbulent_displace_extent_grow_pixels(params: &Value, time: f64) -> u32 {
+    let resolved = TurbulentDisplaceParams::from_json(params, time).resolved();
+    turbulent_displace_extent_grow_pixels_for_resolved(resolved)
+}
+
 pub fn turbulent_displace_field_samples(
     input: &Canvas,
     params: &Value,
@@ -808,6 +813,7 @@ const AE_LACUNARITY: f64 = 1.77;
 const AE_OCTAVE_INITIAL_AMPLITUDE: f64 = 0.25;
 const AE_OCTAVE_PERSISTENCE: f64 = 0.7;
 const AE_PINNING_RADIUS_FIXED16_DIVISOR: f64 = 49_152.0;
+const AE_EXTENT_GROW_RADIUS_DIVISOR: f64 = 16.0;
 const AE_TABLE_SIZE: usize = 64;
 const AE_TABLE_LEN: usize = AE_TABLE_SIZE * AE_TABLE_SIZE;
 const AE_EVOLUTION_STEP_FIXED16: i32 = 0x5a0000;
@@ -850,6 +856,16 @@ fn ae_pinning_radius(resolved: TurbulentDisplaceResolvedParams) -> f64 {
     }
     amplitude_sum += octave_amplitude * resolved.complexity_fraction as f64;
     resolved.amplitude as f64 * AE_FIXED16 / AE_PINNING_RADIUS_FIXED16_DIVISOR * amplitude_sum
+}
+
+fn turbulent_displace_extent_grow_pixels_for_resolved(
+    resolved: TurbulentDisplaceResolvedParams,
+) -> u32 {
+    if resolved.resize_layer {
+        return 0;
+    }
+    let grow = (ae_pinning_radius(resolved) / AE_EXTENT_GROW_RADIUS_DIVISOR).floor();
+    grow.max(0.0).min(u32::MAX as f64) as u32
 }
 
 fn ae_pinning_flags(pinning: u32) -> (bool, bool, bool, bool) {
@@ -1609,5 +1625,18 @@ mod tests {
         assert_close(samples[1].displacement[1], -6.037524);
         assert_eq!(samples[2].displacement, [-0.0, 0.0]);
         assert_eq!(samples[2].source_uv, [511.0, 511.0]);
+    }
+
+    #[test]
+    fn extent_grow_matches_stk030_frida_runtime_world() {
+        let params = json!({
+            "0002": 24,
+            "0003": 72,
+            "0005": 2,
+            "0006": 0,
+            "0012": 3
+        });
+
+        assert_eq!(turbulent_displace_extent_grow_pixels(&params, 0.0), 3);
     }
 }

@@ -142,10 +142,30 @@ def submit_pack(node_url: str, payload: dict[str, Any]) -> dict[str, Any]:
 def poll_pack(node_url: str, render_id: str, *, interval_s: float, timeout_s: float) -> dict[str, Any]:
     url = node_url.rstrip("/") + f"/pack-render/{render_id}"
     started = time.time()
+    transient_errors = 0
     while True:
-        resp = requests.get(url, timeout=30)
-        resp.raise_for_status()
-        data = resp.json()
+        try:
+            resp = requests.get(url, timeout=30)
+            resp.raise_for_status()
+            data = resp.json()
+            transient_errors = 0
+        except requests.RequestException as exc:
+            transient_errors += 1
+            print(
+                json.dumps(
+                    {
+                        "event": "poll_transient_error",
+                        "render_id": render_id,
+                        "attempt": transient_errors,
+                        "error": repr(exc),
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            if time.time() - started > timeout_s:
+                raise TimeoutError(f"pack render timed out after {timeout_s}s render_id={render_id}") from exc
+            time.sleep(min(interval_s * max(transient_errors, 1), 30.0))
+            continue
         status = str(data.get("status") or "").lower()
         print(json.dumps({"event": "poll", "status": status, "render_id": render_id}, ensure_ascii=False))
         if status in {"succeeded", "failed"}:

@@ -425,6 +425,8 @@ function dumpTurbulentStateBlock(p) {
   return {
     ptr: q.toString(),
     bytes_prefix: memoryBytes(q, 0x180),
+    state_words_0x00: memoryWords(q, 32),
+    state_words_0x70: memoryWords(q.add(0x70), 12),
     amount_pixels: safeReadDouble(q.add(0x00)),
     coord_scale: safeReadDouble(q.add(0x08)),
     complexity_octaves: safeReadS32(q.add(0x10)),
@@ -444,6 +446,17 @@ function dumpTurbulentStateBlock(p) {
       inv_height: safeReadDouble(q.add(0x60)),
       right: safeReadDouble(q.add(0x68)),
       bottom: safeReadDouble(q.add(0x70))
+    },
+    origin_or_bounds: {
+      s32_0x74: safeReadS32(q.add(0x74)),
+      source_origin_x_0x78: safeReadS32(q.add(0x78)),
+      source_origin_y_0x7c: safeReadS32(q.add(0x7c)),
+      h_lookup_len_0x80: safeReadS32(q.add(0x80)),
+      s32_0x84: safeReadS32(q.add(0x84)),
+      v_lookup_len_0x90: safeReadS32(q.add(0x90)),
+      s32_0x94: safeReadS32(q.add(0x94)),
+      internal_mode_0xa0: safeReadS32(q.add(0xa0)),
+      s32_0xa4: safeReadS32(q.add(0xa4))
     },
     h_lookup_len: safeReadS32(q.add(0x80)),
     h_lookup_ptr: safeReadPointer(q.add(0x88)),
@@ -2034,16 +2047,41 @@ def install_remote_script_from_url_ssh(host: str, remote_path: str, url: str) ->
 
 
 def upload_remote_file_to_url(session: winrm.Session, remote_path: str, url: str) -> None:
-    run_ps(
-        session,
-        "\n".join(
-            [
-                f"$path = {ps_quote(remote_path)}",
-                "if (-not (Test-Path $path)) { exit 2 }",
-                f"Invoke-WebRequest -Method Put -Uri {ps_quote(url)} -InFile $path -UseBasicParsing | Out-Null",
-            ]
-        ),
+    script = "\n".join(
+        [
+            f"$path = {ps_quote(remote_path)}",
+            "if (-not (Test-Path $path)) { exit 2 }",
+            "$tmp = $path + '.upload.tmp'",
+            "$lastError = $null",
+            "for ($i = 0; $i -lt 20; $i++) {",
+            "  try {",
+            "    $src = [IO.File]::Open($path, [IO.FileMode]::Open, [IO.FileAccess]::Read, [IO.FileShare]::ReadWrite)",
+            "    try {",
+            "      $dst = [IO.File]::Open($tmp, [IO.FileMode]::Create, [IO.FileAccess]::Write, [IO.FileShare]::None)",
+            "      try { $src.CopyTo($dst) } finally { $dst.Dispose() }",
+            "    } finally { $src.Dispose() }",
+            f"    Invoke-WebRequest -Method Put -Uri {ps_quote(url)} -InFile $tmp -UseBasicParsing | Out-Null",
+            "    Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue",
+            "    exit 0",
+            "  } catch {",
+            "    $lastError = $_",
+            "    Remove-Item -Path $tmp -Force -ErrorAction SilentlyContinue",
+            "    Start-Sleep -Milliseconds 500",
+            "  }",
+            "}",
+            "throw $lastError",
+        ]
     )
+    last_exc: Exception | None = None
+    for attempt in range(3):
+        try:
+            run_ps(session, script)
+            return
+        except Exception as exc:
+            last_exc = exc
+            time.sleep(1.0 + attempt)
+    assert last_exc is not None
+    raise last_exc
 
 
 def upload_remote_file_to_url_ssh(host: str, remote_path: str, url: str) -> None:

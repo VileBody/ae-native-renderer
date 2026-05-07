@@ -35,6 +35,7 @@ PNG sequences from the case comps are the golden source of truth.
         app.newProject();
     }
     app.project.bitsPerChannel = 8;
+    purgeAeCaches();
 
     var folders = {
         root: getOrCreateFolder("AE_NATIVE_CONFORMANCE_PACK"),
@@ -61,6 +62,15 @@ PNG sequences from the case comps are the golden source of truth.
     );
 
     app.endUndoGroup();
+
+    function purgeAeCaches() {
+        try {
+            if (typeof PurgeTarget !== "undefined") {
+                app.purge(PurgeTarget.ALL_CACHES);
+            }
+        } catch (err) {
+        }
+    }
 
     function buildCases(cfg, assets, folders) {
         return [

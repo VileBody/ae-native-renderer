@@ -1393,19 +1393,31 @@ fn apply_adjustment_effects_to_canvas(
 
         let param_time = adjustment_effect_param_time(effect_index, routing);
         let params = adjustment_effect_params(&spec.match_name, &spec.params);
-        let input_hash = trace.as_ref().map(|_| canvas_hash(&canvas));
-        let debug_trace = trace
-            .as_ref()
-            .and_then(|_| effect_debug_trace_json(&spec.match_name, &canvas, &params, param_time));
-        let started = Instant::now();
-        canvas = effect.render(
+        let crop_bucketed_adjustment_input = routing.posterize.is_some_and(|posterize| {
+            effect_index > posterize.effect_index
+                && time_changed(routing.lower_stack_time, routing.comp_time)
+        });
+        let input_plan = adjustment_effect_input_plan(
+            &spec.match_name,
             &canvas,
+            &params,
+            param_time,
+            crop_bucketed_adjustment_input,
+        );
+        let input_hash = trace.as_ref().map(|_| canvas_hash(&canvas));
+        let debug_trace = trace.as_ref().and_then(|_| {
+            effect_debug_trace_json(&spec.match_name, input_plan.input(), &params, param_time)
+        });
+        let started = Instant::now();
+        let rendered = effect.render(
+            input_plan.input(),
             &EffectContext {
                 time: param_time,
                 fps,
             },
             &params,
         )?;
+        canvas = input_plan.place_output(rendered);
         let elapsed_ms = elapsed_ms(started);
         let output_hash = trace.as_ref().map(|_| canvas_hash(&canvas));
 
@@ -1447,6 +1459,69 @@ fn apply_adjustment_effects_to_canvas(
     Ok(canvas)
 }
 
+enum AdjustmentEffectInputPlan<'a> {
+    Full {
+        input: &'a Canvas,
+    },
+    Cropped {
+        input: Canvas,
+        origin: (u32, u32),
+        full_size: (u32, u32),
+    },
+}
+
+impl<'a> AdjustmentEffectInputPlan<'a> {
+    fn input(&self) -> &Canvas {
+        match self {
+            AdjustmentEffectInputPlan::Full { input } => input,
+            AdjustmentEffectInputPlan::Cropped { input, .. } => input,
+        }
+    }
+
+    fn place_output(self, rendered: Canvas) -> Canvas {
+        match self {
+            AdjustmentEffectInputPlan::Full { .. } => rendered,
+            AdjustmentEffectInputPlan::Cropped {
+                origin, full_size, ..
+            } => paste_canvas_at(&rendered, full_size.0, full_size.1, origin.0, origin.1),
+        }
+    }
+}
+
+fn adjustment_effect_input_plan<'a>(
+    match_name: &str,
+    canvas: &'a Canvas,
+    params: &Value,
+    time: f64,
+    crop_bucketed_adjustment_input: bool,
+) -> AdjustmentEffectInputPlan<'a> {
+    if match_name != "ADBE Turbulent Displace" {
+        return AdjustmentEffectInputPlan::Full { input: canvas };
+    }
+    if !crop_bucketed_adjustment_input {
+        return AdjustmentEffectInputPlan::Full { input: canvas };
+    }
+    let Some((min_x, min_y, max_x, max_y)) = alpha_bounds_exclusive(canvas) else {
+        return AdjustmentEffectInputPlan::Full { input: canvas };
+    };
+    let grow = effects::turbulent_displace::turbulent_displace_extent_grow_pixels(params, time);
+    if grow == 0 && min_x == 0 && min_y == 0 && max_x == canvas.width && max_y == canvas.height {
+        return AdjustmentEffectInputPlan::Full { input: canvas };
+    }
+    let x0 = min_x.saturating_sub(grow);
+    let y0 = min_y.saturating_sub(grow);
+    let x1 = max_x.saturating_add(grow).min(canvas.width);
+    let y1 = max_y.saturating_add(grow).min(canvas.height);
+    if x0 == 0 && y0 == 0 && x1 == canvas.width && y1 == canvas.height {
+        return AdjustmentEffectInputPlan::Full { input: canvas };
+    }
+    AdjustmentEffectInputPlan::Cropped {
+        input: crop_canvas(canvas, x0, y0, x1, y1),
+        origin: (x0, y0),
+        full_size: (canvas.width, canvas.height),
+    }
+}
+
 fn adjustment_effect_params(match_name: &str, params: &Value) -> Value {
     if match_name != "ADBE Geometry2" {
         return params.clone();
@@ -1458,6 +1533,49 @@ fn adjustment_effect_params(match_name: &str, params: &Value) -> Value {
     } else {
         json!({ "__native_layer_space_origin": [0.0, 0.0] })
     }
+}
+
+fn alpha_bounds_exclusive(canvas: &Canvas) -> Option<(u32, u32, u32, u32)> {
+    let mut min_x = canvas.width;
+    let mut min_y = canvas.height;
+    let mut max_x = 0;
+    let mut max_y = 0;
+    for y in 0..canvas.height {
+        for x in 0..canvas.width {
+            if canvas.pixel(x, y)[3] == 0 {
+                continue;
+            }
+            min_x = min_x.min(x);
+            min_y = min_y.min(y);
+            max_x = max_x.max(x + 1);
+            max_y = max_y.max(y + 1);
+        }
+    }
+    (min_x < max_x && min_y < max_y).then_some((min_x, min_y, max_x, max_y))
+}
+
+fn crop_canvas(canvas: &Canvas, x0: u32, y0: u32, x1: u32, y1: u32) -> Canvas {
+    let width = x1.saturating_sub(x0);
+    let height = y1.saturating_sub(y0);
+    let mut cropped = Canvas::transparent(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            cropped.set_pixel(x, y, canvas.pixel(x0 + x, y0 + y));
+        }
+    }
+    cropped
+}
+
+fn paste_canvas_at(src: &Canvas, width: u32, height: u32, x0: u32, y0: u32) -> Canvas {
+    let mut output = Canvas::transparent(width, height);
+    let copy_width = src.width.min(width.saturating_sub(x0));
+    let copy_height = src.height.min(height.saturating_sub(y0));
+    for y in 0..copy_height {
+        for x in 0..copy_width {
+            output.set_pixel(x0 + x, y0 + y, src.pixel(x, y));
+        }
+    }
+    output
 }
 
 fn adjustment_effect_param_time(effect_index: usize, routing: AdjustmentTimeRouting) -> f64 {
@@ -1690,6 +1808,12 @@ fn effect_debug_trace_json(
             );
             Some(json!({
                 "schema": "ae-native-renderer.turbulent-displace-field.v1",
+                "input": {
+                    "width": input.width,
+                    "height": input.height,
+                    "alpha_bounds_exclusive": alpha_bounds_exclusive(input)
+                        .map(|(x0, y0, x1, y1)| json!([x0, y0, x1, y1]))
+                },
                 "raw_params": debug.raw_params,
                 "resolved": {
                     "displacement_type": debug.resolved.displacement_type,
@@ -4840,6 +4964,78 @@ mod tests {
         );
         assert!(turbulent.trace["field_hash"].as_str().unwrap().len() == 16);
         assert!(turbulent.trace["samples"].as_array().unwrap().len() > 0);
+    }
+
+    #[test]
+    fn adjustment_turbulent_uses_full_world_on_posterize_bucket_boundary() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 64,
+                height: 64,
+                fps: 10.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
+            },
+            compositions: Vec::new(),
+            assets: Vec::new(),
+            layers: vec![
+                Layer::Adjustment {
+                    id: "posterized_turbulent_adjustment".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    effects: vec![
+                        posterize_effect(1.0),
+                        effect(
+                            "ADBE Turbulent Displace",
+                            json!({ "0002": 24, "0003": 72, "0005": 2 }),
+                        ),
+                    ],
+                },
+                Layer::Solid {
+                    id: "below".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    color: [255, 255, 255, 255],
+                    rect: Rect {
+                        x: 8.0,
+                        y: 8.0,
+                        w: 8.0,
+                        h: 8.0,
+                    },
+                    transform: render_ir::Transform2D::default(),
+                    effects: Vec::new(),
+                },
+            ],
+        };
+        let mut footage = CheckerboardFootageProvider;
+
+        let (_boundary_frame, boundary_trace) =
+            render_frame_with_footage_traced(&scene, 0, &mut footage).unwrap();
+        let boundary_turbulent = boundary_trace
+            .effect_debug
+            .iter()
+            .find(|record| record.match_name == "ADBE Turbulent Displace")
+            .unwrap();
+        assert_eq!(boundary_turbulent.trace["input"]["width"], json!(64));
+        assert_eq!(boundary_turbulent.trace["input"]["height"], json!(64));
+
+        let (_inside_frame, inside_trace) =
+            render_frame_with_footage_traced(&scene, 5, &mut footage).unwrap();
+        let inside_turbulent = inside_trace
+            .effect_debug
+            .iter()
+            .find(|record| record.match_name == "ADBE Turbulent Displace")
+            .unwrap();
+        assert_eq!(inside_turbulent.effect_time, 0.5);
+        assert_eq!(inside_turbulent.trace["input"]["width"], json!(14));
+        assert_eq!(inside_turbulent.trace["input"]["height"], json!(14));
+        assert_eq!(
+            inside_turbulent.trace["input"]["alpha_bounds_exclusive"],
+            json!([3, 3, 11, 11])
+        );
     }
 
     #[test]
