@@ -478,6 +478,31 @@
       ]
     },
     {
+      "id": "txt_outline_player_vtable_render",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_txt_text_layout",
+      "project": "agent_txt_text_layout",
+      "process": "TXT.dll",
+      "notes": "Render-time TXT_OutlinePlayer vtable targets captured by Frida from the minimal RAS_010 text raster probe. These are the next layer after sourceRect/layout: outline playback commands and fill/coverage handoff.",
+      "targets": [
+        { "label": "TXT_OutlinePlayer_vtable_00_53000", "address": "0x180053000" },
+        { "label": "TXT_OutlinePlayer_vtable_01_53500", "address": "0x180053500" },
+        { "label": "TXT_OutlinePlayer_vtable_02_563f0", "address": "0x1800563f0" },
+        { "label": "TXT_OutlinePlayer_vtable_03_563e0", "address": "0x1800563e0" },
+        { "label": "TXT_OutlinePlayer_vtable_04_53f90", "address": "0x180053f90" },
+        { "label": "TXT_OutlinePlayer_vtable_05_53f30", "address": "0x180053f30" },
+        { "label": "TXT_OutlinePlayer_vtable_06_53fe0", "address": "0x180053fe0" },
+        { "label": "TXT_OutlinePlayer_vtable_07_702fa0", "address": "0x180702fa0" },
+        { "label": "TXT_OutlinePlayer_vtable_08_575b0", "address": "0x1800575b0" },
+        { "label": "TXT_OutlinePlayer_vtable_09_57860", "address": "0x180057860" },
+        { "label": "TXT_OutlinePlayer_vtable_10_575e0", "address": "0x1800575e0" },
+        { "label": "TXT_OutlinePlayer_vtable_11_57880", "address": "0x180057880" },
+        { "label": "TXT_OutlinePlayer_vtable_12_575d0", "address": "0x1800575d0" },
+        { "label": "TXT_OutlinePlayer_vtable_13_575f0", "address": "0x1800575f0" }
+      ]
+    },
+    {
       "id": "scripting_expression_host",
       "area": "expression",
       "enabled": true,

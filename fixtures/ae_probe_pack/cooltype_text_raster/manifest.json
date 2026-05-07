@@ -1,0 +1,13 @@
+{
+  "id": "cooltype_text_raster",
+  "description": "Minimal render-time CoolType/TXT text raster trace pack.",
+  "entry_script": "jsx/build_cooltype_text_raster_probe_project.jsx",
+  "cases": [
+    {
+      "id": "RAS_010",
+      "title": "Large Montserrat text raster coverage",
+      "modules": ["M05"],
+      "frames": [0, 1, 2, 3, 4, 5]
+    }
+  ]
+}

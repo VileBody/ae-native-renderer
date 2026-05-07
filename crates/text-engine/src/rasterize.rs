@@ -12,18 +12,28 @@ pub fn rasterize_text(
     let mut canvas = Canvas::transparent(width, height);
     let layout = layout_text(req)?;
 
-    for glyph in &layout.glyphs {
+    for (run_index, glyph) in layout.glyphs.iter().enumerate() {
         let Some(ch) = req.text.chars().nth(glyph.char_index) else {
             continue;
         };
         if ch.is_whitespace() {
             continue;
         }
-        let (metrics, bitmap) = font.rasterize(ch, req.font_size);
+        let glyph_id = glyph.glyph_id.min(u16::MAX as u32) as u16;
+        let (metrics, bitmap) = font.rasterize_indexed(glyph_id, req.font_size);
+        let raster_x = glyph.x + metrics.xmin as f32;
+        let raster_y = layout
+            .telemetry
+            .glyphs
+            .get(run_index)
+            .map(|telemetry| {
+                telemetry.baseline - metrics.ymin as f32 - metrics.height as f32
+            })
+            .unwrap_or(glyph.bbox[1]);
         blend_bitmap(
             &mut canvas,
-            glyph.bbox[0],
-            glyph.bbox[1],
+            raster_x,
+            raster_y,
             metrics.width,
             metrics.height,
             &bitmap,

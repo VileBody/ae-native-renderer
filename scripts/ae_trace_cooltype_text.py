@@ -58,6 +58,11 @@ const COOLTYPE_HOOKS = [
   {module: "CoolType.dll", name: "CoreTextFloatBoundingBox", offset: 0x12417c, surface: "core_bbox_float"},
   {module: "CoolType.dll", name: "CoreTextQuickBoundingBox", offset: 0x1261ac, surface: "core_quick_bbox_float"},
   {module: "CoolType.dll", name: "CoreTextGlyphRowExtract", offset: 0x127238, surface: "glyph_row_extract"},
+  {module: "CoolType.dll", name: "CoreTextOutlines", offset: 0x124e0c, surface: "core_text_outlines"},
+  {module: "CoolType.dll", name: "CoreTextOutlinesV2", offset: 0x1257d4, surface: "core_text_outlines_v2"},
+  {module: "CoolType.dll", name: "CoreTextGlyphRecordRender", offset: 0x171af0, surface: "core_text_glyph_record_render"},
+  {module: "CoolType.dll", name: "CoreTextGlyphRunSlice", offset: 0x171cb8, surface: "core_text_glyph_run_slice"},
+  {module: "CoolType.dll", name: "CoreTextEmitGlyphRecord", offset: 0x16fd54, surface: "core_text_emit_glyph_record"},
   {module: "CoolType.dll", name: "CTTextGetGlyphs_V2", offset: 0x2a02a0, surface: "glyph_pointer_groups"},
   {module: "CoolType.dll", name: "CTTextGetTextGlyphs", offset: 0x2a1380, surface: "glyph_text_rows"},
   {module: "CoolType.dll", name: "CTFontInstanceGetWidths", offset: 0x292d20, surface: "font_widths"},
@@ -67,6 +72,8 @@ const COOLTYPE_HOOKS = [
 ];
 
 const TXT_HOOKS = [
+  {module: "TXT.dll", name: "TXT_PlayCharOutlines", offset: 0x0416c0, surface: "txt_play_char_outlines"},
+  {module: "TXT.dll", name: "TXT_PlayCharOutlines_impl", offset: 0x042ab0, surface: "txt_play_char_outlines_impl"},
   {module: "TXT.dll", name: "TXT_FUN_sourceRect_batch_bboxes_214120", offset: 0x214120, surface: "txt_source_rect_batch_bboxes"},
   {module: "TXT.dll", name: "TXT_FUN_sourceRect_batch_widths_214a00", offset: 0x214a00, surface: "txt_source_rect_batch_widths"},
   {module: "TXT.dll", name: "TXT_FUN_text_bbox_caller_042b80", offset: 0x042b80, surface: "txt_text_bbox_caller"},
@@ -91,6 +98,39 @@ function hookEnabled(hook) {
   }
   if (hookProfile === "txt-gridchar") {
     return hook.module === "TXT.dll";
+  }
+  if (hookProfile === "text-raster") {
+    return [
+      "core_text_outlines",
+      "core_text_outlines_v2",
+      "core_text_glyph_record_render",
+      "core_text_glyph_run_slice",
+      "core_text_emit_glyph_record",
+      "txt_play_char_outlines",
+      "txt_play_char_outlines_impl",
+      "txt_gridchar_cache",
+      "txt_gridchar_metrics",
+      "txt_gridchar_alignment_bounds",
+      "txt_gridchar_bounds_plus",
+      "txt_gridchar_line_space",
+      "txt_gridchar_metrics_plus",
+      "txt_gridchar_render_extent",
+      "txt_gridchar_transformed_advance",
+      "txt_gridchar_transformed_metrics",
+      "core_bboxes",
+      "core_widths"
+    ].indexOf(hook.surface) !== -1;
+  }
+  if (hookProfile === "text-raster-render-only") {
+    return [
+      "core_text_outlines",
+      "core_text_outlines_v2",
+      "core_text_glyph_record_render",
+      "core_text_glyph_run_slice",
+      "core_text_emit_glyph_record",
+      "txt_play_char_outlines",
+      "txt_play_char_outlines_impl"
+    ].indexOf(hook.surface) !== -1;
   }
   if (hookProfile === "font-metrics") {
     return ["font_widths", "font_bboxes", "core_widths", "core_bboxes"].indexOf(hook.surface) !== -1;
@@ -150,6 +190,14 @@ function safeReadU32(p) {
 
 function safeReadS32(p) {
   try { return ptr(p).readS32(); } catch (e) { return null; }
+}
+
+function nativeArgU32(p) {
+  try { return ptr(p).toInt32() >>> 0; } catch (e) { return null; }
+}
+
+function nativeArgS32(p) {
+  try { return ptr(p).toInt32(); } catch (e) { return null; }
 }
 
 function safeReadFloat(p) {
@@ -386,6 +434,138 @@ function readGlyphRows48(p, count) {
   return out;
 }
 
+function readGlyphRecords24(p, count) {
+  if (isNullPtr(p)) {
+    return [];
+  }
+  const q = ptr(p);
+  const n = Math.max(0, Math.min(count || 0, 48));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    const r = q.add(i * 24);
+    out.push({
+      index: i,
+      dword0_s32: safeReadS32(r),
+      dword0_u32: safeReadU32(r),
+      dword1_s32: safeReadS32(r.add(4)),
+      dword1_u32: safeReadU32(r.add(4)),
+      glyph_id_u32: safeReadU32(r.add(8)),
+      glyph_id_s32: safeReadS32(r.add(8)),
+      dword3_s32: safeReadS32(r.add(12)),
+      dword3_u32: safeReadU32(r.add(12)),
+      dword4_s32: safeReadS32(r.add(16)),
+      dword4_u32: safeReadU32(r.add(16)),
+      dword5_s32: safeReadS32(r.add(20)),
+      dword5_u32: safeReadU32(r.add(20)),
+      raw: memoryBytes(r, 24)
+    });
+  }
+  return out;
+}
+
+function pointerArrayWithModules(p, count) {
+  if (isNullPtr(p)) {
+    return [];
+  }
+  const q = ptr(p);
+  const out = [];
+  for (let i = 0; i < count; i++) {
+    const entryPtr = q.add(i * Process.pointerSize);
+    const target = safeReadPointer(entryPtr);
+    out.push({
+      index: i,
+      ptr: target === null ? null : target.toString(),
+      target: target === null ? null : moduleOffset(target)
+    });
+  }
+  return out;
+}
+
+function dumpOutlinePlayer(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const vtable = safeReadPointer(q);
+  return {
+    ptr: q.toString(),
+    vtable: vtable === null ? null : vtable.toString(),
+    object_words: memoryWords(q, 16),
+    vtable_entries: vtable === null ? [] : pointerArrayWithModules(vtable, 24)
+  };
+}
+
+function dumpTextRasterSignature(ctx, hook) {
+  const stack = stackArgs(ctx);
+  const out = {
+    hook: hook.name,
+    surface: hook.surface,
+    regs: regSnapshot(ctx),
+    stack: stack
+  };
+  if (hook.name === "TXT_PlayCharOutlines") {
+    out.txt_play_char_outlines = {
+      glyph_id_s32: ptr(ctx.rcx).toInt32(),
+      glyph_id_u32: nativeArgU32(ctx.rcx),
+      glyph_matrix: readMatrix3D64(ptr(ctx.rdx)),
+      text_matrix: readMatrix3D64(ptr(ctx.r8)),
+      orientation_s32: ptr(ctx.r9).toInt32(),
+      font_dict_ptr: stack.p5_0x28,
+      synthetic_vector_ptr: stack.p6_0x30,
+      outline_player_ptr: stack.p7_0x38,
+      outline_player: dumpOutlinePlayer(stack.p7_0x38),
+      bool_flag_p8: stack.p8_0x40_s32,
+      render_context_p9: safeReadS32(stack.p9_0x48)
+    };
+  } else if (hook.name === "TXT_PlayCharOutlines_impl") {
+    out.txt_play_char_outlines_impl = {
+      bool_flag: ptr(ctx.rcx).toInt32(),
+      glyph_id_s32: ptr(ctx.rdx).toInt32(),
+      glyph_id_u32: nativeArgU32(ctx.rdx),
+      glyph_matrix: readMatrix3D64(ptr(ctx.r8)),
+      text_matrix: readMatrix3D64(ptr(ctx.r9)),
+      orientation_s32: safeReadS32(stack.p5_0x28),
+      font_dict_ptr: stack.p6_0x30,
+      synthetic_vector_ptr: stack.p7_0x38,
+      outline_player_ptr: stack.p8_0x40_ptr,
+      outline_player: dumpOutlinePlayer(stack.p8_0x40_ptr),
+      render_context_p9: safeReadS32(stack.p9_0x48)
+    };
+  } else if (hook.name === "CoreTextGlyphRecordRender") {
+    const count = ptr(ctx.r8).toInt32();
+    out.core_glyph_record_render = {
+      font_or_text_ptr: ptr(ctx.rcx).toString(),
+      records_ptr: ptr(ctx.rdx).toString(),
+      record_count: count,
+      records24: readGlyphRecords24(ptr(ctx.rdx), count)
+    };
+  } else if (hook.name === "CoreTextEmitGlyphRecord") {
+    out.core_emit_glyph_record = {
+      font_ptr: ptr(ctx.rcx).toString(),
+      glyph_id_u32: nativeArgU32(ctx.rdx),
+      glyph_id_s32: nativeArgS32(ctx.rdx),
+      cache_out_ptr: ptr(ctx.r8).toString(),
+      subpixel_or_flags_u32: nativeArgU32(ctx.r9),
+      subpixel_or_flags_s32: nativeArgS32(ctx.r9),
+      stack_param5_s32: safeReadS32(stack.p5_0x28),
+      stack_param5_u32: safeReadU32(stack.p5_0x28),
+      stack_param6_ptr: stack.p6_0x30,
+      stack_param7_ptr: stack.p7_0x38,
+      stack_param8_ptr: stack.p8_0x40_ptr,
+      stack_param9_s32: safeReadS32(stack.p9_0x48),
+      stack_param10_s32: safeReadS32(stack.p10_0x50)
+    };
+  } else if (hook.name === "CoreTextOutlines" || hook.name === "CoreTextOutlinesV2") {
+    out.core_text_outlines = {
+      text_object: dumpTextObject(ptr(ctx.rcx)),
+      matrix_arg1: readMatrix6(ptr(ctx.rdx)),
+      arg2_ptr: ptr(ctx.r8).toString(),
+      flags_arg3_u32: nativeArgU32(ctx.r9)
+    };
+  }
+  return out;
+}
+
 function dumpTextObject(p) {
   if (isNullPtr(p)) {
     return null;
@@ -539,6 +719,9 @@ function dumpEnterCommon(ctx, hook) {
   if (hook.module === "TXT.dll") {
     payload.txt_signature = txtSignatureSnapshot(ctx, hook);
   }
+  if (hook.surface.indexOf("core_text_") === 0 || hook.surface.indexOf("txt_play_char_outlines") === 0) {
+    payload.text_raster_signature = dumpTextRasterSignature(ctx, hook);
+  }
   return payload;
 }
 
@@ -670,6 +853,12 @@ function installHook(module, hook) {
         if (hook.module === "TXT.dll") {
           payload.txt_signature_after = txtSignatureSnapshot(this.ctx, hook);
         }
+        if (hook.surface.indexOf("core_text_") === 0 || hook.surface.indexOf("txt_play_char_outlines") === 0) {
+          payload.text_raster_signature_after = dumpTextRasterSignature(this.ctx, hook);
+          if (hook.name === "CoreTextEmitGlyphRecord") {
+            payload.core_emit_cache_out_after = memoryWords(this.ctx.r8, 8);
+          }
+        }
         emit("cooltype_hook_leave", payload);
       }
     });
@@ -722,8 +911,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--out", required=True)
     ap.add_argument("--duration", type=float, default=180.0)
+    ap.add_argument("--attach-delay", type=float, default=0.0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "all"], default="source-rect")
     # Accepted for compatibility with ae_trace_drop_shadow_softness helpers.
     ap.add_argument("--generic-hook-limit", type=int, default=0)
     ap.add_argument("--max-stalk-render-calls", type=int, default=0)
@@ -736,8 +926,10 @@ def main() -> int:
     script_text = script_text.replace("HOOK_PROFILE_PLACEHOLDER", args.hook_profile)
 
     with open(args.out, "a", encoding="utf-8") as f:
-        f.write(json.dumps({"kind": "trace_start", "duration": args.duration}) + "\n")
+        f.write(json.dumps({"kind": "trace_start", "duration": args.duration, "attach_delay": args.attach_delay}) + "\n")
         f.flush()
+        if args.attach_delay > 0:
+            time.sleep(args.attach_delay)
 
         def on_message(message, data):
             f.write(json.dumps(message, ensure_ascii=False) + "\n")
@@ -902,6 +1094,7 @@ def start_remote_cooltype_trace_ssh(
     duration: int,
     max_events: int,
     hook_profile: str,
+    attach_delay: int,
 ) -> subprocess.Popen[str]:
     stdout_log = remote_log + ".stdout.txt"
     stderr_log = remote_log + ".stderr.txt"
@@ -927,6 +1120,8 @@ def start_remote_cooltype_trace_ssh(
         max_stalk_render_calls=0,
     )
     trace_args.extend(["--hook-profile", hook_profile])
+    if attach_delay > 0:
+        trace_args.extend(["--attach-delay", str(attach_delay)])
     args_text = " ".join(helpers.ps_quote(arg) for arg in trace_args)
     script = "\n".join(
         [
@@ -969,8 +1164,9 @@ def main() -> int:
     ap.add_argument("--case", action="append", default=[])
     ap.add_argument("--batch-cases", action="store_true")
     ap.add_argument("--duration", type=int, default=240)
+    ap.add_argument("--attach-delay", type=int, default=0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "all"], default="source-rect")
     ap.add_argument("--allow-render-failure", action="store_true")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--live-tail", action="store_true")
@@ -1017,6 +1213,7 @@ def main() -> int:
             args.duration,
             args.max_events,
             args.hook_profile,
+            args.attach_delay,
         )
         tail_proc = helpers.start_remote_tail_ssh(args.ssh_host, remote_log) if args.live_tail else None
         render_error: str | None = None
