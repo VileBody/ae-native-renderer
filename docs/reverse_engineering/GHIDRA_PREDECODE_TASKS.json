@@ -429,6 +429,55 @@
       ]
     },
     {
+      "id": "txt_text_layout_callers",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_txt_text_layout",
+      "project": "agent_txt_text_layout",
+      "process": "TXT.dll",
+      "notes": "TXT.dll sourceRect/text-layout callers observed by Frida above CoreBBoxBatch/CoreWidthsBatch. These targets own AE sourceRect row partition, prefix measurement, whitespace folding, and selector-transformed text bounds before CoolType metric calls.",
+      "targets": [
+        { "label": "TXT_sourceRect_CoreBBox_callsite_2142d5", "address": "0x1802142d5" },
+        { "label": "TXT_sourceRect_post_bbox_214aa7", "address": "0x180214aa7" },
+        { "label": "TXT_sourceRect_CoreWidths_callsite_214b0f", "address": "0x180214b0f" },
+        { "label": "TXT_sourceRect_CoreWidths_callsite_214b77", "address": "0x180214b77" },
+        { "label": "TXT_text_bbox_caller_42f23", "address": "0x180042f23" },
+        { "label": "TXT_text_bbox_caller_42b5e", "address": "0x180042b5e" },
+        { "label": "TXT_text_bbox_caller_41710", "address": "0x180041710" },
+        { "label": "TXT_sourceRect_chain_51046", "address": "0x180051046" },
+        { "label": "TXT_sourceRect_chain_546fa", "address": "0x1800546fa" },
+        { "label": "TXT_sourceRect_chain_5518b", "address": "0x18005518b" },
+        { "label": "TXT_sourceRect_chain_553bd", "address": "0x1800553bd" },
+        { "label": "TXT_sourceRect_chain_3aa51c", "address": "0x1803aa51c" },
+        { "label": "TXT_width_candidate_44c53e", "address": "0x18044c53e" },
+        { "label": "TXT_width_candidate_55141e", "address": "0x18055141e" },
+        { "label": "TXT_sourceRect_chain_447876", "address": "0x180447876" },
+        { "label": "TXT_sourceRect_chain_210de1", "address": "0x180210de1" }
+      ]
+    },
+    {
+      "id": "txt_gridchar_metric_neighbors",
+      "area": "text",
+      "enabled": true,
+      "project_dir": "target/reverse/ghidra_projects/agent_txt_text_layout",
+      "project": "agent_txt_text_layout",
+      "process": "TXT.dll",
+      "notes": "Neighbor TXT_GridChar methods around GetGlyphMetricsPlus discovered from static callers. Use these to close sourceRect row partition, glyph alignment bounds, transformed advance/metrics, and render extent semantics.",
+      "targets": [
+        { "label": "TXT_GridChar_EnsureGlyphMetricsCached_call_5400a", "address": "0x18005400a" },
+        { "label": "TXT_GridChar_EnsureGlyphMetricsCached_call_54031", "address": "0x180054031" },
+        { "label": "TXT_GridChar_GetGlyphMetrics_call_3fac8", "address": "0x18003fac8" },
+        { "label": "TXT_GridChar_GetGlyphBoundsPlus_call_54b1e", "address": "0x180054b1e" },
+        { "label": "TXT_GridChar_GetGlyphMetricsInLineSpace_call_54e15", "address": "0x180054e15" },
+        { "label": "TXT_GridChar_GetRenderExtent_call_55823", "address": "0x180055823" },
+        { "label": "TXT_GridChar_GetTransformedGlyphAdvance_call_55e9d", "address": "0x180055e9d" },
+        { "label": "TXT_GridChar_GetTransformedGlyphMetrics_call_55f5d", "address": "0x180055f5d" },
+        { "label": "TXT_Grid_InitializeAnchorPoints_call_561af", "address": "0x1800561af" },
+        { "label": "TXT_GetCharacterScreenPoly2D_call_56f7d", "address": "0x180056f7d" },
+        { "label": "TXT_GetCharacterScreenPoly3D_call_570d3", "address": "0x1800570d3" }
+      ]
+    },
+    {
       "id": "scripting_expression_host",
       "area": "expression",
       "enabled": true,

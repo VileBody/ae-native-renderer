@@ -1,4 +1,5 @@
 use fontdue::Font;
+use rustybuzz::{BufferClusterLevel, Face as BuzzFace, UnicodeBuffer};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::PathBuf;
@@ -238,10 +239,17 @@ fn layout_with_font(
         let render_line_width = measure_line_fontdue(font, line, req.font_size);
         let metric_line_width =
             measure_line_with_face(font, cooltype_face.as_ref(), line, req.font_size);
+        let source_rect_metrics = metric_bytes.as_deref().and_then(|bytes| {
+            source_rect_line_metrics(bytes, cooltype_face.as_ref(), line, req.font_size)
+        });
+        let telemetry_line_width = source_rect_metrics
+            .as_ref()
+            .map(|metrics| metrics.line.width)
+            .unwrap_or(metric_line_width);
         let render_line_origin_x = line_start_x(box_rect, render_line_width);
-        let metric_line_origin_x = line_start_x(box_rect, metric_line_width);
+        let metric_line_origin_x = line_start_x(box_rect, telemetry_line_width);
         let mut render_pen_x = render_line_origin_x;
-        let mut metric_pen_x = metric_line_origin_x;
+        let mut metric_pen_x = line_start_x(box_rect, metric_line_width);
         let mut line_glyph_bbox = None;
         let mut glyph_count = 0usize;
 
@@ -276,7 +284,22 @@ fn layout_with_font(
             );
             let font_glyph_id = metrics.font_glyph_id;
             let bbox = metrics.bbox;
-            let bbox_center = glyph_bbox_center(bbox);
+            let telemetry_bbox = source_rect_metrics
+                .as_ref()
+                .and_then(|source| {
+                    let before = source.prefix_widths.get(local_index).copied()?;
+                    let through = source.prefix_widths.get(local_index + 1).copied()?;
+                    let advance = (through - before).max(0.0);
+                    Some([
+                        metric_line_origin_x + before,
+                        baseline + source.line.top,
+                        advance,
+                        source.line.height.max(0.0),
+                    ])
+                })
+                .unwrap_or(bbox);
+            let telemetry_advance = telemetry_bbox[2].max(0.0);
+            let bbox_center = glyph_bbox_center(telemetry_bbox);
             let glyph_run_index = glyphs.len();
             let glyph = GlyphInstance {
                 glyph_id: font_glyph_id as u32,
@@ -288,7 +311,7 @@ fn layout_with_font(
                 advance: render_advance,
                 bbox: render_bbox,
             };
-            line_glyph_bbox = union_visible_optional_bbox(line_glyph_bbox, bbox);
+            line_glyph_bbox = union_visible_optional_bbox(line_glyph_bbox, telemetry_bbox);
             glyph_count += 1;
             telemetry_glyphs.push(GlyphLayoutTelemetry {
                 character: ch.to_string(),
@@ -305,21 +328,21 @@ fn layout_with_font(
                 char_index: glyph.char_index,
                 word_index,
                 line_index,
-                advance: metrics.advance,
-                advance_x: metrics.advance,
+                advance: telemetry_advance,
+                advance_x: telemetry_advance,
                 advance_y: 0.0,
                 advance_design_units: metrics.advance_design_units,
                 advance_fixed16: metrics.advance_fixed16,
                 bbox_design_units: metrics.bbox_design_units,
                 bbox_scaled: metrics.bbox_scaled,
-                bbox,
-                cooltype_bbox_minmax: bbox_to_minmax(bbox),
+                bbox: telemetry_bbox,
+                cooltype_bbox_minmax: bbox_to_minmax(telemetry_bbox),
                 bbox_center,
-                bbox_normalized: normalize_bbox_to_text_box(bbox, box_rect),
+                bbox_normalized: normalize_bbox_to_text_box(telemetry_bbox, box_rect),
                 bbox_center_normalized: normalize_point_to_text_box(bbox_center, box_rect),
                 baseline,
                 baseline_delta: None,
-                line_width: metric_line_width,
+                line_width: telemetry_line_width,
                 text_box_rect: box_rect,
                 metric_source: metrics.metric_source.to_string(),
                 cooltype_reference_status: metrics.cooltype_reference_status.to_string(),
@@ -335,7 +358,7 @@ fn layout_with_font(
             char_offset + line.chars().count(),
             baseline,
             metric_line_origin_x,
-            metric_line_width,
+            telemetry_line_width,
             line_height,
             glyph_count,
             line_glyph_bbox,
@@ -374,6 +397,85 @@ fn measure_line_fontdue(font: &Font, line: &str, font_size: f32) -> f32 {
     line.chars()
         .map(|ch| glyph_advance(font, ch, font_size))
         .sum()
+}
+
+fn source_rect_line_metrics(
+    font_bytes: &[u8],
+    face: Option<&Face<'_>>,
+    line: &str,
+    font_size: f32,
+) -> Option<SourceRectLineMetrics> {
+    let face = face?;
+    let line_measure = measure_source_rect(font_bytes, face, line, font_size)?;
+    let char_count = line.chars().count();
+    let mut prefix_widths = Vec::with_capacity(char_count + 1);
+    prefix_widths.push(0.0);
+    for end in 1..=char_count {
+        let prefix = line.chars().take(end).collect::<String>();
+        let width = measure_source_rect(font_bytes, face, &prefix, font_size)
+            .map(|measure| measure.width)
+            .unwrap_or(0.0);
+        prefix_widths.push(width);
+    }
+    Some(SourceRectLineMetrics {
+        line: line_measure,
+        prefix_widths,
+    })
+}
+
+fn measure_source_rect(
+    font_bytes: &[u8],
+    face: &Face<'_>,
+    text: &str,
+    font_size: f32,
+) -> Option<SourceRectMeasure> {
+    let buzz_face = BuzzFace::from_slice(font_bytes, 0)?;
+    let units_per_em = face.units_per_em() as f32;
+    let scale = font_size / units_per_em;
+    let mut buffer = UnicodeBuffer::new();
+    buffer.set_cluster_level(BufferClusterLevel::Characters);
+    for (index, ch) in text.chars().enumerate() {
+        buffer.add(ch, index as u32);
+    }
+    buffer.guess_segment_properties();
+    let glyphs = rustybuzz::shape(&buzz_face, &[], buffer);
+    let mut pen_x = 0.0f32;
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+
+    for (info, position) in glyphs.glyph_infos().iter().zip(glyphs.glyph_positions()) {
+        let glyph_id = GlyphId(info.glyph_id as u16);
+        if let Some(rect) = face.glyph_bounding_box(glyph_id) {
+            let bbox = ttf_rect_to_scaled_cooltype_bbox(rect, scale);
+            let x_offset = position.x_offset as f32 * scale;
+            let y_offset = -(position.y_offset as f32) * scale;
+            let x0 = pen_x + x_offset + bbox[0];
+            let y0 = y_offset + bbox[1];
+            let x1 = pen_x + x_offset + bbox[2];
+            let y1 = y_offset + bbox[3];
+            min_x = min_x.min(x0);
+            min_y = min_y.min(y0);
+            max_x = max_x.max(x1);
+            max_y = max_y.max(y1);
+        }
+        pen_x += position.x_advance as f32 * scale;
+    }
+
+    if min_x.is_finite() && min_y.is_finite() && max_x.is_finite() && max_y.is_finite() {
+        Some(SourceRectMeasure {
+            width: (max_x - min_x).max(0.0),
+            top: min_y,
+            height: (max_y - min_y).max(0.0),
+        })
+    } else {
+        Some(SourceRectMeasure {
+            width: 0.0,
+            top: 0.0,
+            height: 0.0,
+        })
+    }
 }
 
 pub(crate) fn first_baseline(box_rect: [f32; 4], line_height: f32, line_count: usize) -> f32 {
@@ -436,6 +538,19 @@ struct GlyphMetrics {
     bbox_scaled: Option<[f32; 4]>,
     metric_source: &'static str,
     cooltype_reference_status: &'static str,
+}
+
+#[derive(Debug, Clone)]
+struct SourceRectMeasure {
+    width: f32,
+    top: f32,
+    height: f32,
+}
+
+#[derive(Debug, Clone)]
+struct SourceRectLineMetrics {
+    line: SourceRectMeasure,
+    prefix_widths: Vec<f32>,
 }
 
 fn glyph_metrics(
@@ -685,6 +800,13 @@ mod tests {
         );
     }
 
+    fn assert_approx_eps(actual: f32, expected: f32, epsilon: f32) {
+        assert!(
+            (actual - expected).abs() < epsilon,
+            "expected {expected}, got {actual}, epsilon {epsilon}"
+        );
+    }
+
     fn point_light_fixture() -> Option<PathBuf> {
         let path = PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf");
         path.exists().then_some(path)
@@ -888,6 +1010,29 @@ mod tests {
         // CoolType raster coverage/glyph ids are probed deeply enough.
         assert_ne!(layout.glyphs[0].bbox, glyph.bbox);
         assert_approx(layout.glyphs[0].advance, glyph.advance);
+    }
+
+    #[test]
+    fn montserrat_source_rect_rows_match_ae_prefix_partition() {
+        let Some(path) = montserrat_bolditalic_fixture() else {
+            return;
+        };
+        let layout = layout_text(&TextLayoutRequest {
+            text: "WORD REVEAL\nMONTSERRAT TEST".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 58.0,
+            box_rect: Some([0.0, 0.0, 512.0, 512.0]),
+        })
+        .unwrap();
+        let glyphs = &layout.telemetry.glyphs;
+
+        assert_approx_eps(glyphs[0].advance, 65.018001, 0.001);
+        assert_approx_eps(glyphs[1].advance, 42.282002, 0.001);
+        assert_approx_eps(glyphs[4].advance, 0.0, 0.001);
+        assert_approx_eps(glyphs[5].advance, 59.739991, 0.001);
+        assert_approx_eps(glyphs[0].bbox[0], 28.466008, 0.001);
+        assert_approx_eps(glyphs[0].bbox[1], 179.903999, 0.001);
+        assert_approx_eps(glyphs[0].bbox[3], 41.992001, 0.001);
     }
 
     #[test]

@@ -1645,19 +1645,6 @@ fn compare_json_numbers(
     path: &str,
     stats: &mut TextPassportCompareStats,
 ) {
-    if expected_number.is_i64()
-        || expected_number.is_u64()
-        || actual_number.is_i64()
-        || actual_number.is_u64()
-    {
-        if expected == actual {
-            stats.push_match();
-        } else {
-            stats.push_mismatch(path, expected, Some(actual));
-        }
-        return;
-    }
-
     let Some(expected_value) = expected_number.as_f64() else {
         stats.push_mismatch(path, expected, Some(actual));
         return;

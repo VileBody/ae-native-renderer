@@ -51,24 +51,46 @@ const installedHooks = {};
 const moduleSnapshots = {};
 
 const COOLTYPE_HOOKS = [
-  {name: "CTTextGetBoundingBox", offset: 0x29fb60, surface: "bbox_int"},
-  {name: "CTTextGetQuickBoundingBox", offset: 0x2a0c00, surface: "bbox_quick_float"},
-  {name: "CTTextGetOrientedBBox", offset: 0x2a0850, surface: "bbox_oriented_float"},
-  {name: "CoreTextBoundingBox", offset: 0x1239a4, surface: "core_bbox_int"},
-  {name: "CoreTextFloatBoundingBox", offset: 0x12417c, surface: "core_bbox_float"},
-  {name: "CoreTextQuickBoundingBox", offset: 0x1261ac, surface: "core_quick_bbox_float"},
-  {name: "CoreTextGlyphRowExtract", offset: 0x127238, surface: "glyph_row_extract"},
-  {name: "CTTextGetGlyphs_V2", offset: 0x2a02a0, surface: "glyph_pointer_groups"},
-  {name: "CTTextGetTextGlyphs", offset: 0x2a1380, surface: "glyph_text_rows"},
-  {name: "CTFontInstanceGetWidths", offset: 0x292d20, surface: "font_widths"},
-  {name: "CTFontInstanceGetBBoxes", offset: 0x291900, surface: "font_bboxes"},
-  {name: "CoreWidthsBatch", offset: 0x15ac10, surface: "core_widths"},
-  {name: "CoreBBoxBatch", offset: 0x15a870, surface: "core_bboxes"}
+  {module: "CoolType.dll", name: "CTTextGetBoundingBox", offset: 0x29fb60, surface: "bbox_int"},
+  {module: "CoolType.dll", name: "CTTextGetQuickBoundingBox", offset: 0x2a0c00, surface: "bbox_quick_float"},
+  {module: "CoolType.dll", name: "CTTextGetOrientedBBox", offset: 0x2a0850, surface: "bbox_oriented_float"},
+  {module: "CoolType.dll", name: "CoreTextBoundingBox", offset: 0x1239a4, surface: "core_bbox_int"},
+  {module: "CoolType.dll", name: "CoreTextFloatBoundingBox", offset: 0x12417c, surface: "core_bbox_float"},
+  {module: "CoolType.dll", name: "CoreTextQuickBoundingBox", offset: 0x1261ac, surface: "core_quick_bbox_float"},
+  {module: "CoolType.dll", name: "CoreTextGlyphRowExtract", offset: 0x127238, surface: "glyph_row_extract"},
+  {module: "CoolType.dll", name: "CTTextGetGlyphs_V2", offset: 0x2a02a0, surface: "glyph_pointer_groups"},
+  {module: "CoolType.dll", name: "CTTextGetTextGlyphs", offset: 0x2a1380, surface: "glyph_text_rows"},
+  {module: "CoolType.dll", name: "CTFontInstanceGetWidths", offset: 0x292d20, surface: "font_widths"},
+  {module: "CoolType.dll", name: "CTFontInstanceGetBBoxes", offset: 0x291900, surface: "font_bboxes"},
+  {module: "CoolType.dll", name: "CoreWidthsBatch", offset: 0x15ac10, surface: "core_widths"},
+  {module: "CoolType.dll", name: "CoreBBoxBatch", offset: 0x15a870, surface: "core_bboxes"}
+];
+
+const TXT_HOOKS = [
+  {module: "TXT.dll", name: "TXT_FUN_sourceRect_batch_bboxes_214120", offset: 0x214120, surface: "txt_source_rect_batch_bboxes"},
+  {module: "TXT.dll", name: "TXT_FUN_sourceRect_batch_widths_214a00", offset: 0x214a00, surface: "txt_source_rect_batch_widths"},
+  {module: "TXT.dll", name: "TXT_FUN_text_bbox_caller_042b80", offset: 0x042b80, surface: "txt_text_bbox_caller"},
+  {module: "TXT.dll", name: "TXT_GridChar_EnsureGlyphMetricsCached", offset: 0x053ff0, surface: "txt_gridchar_cache"},
+  {module: "TXT.dll", name: "TXT_GridChar_GetGlyphMetrics", offset: 0x03fac0, surface: "txt_gridchar_metrics"},
+  {module: "TXT.dll", name: "TXT_GridChar_GetCharacterAlignmentBounds", offset: 0x0546b0, surface: "txt_gridchar_alignment_bounds"},
+  {module: "TXT.dll", name: "TXT_GridChar_GetGlyphBoundsPlus", offset: 0x054b00, surface: "txt_gridchar_bounds_plus"},
+  {module: "TXT.dll", name: "TXT_GridChar_GetGlyphMetricsInLineSpace", offset: 0x054cf0, surface: "txt_gridchar_line_space"},
+  {module: "TXT.dll", name: "TXT_GridChar_GetGlyphMetricsPlus", offset: 0x054f80, surface: "txt_gridchar_metrics_plus"},
+  {module: "TXT.dll", name: "TXT_GridChar_GetRenderExtent", offset: 0x055760, surface: "txt_gridchar_render_extent"},
+  {module: "TXT.dll", name: "TXT_GridChar_GetTransformedGlyphAdvance", offset: 0x055e70, surface: "txt_gridchar_transformed_advance"},
+  {module: "TXT.dll", name: "TXT_GridChar_GetTransformedGlyphMetrics", offset: 0x055f30, surface: "txt_gridchar_transformed_metrics"},
+  {module: "TXT.dll", name: "TXT_Grid_InitializeAnchorPoints", offset: 0x056110, surface: "txt_grid_anchor_points"}
 ];
 
 function hookEnabled(hook) {
   if (hookProfile === "all") {
     return true;
+  }
+  if (hookProfile === "txt-source-rect") {
+    return hook.module === "TXT.dll" || ["core_widths", "core_bboxes"].indexOf(hook.surface) !== -1;
+  }
+  if (hookProfile === "txt-gridchar") {
+    return hook.module === "TXT.dll";
   }
   if (hookProfile === "font-metrics") {
     return ["font_widths", "font_bboxes", "core_widths", "core_bboxes"].indexOf(hook.surface) !== -1;
@@ -90,8 +112,14 @@ function hookEnabled(hook) {
   return true;
 }
 
-function selectedHooks() {
-  return COOLTYPE_HOOKS.filter(hookEnabled);
+function allHooks() {
+  return COOLTYPE_HOOKS.concat(TXT_HOOKS);
+}
+
+function selectedHooks(moduleName) {
+  return allHooks().filter(function (hook) {
+    return hook.module === moduleName && hookEnabled(hook);
+  });
 }
 
 function safePtr(p) {
@@ -126,6 +154,10 @@ function safeReadS32(p) {
 
 function safeReadFloat(p) {
   try { return ptr(p).readFloat(); } catch (e) { return null; }
+}
+
+function safeReadDouble(p) {
+  try { return ptr(p).readDouble(); } catch (e) { return null; }
 }
 
 function safeReadPointer(p) {
@@ -202,6 +234,64 @@ function readBBoxF32(p) {
   }
   const q = ptr(p);
   return [safeReadFloat(q), safeReadFloat(q.add(4)), safeReadFloat(q.add(8)), safeReadFloat(q.add(12))];
+}
+
+function readFloatRectD64(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return [safeReadDouble(q), safeReadDouble(q.add(8)), safeReadDouble(q.add(16)), safeReadDouble(q.add(24))];
+}
+
+function readVector2D64(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return [safeReadDouble(q), safeReadDouble(q.add(8))];
+}
+
+function readMatrix3D64(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const out = [];
+  for (let i = 0; i < 9; i++) {
+    out.push(safeReadDouble(q.add(i * 8)));
+  }
+  return out;
+}
+
+function dumpGridChar(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    matrix_0x10_d64: readMatrix3D64(q.add(0x10)),
+    style_matrix_0x58_d64: readMatrix3D64(q.add(0x58)),
+    aux_matrix_0xa0_d64: readMatrix3D64(q.add(0xa0)),
+    orientation_0x390: safeReadS32(q.add(0x390)),
+    glyph_id_primary_0x394_u32: safeReadU32(q.add(0x394)),
+    glyph_id_primary_0x394_s32: safeReadS32(q.add(0x394)),
+    alt_char_0x39c_s32: safeReadS32(q.add(0x39c)),
+    alt_delta_0x3a4_s16: safeReadU16(q.add(0x3a4)),
+    line_group_0x37c: safeReadU32(q.add(0x37c)),
+    word_group_0x380: safeReadU32(q.add(0x380)),
+    virtual_font_0x3e8: safeReadPointerString(q.add(0x3e8)),
+    render_pad_x_0x3d8: safeReadDouble(q.add(0x3d8)),
+    render_pad_y_0x3e0: safeReadDouble(q.add(0x3e0)),
+    primary_cache_flag_0x3f0: safeReadU32(q.add(0x3f0)),
+    primary_bbox_0x3f8_d64: readFloatRectD64(q.add(0x3f8)),
+    primary_advance_0x418_d64: readVector2D64(q.add(0x418)),
+    alt_cache_flag_0x428: safeReadU32(q.add(0x428)),
+    alt_bbox_0x430_d64: readFloatRectD64(q.add(0x430)),
+    alt_advance_0x450_d64: readVector2D64(q.add(0x450)),
+    raw_0x360_0x460_words: memoryWords(q.add(0x360), 32)
+  };
 }
 
 function readGlyphRows12(p, count) {
@@ -401,7 +491,7 @@ function moduleSnapshot(module) {
     size: module.size,
     path: module.path,
     hook_profile: hookProfile,
-    hooks: selectedHooks().map(function (hook) {
+    hooks: selectedHooks(module.name).map(function (hook) {
       return {name: hook.name, offset: "0x" + hook.offset.toString(16), address: module.base.add(hook.offset).toString()};
     })
   });
@@ -446,7 +536,52 @@ function dumpEnterCommon(ctx, hook) {
     payload.cttext_textglyphs_capacity = capacity;
     payload.cttext_textglyphs_out_before = readGlyphRows48(stack.p7_0x38, capacity);
   }
+  if (hook.module === "TXT.dll") {
+    payload.txt_signature = txtSignatureSnapshot(ctx, hook);
+  }
   return payload;
+}
+
+function txtSignatureSnapshot(ctx, hook) {
+  const rcx = ptr(ctx.rcx);
+  const rdx = ptr(ctx.rdx);
+  const r8 = ptr(ctx.r8);
+  const r9 = ptr(ctx.r9);
+  const base = {
+    hook: hook.name,
+    surface: hook.surface,
+    regs: regSnapshot(ctx),
+    rcx_gridchar_candidate: dumpGridChar(rcx),
+    rdx_gridchar_candidate: dumpGridChar(rdx),
+    rdx_rect_d64: readFloatRectD64(rdx),
+    r8_rect_d64: readFloatRectD64(r8),
+    r9_rect_d64: readFloatRectD64(r9),
+    rdx_vec_d64: readVector2D64(rdx),
+    r8_vec_d64: readVector2D64(r8),
+    r9_vec_d64: readVector2D64(r9),
+    r8_matrix3_d64: readMatrix3D64(r8)
+  };
+  if (hook.name === "TXT_GridChar_GetRenderExtent") {
+    base.inferred_gridchar = dumpGridChar(rdx);
+    base.return_rect_buffer = readFloatRectD64(rcx);
+    base.extra_matrix = readMatrix3D64(r8);
+    base.extra_vec = readVector2D64(r9);
+  } else if (hook.name === "TXT_GridChar_GetGlyphMetricsPlus") {
+    base.inferred_gridchar = dumpGridChar(rcx);
+    base.use_primary_bool = ptr(ctx.rdx).toInt32();
+    base.out_rect = readFloatRectD64(r8);
+    base.out_vec = readVector2D64(r9);
+  } else if (hook.name === "TXT_GridChar_GetGlyphBoundsPlus") {
+    base.inferred_gridchar = dumpGridChar(rcx);
+    base.use_primary_bool = ptr(ctx.rdx).toInt32();
+    base.matrix = readMatrix3D64(r8);
+    base.out_rect = readFloatRectD64(r9);
+  } else {
+    base.inferred_gridchar = dumpGridChar(rcx);
+    base.out_rect = readFloatRectD64(rdx);
+    base.out_vec = readVector2D64(rdx);
+  }
+  return base;
 }
 
 function installHook(module, hook) {
@@ -532,6 +667,9 @@ function installHook(module, hook) {
           payload.group2_desc = memoryWords(safeReadPointer(this.ctx.r8), 8);
           payload.group3_desc = memoryWords(safeReadPointer(this.ctx.r9), 8);
         }
+        if (hook.module === "TXT.dll") {
+          payload.txt_signature_after = txtSignatureSnapshot(this.ctx, hook);
+        }
         emit("cooltype_hook_leave", payload);
       }
     });
@@ -554,20 +692,22 @@ function installHook(module, hook) {
 }
 
 function installAll() {
-  const module = Process.findModuleByName("CoolType.dll");
-  if (module === null) {
-    return;
-  }
-  moduleSnapshot(module);
-  selectedHooks().forEach(function (hook) {
-    installHook(module, hook);
+  ["CoolType.dll", "TXT.dll"].forEach(function (moduleName) {
+    const module = Process.findModuleByName(moduleName);
+    if (module === null) {
+      return;
+    }
+    moduleSnapshot(module);
+    selectedHooks(module.name).forEach(function (hook) {
+      installHook(module, hook);
+    });
   });
 }
 
 if (typeof Process.attachModuleObserver === "function") {
   Process.attachModuleObserver({
     onAdded: function (module) {
-      if (module.name === "CoolType.dll") {
+      if (module.name === "CoolType.dll" || module.name === "TXT.dll") {
         installAll();
       }
     }
@@ -583,7 +723,7 @@ def main() -> int:
     ap.add_argument("--out", required=True)
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "all"], default="source-rect")
     # Accepted for compatibility with ae_trace_drop_shadow_softness helpers.
     ap.add_argument("--generic-hook-limit", type=int, default=0)
     ap.add_argument("--max-stalk-render-calls", type=int, default=0)
@@ -830,7 +970,7 @@ def main() -> int:
     ap.add_argument("--batch-cases", action="store_true")
     ap.add_argument("--duration", type=int, default=240)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "all"], default="source-rect")
     ap.add_argument("--allow-render-failure", action="store_true")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--live-tail", action="store_true")
