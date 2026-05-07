@@ -221,6 +221,46 @@
       "assets": ["coordinate_field", "numbered_frames"]
     },
     {
+      "id": "STK_030_S00_BASE",
+      "title": "STK_030 lower canvas before adjustment stack",
+      "ladder": "template_slice_probe",
+      "modules": ["M02", "M19"],
+      "frames_to_compare": [0, 1, 59],
+      "assets": ["coordinate_field", "numbered_frames"]
+    },
+    {
+      "id": "STK_030_S01_GEOMETRY2",
+      "title": "STK_030 lower canvas after Geometry2 adjustment",
+      "ladder": "template_slice_probe",
+      "modules": ["M12", "M16", "M19"],
+      "frames_to_compare": [0, 1, 59],
+      "assets": ["coordinate_field", "numbered_frames"]
+    },
+    {
+      "id": "STK_030_S02_POSTERIZE",
+      "title": "STK_030 lower canvas after Geometry2 and Posterize Time",
+      "ladder": "template_slice_probe",
+      "modules": ["M12", "M15", "M16", "M19"],
+      "frames_to_compare": [0, 1, 59],
+      "assets": ["coordinate_field", "numbered_frames"]
+    },
+    {
+      "id": "STK_030_S03_MINIMAX",
+      "title": "STK_030 lower canvas after Geometry2, Posterize Time, and Minimax",
+      "ladder": "template_slice_probe",
+      "modules": ["M12", "M13", "M15", "M16", "M19"],
+      "frames_to_compare": [0, 1, 59],
+      "assets": ["coordinate_field", "numbered_frames"]
+    },
+    {
+      "id": "STK_030_S04_TURBULENT",
+      "title": "STK_030 lower canvas after full adjustment stack",
+      "ladder": "template_slice_probe",
+      "modules": ["M12", "M13", "M14", "M15", "M16", "M19"],
+      "frames_to_compare": [0, 1, 59],
+      "assets": ["coordinate_field", "numbered_frames"]
+    },
+    {
       "id": "STK_031",
       "title": "Geometry2 bicubic adjustment-layer transform",
       "ladder": "stack",

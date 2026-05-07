@@ -3262,18 +3262,13 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
             );
         }
         "STK_030" => {
-            b.place("numbered_stack", "numbered_frames", 256.0, 256.0, 100.0, 70.0, vec![]);
-            b.place("coordinate_stack", "coordinate_field", 256.0, 256.0, 100.0, 100.0, vec![]);
-            b.adjustment(vec![
-                effect("ADBE Geometry2", json!({ "0003": 96, "0004": 110, "0008": 92 })),
-                effect("ADBE Posterize Time", json!({ "0001": 6 })),
-                effect("ADBE Minimax", json!({ "0001": 2, "0002": 4, "0003": 1 })),
-                effect(
-                    "ADBE Turbulent Displace",
-                    json!({ "0002": 24, "0003": 72, "0005": 2, "0006": animated_scalar_param(0.0, 0.0, d, 180.0) }),
-                ),
-            ]);
+            build_stk030_stack(&mut b, d, 4);
         }
+        "STK_030_S00_BASE" => build_stk030_stack(&mut b, d, 0),
+        "STK_030_S01_GEOMETRY2" => build_stk030_stack(&mut b, d, 1),
+        "STK_030_S02_POSTERIZE" => build_stk030_stack(&mut b, d, 2),
+        "STK_030_S03_MINIMAX" => build_stk030_stack(&mut b, d, 3),
+        "STK_030_S04_TURBULENT" => build_stk030_stack(&mut b, d, 4),
         "STK_031" => {
             b.place("coordinate_stack", "coordinate_field", 256.0, 256.0, 100.0, 100.0, vec![]);
             b.adjustment(vec![effect(
@@ -3372,6 +3367,57 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
     }
 
     Ok(b.finish())
+}
+
+fn build_stk030_stack(b: &mut CaseBuilder<'_>, duration: f64, effect_count: usize) {
+    b.place(
+        "numbered_stack",
+        "numbered_frames",
+        256.0,
+        256.0,
+        100.0,
+        70.0,
+        vec![],
+    );
+    b.place(
+        "coordinate_stack",
+        "coordinate_field",
+        256.0,
+        256.0,
+        100.0,
+        100.0,
+        vec![],
+    );
+    let effects = stk030_adjustment_effects(duration, effect_count);
+    if !effects.is_empty() {
+        b.adjustment(effects);
+    }
+}
+
+fn stk030_adjustment_effects(duration: f64, effect_count: usize) -> Vec<EffectSpec> {
+    let mut effects = Vec::new();
+    if effect_count >= 1 {
+        effects.push(effect(
+            "ADBE Geometry2",
+            json!({ "0003": 96, "0004": 110, "0008": 92 }),
+        ));
+    }
+    if effect_count >= 2 {
+        effects.push(effect("ADBE Posterize Time", json!({ "0001": 6 })));
+    }
+    if effect_count >= 3 {
+        effects.push(effect(
+            "ADBE Minimax",
+            json!({ "0001": 2, "0002": 4, "0003": 1 }),
+        ));
+    }
+    if effect_count >= 4 {
+        effects.push(effect(
+            "ADBE Turbulent Displace",
+            json!({ "0002": 24, "0003": 72, "0005": 2, "0006": animated_scalar_param(0.0, 0.0, duration, 180.0) }),
+        ));
+    }
+    effects
 }
 
 impl<'a> CaseBuilder<'a> {

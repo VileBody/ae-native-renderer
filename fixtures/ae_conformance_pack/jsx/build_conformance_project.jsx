@@ -220,16 +220,22 @@ PNG sequences from the case comps are the golden source of truth.
                 addEffect(right, "ADBE Box Blur2", { "0001": 10, "0002": 2 });
             }),
             createCase("STK_030", "Geometry2 -> Posterize -> Minimax -> Turbulent adjustment stack", function (comp) {
-                var seq = placeAsset(comp, assets.numberedFrames, 256, 256, 100);
-                setLayerOpacity(seq, 70);
-                placeAsset(comp, assets.coordinate, 256, 256, 100);
-                var adj = comp.layers.addSolid([1, 1, 1], "ADJ_template_like_stack", cfg.width, cfg.height, 1, cfg.duration);
-                adj.adjustmentLayer = true;
-                addEffect(adj, "ADBE Geometry2", { "0003": 96, "0004": 110, "0008": 92 });
-                addEffect(adj, "ADBE Posterize Time", { "0001": 6 });
-                addEffect(adj, "ADBE Minimax", { "0001": 2, "0002": 4, "0003": 1 });
-                var turb = addEffect(adj, "ADBE Turbulent Displace", { "0002": 24, "0003": 72, "0005": 2 });
-                setAnimatedEffectScalar(turb, "0006", 0, 0, cfg.duration, 180);
+                addStk030Stack(comp, cfg, assets, 4);
+            }),
+            createCase("STK_030_S00_BASE", "STK_030 lower canvas before adjustment stack", function (comp) {
+                addStk030Stack(comp, cfg, assets, 0);
+            }),
+            createCase("STK_030_S01_GEOMETRY2", "STK_030 lower canvas after Geometry2 adjustment", function (comp) {
+                addStk030Stack(comp, cfg, assets, 1);
+            }),
+            createCase("STK_030_S02_POSTERIZE", "STK_030 lower canvas after Geometry2 and Posterize Time", function (comp) {
+                addStk030Stack(comp, cfg, assets, 2);
+            }),
+            createCase("STK_030_S03_MINIMAX", "STK_030 lower canvas after Geometry2, Posterize Time, and Minimax", function (comp) {
+                addStk030Stack(comp, cfg, assets, 3);
+            }),
+            createCase("STK_030_S04_TURBULENT", "STK_030 lower canvas after full adjustment stack", function (comp) {
+                addStk030Stack(comp, cfg, assets, 4);
             }),
             createCase("STK_031", "Geometry2 bicubic adjustment-layer transform", function (comp) {
                 placeAsset(comp, assets.coordinate, 256, 256, 100);
@@ -393,6 +399,31 @@ PNG sequences from the case comps are the golden source of truth.
             comp.bgColor = cfg.bg;
             builder(comp);
             return { id: id, title: title, comp: comp };
+        }
+    }
+
+    function addStk030Stack(comp, cfg, assets, effectCount) {
+        var seq = placeAsset(comp, assets.numberedFrames, 256, 256, 100);
+        setLayerOpacity(seq, 70);
+        placeAsset(comp, assets.coordinate, 256, 256, 100);
+        if (effectCount <= 0) {
+            return;
+        }
+
+        var adj = comp.layers.addSolid([1, 1, 1], "ADJ_template_like_stack_s" + effectCount, cfg.width, cfg.height, 1, cfg.duration);
+        adj.adjustmentLayer = true;
+        if (effectCount >= 1) {
+            addEffect(adj, "ADBE Geometry2", { "0003": 96, "0004": 110, "0008": 92 });
+        }
+        if (effectCount >= 2) {
+            addEffect(adj, "ADBE Posterize Time", { "0001": 6 });
+        }
+        if (effectCount >= 3) {
+            addEffect(adj, "ADBE Minimax", { "0001": 2, "0002": 4, "0003": 1 });
+        }
+        if (effectCount >= 4) {
+            var turb = addEffect(adj, "ADBE Turbulent Displace", { "0002": 24, "0003": 72, "0005": 2 });
+            setAnimatedEffectScalar(turb, "0006", 0, 0, cfg.duration, 180);
         }
     }
 
