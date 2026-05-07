@@ -30,8 +30,7 @@ impl Effect for Glow {
         let mut glow = glow_blur_canvas(&source, glow_ir_gaussian_radius(params.radius));
         scale_canvas(&mut glow, intensity);
 
-        let mut output = glow;
-        composite_normal(&mut output, input, 100.0);
+        let output = composite_glow(input, &glow, params.operation, params.composite_original);
         Ok(output)
     }
 }
@@ -42,6 +41,8 @@ pub(crate) struct GlowParams {
     pub threshold: f32,
     pub radius: f32,
     pub intensity: f32,
+    pub composite_original: GlowCompositeOriginal,
+    pub operation: GlowOperation,
 }
 
 impl GlowParams {
@@ -51,6 +52,8 @@ impl GlowParams {
             threshold: param_f32_at_any(params, &["threshold", "Threshold", "0002"], time, 0.0),
             radius: param_f32_at_any(params, &["radius", "Radius", "0003"], time, 16.0),
             intensity: param_f32_at_any(params, &["intensity", "Intensity", "0004"], time, 1.0),
+            composite_original: GlowCompositeOriginal::from_params(params),
+            operation: GlowOperation::from_params(params),
         }
     }
 }
@@ -105,8 +108,8 @@ impl GlowBasedOn {
                 .or_else(|| value.as_f64().map(|value| value.round() as i64))
             {
                 let based_on = match number {
-                    1 => Self::ColorChannels,
-                    2 => Self::AlphaChannel,
+                    1 => Self::AlphaChannel,
+                    2 => Self::ColorChannels,
                     _ => Self::Combined,
                 };
                 return GlowBasedOnResolution {
@@ -117,10 +120,95 @@ impl GlowBasedOn {
             }
         }
         GlowBasedOnResolution {
-            based_on: Self::Combined,
+            based_on: Self::ColorChannels,
             param_source: "default_absent",
-            raw_number: None,
+            raw_number: Some(2),
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GlowCompositeOriginal {
+    None,
+    Behind,
+    OnTop,
+}
+
+impl GlowCompositeOriginal {
+    fn from_params(params: &Value) -> Self {
+        for name in [
+            "composite_original",
+            "compositeOriginal",
+            "Composite Original",
+            "0005",
+        ] {
+            let Some(value) = param_value(params, name) else {
+                continue;
+            };
+            if let Some(text) = value.as_str() {
+                let text = text.to_ascii_lowercase();
+                if text.contains("none") {
+                    return Self::None;
+                }
+                if text.contains("behind") {
+                    return Self::Behind;
+                }
+                if text.contains("top") || text.contains("front") {
+                    return Self::OnTop;
+                }
+            }
+            if let Some(number) = value
+                .as_i64()
+                .or_else(|| value.as_f64().map(|value| value.round() as i64))
+            {
+                return match number {
+                    1 => Self::Behind,
+                    2 => Self::OnTop,
+                    _ => Self::None,
+                };
+            }
+        }
+        Self::OnTop
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum GlowOperation {
+    None,
+    Add,
+    Screen,
+}
+
+impl GlowOperation {
+    fn from_params(params: &Value) -> Self {
+        for name in ["operation", "Glow Operation", "0006"] {
+            let Some(value) = param_value(params, name) else {
+                continue;
+            };
+            if let Some(text) = value.as_str() {
+                let text = text.to_ascii_lowercase();
+                if text.contains("none") {
+                    return Self::None;
+                }
+                if text.contains("screen") {
+                    return Self::Screen;
+                }
+                if text.contains("add") {
+                    return Self::Add;
+                }
+            }
+            if let Some(number) = value
+                .as_i64()
+                .or_else(|| value.as_f64().map(|value| value.round() as i64))
+            {
+                return match number {
+                    1 => Self::None,
+                    2 => Self::Screen,
+                    _ => Self::Add,
+                };
+            }
+        }
+        Self::Add
     }
 }
 
@@ -139,6 +227,22 @@ fn based_on_label(based_on: GlowBasedOn) -> &'static str {
     }
 }
 
+fn composite_original_label(composite_original: GlowCompositeOriginal) -> &'static str {
+    match composite_original {
+        GlowCompositeOriginal::None => "none",
+        GlowCompositeOriginal::Behind => "behind",
+        GlowCompositeOriginal::OnTop => "on_top",
+    }
+}
+
+fn operation_label(operation: GlowOperation) -> &'static str {
+    match operation {
+        GlowOperation::None => "none",
+        GlowOperation::Add => "add",
+        GlowOperation::Screen => "screen",
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct GlowDebugParams {
     pub based_on: &'static str,
@@ -148,6 +252,8 @@ pub struct GlowDebugParams {
     pub radius: f32,
     pub ir_gaussian_radius: f32,
     pub intensity: f32,
+    pub composite_original: &'static str,
+    pub operation: &'static str,
     pub kernel_radius: u32,
 }
 
@@ -187,9 +293,7 @@ pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugT
     let blurred = glow_blur_canvas(&source, ir_gaussian_radius);
     let mut scaled = blurred.clone();
     scale_canvas(&mut scaled, intensity);
-
-    let mut output = scaled.clone();
-    composite_normal(&mut output, input, 100.0);
+    let output = composite_glow(input, &scaled, params.operation, params.composite_original);
 
     GlowDebugTrace {
         params: GlowDebugParams {
@@ -200,6 +304,8 @@ pub fn glow_debug_trace(input: &Canvas, params: &Value, time: f64) -> GlowDebugT
             radius: params.radius,
             ir_gaussian_radius,
             intensity: params.intensity,
+            composite_original: composite_original_label(params.composite_original),
+            operation: operation_label(params.operation),
             kernel_radius,
         },
         hashes: GlowIntermediateHashes {
@@ -354,6 +460,67 @@ fn scale_canvas(canvas: &mut Canvas, intensity: f32) {
     }
 }
 
+fn composite_glow(
+    input: &Canvas,
+    glow: &Canvas,
+    operation: GlowOperation,
+    composite_original: GlowCompositeOriginal,
+) -> Canvas {
+    let mut operated = match operation {
+        GlowOperation::None => glow.clone(),
+        GlowOperation::Add => blend_glow_with_input(input, glow, add_channel),
+        GlowOperation::Screen => blend_glow_with_input(input, glow, screen_channel),
+    };
+
+    match composite_original {
+        GlowCompositeOriginal::None => operated,
+        GlowCompositeOriginal::Behind => {
+            composite_normal(&mut operated, input, 100.0);
+            operated
+        }
+        GlowCompositeOriginal::OnTop => operated,
+    }
+}
+
+fn blend_glow_with_input(input: &Canvas, glow: &Canvas, channel_blend: fn(u8, u8) -> u8) -> Canvas {
+    let mut output = Canvas::transparent(input.width, input.height);
+    for y in 0..input.height {
+        for x in 0..input.width {
+            let base = input.pixel(x, y);
+            let top = glow.pixel(x, y);
+            let alpha = source_over_alpha(base[3], top[3]);
+            output.set_pixel(
+                x,
+                y,
+                [
+                    channel_blend(base[0], top[0]),
+                    channel_blend(base[1], top[1]),
+                    channel_blend(base[2], top[2]),
+                    alpha,
+                ],
+            );
+        }
+    }
+    output
+}
+
+fn source_over_alpha(base: u8, top: u8) -> u8 {
+    let base = base as f32 / 255.0;
+    let top = top as f32 / 255.0;
+    ((top + base * (1.0 - top)) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8
+}
+
+fn add_channel(base: u8, glow: u8) -> u8 {
+    base.saturating_add(glow)
+}
+
+fn screen_channel(base: u8, glow: u8) -> u8 {
+    let inv = (255_u16 - base as u16) * (255_u16 - glow as u16);
+    (255_u16 - ((inv + 127) / 255)).min(255) as u8
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -396,7 +563,7 @@ mod tests {
             0.0,
         );
 
-        assert_eq!(params.based_on, GlowBasedOn::AlphaChannel);
+        assert_eq!(params.based_on, GlowBasedOn::ColorChannels);
         assert_eq!(params.threshold, 42.0);
         assert_eq!(params.radius, 20.0);
         assert_eq!(params.intensity, 1.5);
@@ -439,12 +606,12 @@ mod tests {
         );
         let color = glow_debug_trace(
             &input,
-            &json!({ "0001": { "value": 1 }, "0002": 120, "0003": 0, "0004": 1.0 }),
+            &json!({ "0001": { "value": 2 }, "0002": 120, "0003": 0, "0004": 1.0 }),
             0.0,
         );
         let alpha = glow_debug_trace(
             &input,
-            &json!({ "0001": { "value": 2 }, "0002": 120, "0003": 0, "0004": 1.0 }),
+            &json!({ "0001": { "value": 1 }, "0002": 120, "0003": 0, "0004": 1.0 }),
             0.0,
         );
         let combined_source = glow_source(&input, 120.0, GlowBasedOn::Combined);
@@ -456,8 +623,8 @@ mod tests {
         assert_eq!(alpha.params.based_on, "alpha_channel");
         assert_eq!(combined.params.based_on_param_source, "0001");
         assert_eq!(color.params.based_on_param_source, "0001");
-        assert_eq!(color.params.based_on_raw_number, Some(1));
-        assert_eq!(alpha.params.based_on_raw_number, Some(2));
+        assert_eq!(color.params.based_on_raw_number, Some(2));
+        assert_eq!(alpha.params.based_on_raw_number, Some(1));
         assert_eq!(
             combined.hashes.threshold_source_rgba,
             canvas_debug_hash(&combined_source)
@@ -612,8 +779,10 @@ mod tests {
 
         let trace = glow_debug_trace(&input, &json!({ "0002": 120, "0003": 0 }), 0.0);
 
-        assert_eq!(trace.params.based_on, "combined");
+        assert_eq!(trace.params.based_on, "color_channels");
         assert_eq!(trace.params.based_on_param_source, "default_absent");
-        assert_eq!(trace.params.based_on_raw_number, None);
+        assert_eq!(trace.params.based_on_raw_number, Some(2));
+        assert_eq!(trace.params.composite_original, "on_top");
+        assert_eq!(trace.params.operation, "add");
     }
 }

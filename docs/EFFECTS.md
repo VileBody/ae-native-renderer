@@ -4,7 +4,7 @@ Initial first-party AE matchName support:
 
 ```text
 ADBE Drop Shadow       approximate
-ADBE Glo2              approximate with traced radius route + native Gaussian blur
+ADBE Glo2              approximate with traced radius route + Glow operation/composite subset
 ADBE Box Blur2         approximate
 ADBE Turbulent Displace recovered FracAll table/state/pinning subset
 ADBE Posterize Time     temporal quantization in render-core
@@ -20,7 +20,7 @@ Effect params accept both generated payload values (`{ "0001": { "value": ... } 
 | --- | --- | --- |
 | `ADBE Box Blur2` | `radius`, `iterations` | `0001` radius, `0002` iterations; iterations run repeated separable blur passes; `0002` is also accepted as a legacy radius fallback when no radius param is present |
 | `ADBE Drop Shadow` | `color`, `opacity`, `direction_degrees`, `distance`, `softness`, `shadow_only` | `0001` color, `0002` opacity as AE raw `0..255`, `0003` direction, `0004` distance, `0005` softness, `0006` shadow only |
-| `ADBE Glo2` | `based_on`, `threshold`, `radius`, `intensity` | `0001` glow based on (`1` color channels, `2` alpha channel; absent keeps combined legacy source), `0002` threshold, `0003` radius, `0004` intensity |
+| `ADBE Glo2` | `based_on`, `threshold`, `radius`, `intensity`, `composite_original`, `operation` | `0001` glow based on (`1` alpha channel, `2` color channels; absent uses the AE default `2` color channels), `0002` threshold, `0003` radius, `0004` intensity, `0005` composite original (`1` behind, `2` on top), `0006` glow operation (`1` none, `2` screen, `3+` add subset) |
 | `ADBE Geometry2` | `anchor`, `position`, `scale`, `rotation`, `skew`, `skew_axis`, `pixelAspect`, `sampling` | AE property-index ids confirmed by `effect_property_dump.json` and Frida CPU wrapper dumps: `0001` anchor, `0002` position, `0003` uniform-scale checkbox, `0004` scale height, `0005` scale width, `0006` skew, `0007` skew axis, `0008` rotation, `0009` effect opacity slot, `0010` use comp shutter, `0011` shutter angle, `0012` sampling (`1` bilinear, `2` bicubic); native currently implements transform controls plus sampling mode and ignores the Geometry2 opacity/shutter controls |
 | `ADBE Minimax` | `operation`, `radius`, `channels`, `direction`, `dont_shrink_edges` | `0001` operation (`1` minimum, `2` maximum, `3` minimum then maximum, `4` maximum then minimum), `0002` radius, `0003` channels (`1` color, `2` alpha and color, `3` red, `4` green, `5` blue, `6` alpha), `0004` direction (`1` horizontal and vertical, `2` horizontal, `3` vertical), `0005` don't shrink edges |
 | `ADBE Turbulent Displace` | `displacement`, `amount`, `size`, `offset`, `complexity`, `evolution`, `cycle_evolution`, `cycle_revolutions`, `random_seed`, `antialiasing_best_quality`, `pinning`, `resize_layer` | `0001` displacement type, `0002` amount, `0003` size, `0004` offset, `0005` complexity, `0006` evolution, `0008` cycle evolution, `0009` cycle revolutions, `0010` random seed, `0012` pinning, `0013` resize layer, `0014` antialiasing for best quality |
@@ -32,11 +32,13 @@ Scalar numbered params support direct numbers, wrapped `value`, and the existing
 
 `ADBE Glo2` uses the recovered AE radius routing from Frida/Ghidra:
 `ir_gaussian_radius = glow_radius * 0.4`. Native now runs a Glow-local separable
-Gaussian approximation with support radius `ceil(ir_gaussian_radius * 2)`, while
-Box Blur and Drop Shadow keep their separate GF/alpha-blur paths. The remaining
-Glow mismatch is not considered a global alpha/M19 issue; it belongs to the
-effect-local ImageRenderer recursive Gaussian, threshold source, intensity, and
-IR composite contract.
+Gaussian approximation with support radius `ceil(ir_gaussian_radius * 2)`, maps
+the AE default Glow Based On value to color/luma channels, and applies the
+recovered `0005`/`0006` composite controls for the default Add/on-top path. Box
+Blur and Drop Shadow keep their separate GF/alpha-blur paths. The remaining Glow
+mismatch is not considered a global alpha/M19 issue; it belongs to the
+effect-local ImageRenderer recursive Gaussian kernel and alpha/composite
+contract.
 
 `ADBE Geometry2` uses the recovered `GPUFoundation.dll` transform matrix order.
 The 2026-05-06 isolated edge probe selected integer pixel centers and a
