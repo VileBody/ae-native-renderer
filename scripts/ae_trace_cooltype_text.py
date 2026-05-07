@@ -83,6 +83,10 @@ const TXT_HOOKS = [
   {module: "TXT.dll", name: "TXT_ARE_Render_8bpc_stroke_3d960", offset: 0x03d960, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_ARE_OutputComposite_8bpc_3de50", offset: 0x03de50, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_span_3b8c0", offset: 0x03b8c0, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_load_3ba1b", offset: 0x03ba1b, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_stride_mul_3ba2e", offset: 0x03ba2e, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_stride_add_3ba5b", offset: 0x03ba5b, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_sample_byte_3ba80", offset: 0x03ba80, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_PlayCharOutlines", offset: 0x0416c0, surface: "txt_play_char_outlines"},
   {module: "TXT.dll", name: "TXT_PlayCharOutlines_impl", offset: 0x042ab0, surface: "txt_play_char_outlines_impl"},
   {module: "TXT.dll", name: "TXT_FUN_sourceRect_batch_bboxes_214120", offset: 0x214120, surface: "txt_source_rect_batch_bboxes"},
@@ -618,6 +622,72 @@ function coverageBytesForSpan(arePtr, tuplePtr, y, startX, endX) {
   }
 }
 
+function dumpPlanePointerCandidate(label, p) {
+  if (isNullPtr(p)) {
+    return {label: label, ptr: ptr(p).toString(), null_ptr: true};
+  }
+  const q = ptr(p);
+  const base10 = safeReadPointer(q.add(0x10));
+  const base28 = safeReadPointer(q.add(0x28));
+  return {
+    label: label,
+    ptr: q.toString(),
+    target: moduleOffset(q),
+    width_0x08_s32: safeReadS32(q.add(0x08)),
+    height_0x0c_s32: safeReadS32(q.add(0x0c)),
+    base_0x10: base10 === null ? null : base10.toString(),
+    stride_0x20_s64: safeReadS64Number(q.add(0x20)),
+    base_0x28: base28 === null ? null : base28.toString(),
+    stride_0x30_s64: safeReadS64Number(q.add(0x30)),
+    aux_0x38: safeReadPointerString(q.add(0x38)),
+    words_0x00_0x50: memoryWords(q, 10)
+  };
+}
+
+function regSnapshotWide(ctx) {
+  return {
+    rax: ptr(ctx.rax).toString(),
+    rbx: ptr(ctx.rbx).toString(),
+    rcx: ptr(ctx.rcx).toString(),
+    rdx: ptr(ctx.rdx).toString(),
+    rsi: ptr(ctx.rsi).toString(),
+    rdi: ptr(ctx.rdi).toString(),
+    r8: ptr(ctx.r8).toString(),
+    r9: ptr(ctx.r9).toString(),
+    r10: ptr(ctx.r10).toString(),
+    r11: ptr(ctx.r11).toString(),
+    rsp: ptr(ctx.rsp).toString()
+  };
+}
+
+function dumpTxtArePlaneLoadProbe(ctx, hook) {
+  return {
+    hook: hook.name,
+    regs: regSnapshotWide(ctx),
+    stack: stackArgs(ctx),
+    memory_samples: {
+      rax_u8_32: memoryBytes(ptr(ctx.rax), 32),
+      rbx_u8_32: memoryBytes(ptr(ctx.rbx), 32),
+      rdx_u8_32: memoryBytes(ptr(ctx.rdx), 32),
+      rdi_u8_32: memoryBytes(ptr(ctx.rdi), 32)
+    },
+    candidates: [
+      dumpPlanePointerCandidate("rax", ptr(ctx.rax)),
+      dumpPlanePointerCandidate("rbx", ptr(ctx.rbx)),
+      dumpPlanePointerCandidate("rcx", ptr(ctx.rcx)),
+      dumpPlanePointerCandidate("rdx", ptr(ctx.rdx)),
+      dumpPlanePointerCandidate("rsi", ptr(ctx.rsi)),
+      dumpPlanePointerCandidate("rdi", ptr(ctx.rdi)),
+      dumpPlanePointerCandidate("r8", ptr(ctx.r8)),
+      dumpPlanePointerCandidate("r9", ptr(ctx.r9)),
+      dumpPlanePointerCandidate("r10", ptr(ctx.r10)),
+      dumpPlanePointerCandidate("r11", ptr(ctx.r11))
+    ],
+    stack_words: memoryWords(ptr(ctx.rsp), 12),
+    backtrace: backtrace(ctx)
+  };
+}
+
 function readMatrix6(p) {
   if (isNullPtr(p)) {
     return null;
@@ -1098,6 +1168,9 @@ function dumpTxtDrawCharEntry(ctx) {
 }
 
 function dumpTxtAreSpanHook(ctx, hook) {
+  if (hook.name.indexOf("TXT_ARE_PixelWriter8_type2_") === 0) {
+    return dumpTxtArePlaneLoadProbe(ctx, hook);
+  }
   const rsp = ptr(ctx.rsp);
   const stack = stackArgs(ctx);
   const base = {
@@ -1486,6 +1559,9 @@ function installHook(module, hook) {
       },
       onLeave: function (retval) {
         const hook = this.hook;
+        if (hook.name.indexOf("TXT_ARE_PixelWriter8_type2_") === 0) {
+          return;
+        }
         const stack = this.stack || {};
         const payload = {
           hook: hook.name,
