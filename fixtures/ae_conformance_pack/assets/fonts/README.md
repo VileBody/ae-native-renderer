@@ -10,6 +10,8 @@ future machine needs them. The JSX references the installed font names directly.
 
 Included:
 
+- `Montserrat-BoldItalic.ttf` from Google Fonts / SIL Open Font License, used by
+  native conformance runs for `TXT_010` and `TXT_020`.
 - `Montserrat-Italic[wght].ttf` from Google Fonts / SIL Open Font License.
 - `Point-Light.ttf` from the local user-provided Point family archive, used by
   native conformance runs for `TXT_030` and `TXT_040`.

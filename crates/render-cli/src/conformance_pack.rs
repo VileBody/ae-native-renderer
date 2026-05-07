@@ -3780,7 +3780,7 @@ fn bounce_animator() -> TextAnimatorSpec {
 
 fn font_montserrat(pack_root: &Path) -> String {
     pack_root
-        .join("assets/fonts/Montserrat-Italic[wght].ttf")
+        .join("assets/fonts/Montserrat-BoldItalic.ttf")
         .display()
         .to_string()
 }
@@ -4325,20 +4325,22 @@ mod tests {
     }
 
     #[test]
-    fn text_passport_diagnostics_flag_unproven_montserrat_instance() {
+    fn text_passport_diagnostics_accept_exact_montserrat_bolditalic() {
         let snapshot = text_passport_snapshot_from_jsonl_records(&[json!({
             "event": "text.layout",
             "record": {
                 "composition": "TXT_010",
                 "layer_id": "word_reveal",
                 "request": {
-                    "font_id": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf"
+                    "font_id": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf"
                 },
                 "layout": {
                     "font_resolution": {
-                        "requested_id": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf",
-                        "resolved_path": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf",
+                        "requested_id": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf",
+                        "resolved_path": "fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf",
                         "resolved_family": "Montserrat",
+                        "resolved_style": "Bold Italic",
+                        "resolved_postscript_name": "Montserrat-BoldItalic",
                         "fallback": false,
                         "source": "DirectPath"
                     },
@@ -4355,14 +4357,8 @@ mod tests {
 
         let diagnostic = text_passport_font_instance_diagnostic("TXT_010", &snapshot);
 
-        assert_eq!(
-            diagnostic["status"],
-            json!("variable_montserrat_instance_unproven")
-        );
-        assert!(diagnostic["blocker"]
-            .as_str()
-            .unwrap()
-            .contains("BoldItalic axis"));
+        assert_eq!(diagnostic["status"], json!("matched"));
+        assert_eq!(diagnostic["blocker"], Value::Null);
     }
 
     #[test]

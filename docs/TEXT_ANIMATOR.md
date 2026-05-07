@@ -138,12 +138,27 @@ true CoolType glyph ids or raster coverage yet.
 Latest smoke comparison:
 
 ```text
-target/ae_agents/native_text_passport_step3_smoke/report.json
+target/ae_agents/p2_text_m05_m06_square_montserrat_gate_20260507/report.json
 ```
 
 All four text cases now compare against refs with zero missing reference frames.
-The expected current result is `text_passport.ok=false` because native fontdue
-metrics still diverge from AE/Point-Light/Montserrat measurements.
+The expected current result is still `text_passport.ok=false` because native
+fontdue metrics still diverge from AE/CoolType/sourceRect measurements. The
+font-instance blocker for Montserrat has been removed by adding the exact static
+`Montserrat-BoldItalic.ttf` fixture, so the remaining Montserrat mismatch is now
+metric/whitespace distribution rather than a wrong named instance.
+
+The 2026-05-07 runtime pass also corrected the visible Square Range Selector
+opacity path: `Start=0 End=100`, `Shape=Square`, `Smoothness=100` now selects
+every unit with `weight=1`, so an opacity animator set to `0` fully hides the
+text on frame 0. This is visible in `TXT_010`/`TXT_020` and strongly improves
+the collapsed text graph case:
+
+```text
+target/visual_review/text_m05_m06_square_montserrat_20260507
+TXT_020 primary visible mean: 7.296998 -> 5.860491
+GPH_010 primary visible mean: 13.529264 -> 1.701600
+```
 
 Do not interpolate matrices directly. Interpolate properties, then build matrix:
 

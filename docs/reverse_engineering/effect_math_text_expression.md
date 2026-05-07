@@ -1,6 +1,6 @@
 # AE Text Animator, Glyph, And Expression Math Notes
 
-Status date: 2026-05-04.
+Status date: 2026-05-07.
 
 Scope for this note: text/glyph/expression reverse-engineering only. This pass
 read existing fixtures, generated JSX, docs, tests, implementation files, and
@@ -50,14 +50,24 @@ The conformance pack currently anchors the text/expression/collapse work on:
 
 `fixtures/ae_conformance_pack/manifest.json` says the composition is 512x512,
 30 fps, 2 seconds per case. The selected AE golden PNG directories contain 60
-frames for each Phase 5 case. The manifest currently lists both
-`Montserrat-Italic[wght].ttf` and `Point-Light.ttf` in font assets, while older
-notes mention Point-Light as an AE-machine assumption. Current sidecars show
-Point-Light resolving by direct path in native runs:
+frames for each Phase 5 case. The manifest now lists
+`Montserrat-BoldItalic.ttf`, `Montserrat-Italic[wght].ttf`, and
+`Point-Light.ttf` in font assets. Current sidecars show Point-Light resolving by
+direct path in native runs:
 
 ```text
 requested_id: fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf
 resolved_postscript_name: Point-Light
+source: DirectPath
+fallback: false
+```
+
+Current Montserrat text cases resolve to the exact static face instead of the
+variable Thin Italic fallback:
+
+```text
+requested_id: fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf
+resolved_postscript_name: Montserrat-BoldItalic
 source: DirectPath
 fallback: false
 ```
@@ -165,8 +175,7 @@ if pos outside [start,end]: weight = 0
 t = clamp((pos - start) / max(end - start, 0.0001), 0, 1)
 
 Square:
-  if smoothness <= 0: 1
-  else min((pos-start)/edge, (end-pos)/edge), edge=(end-start)*(smoothness/100)*0.5
+  1 inside [start,end]; Smoothness does not edge-fade the runtime opacity path
 RampUp:
   t
 RampDown:
@@ -183,6 +192,12 @@ Wiggly:
   weight *= 1 + (amount/100)*sin(phase)
   final clamp to [0,1]
 ```
+
+This Square behavior was corrected after comparing `TXT_010`/`TXT_020` frames:
+with `Start=0`, `End=100`, `Shape=Square`, and `Smoothness=100`, AE fully
+selects every unit, so an opacity animator set to `0` hides all units on frame
+0. The old native path incorrectly produced partial weights such as
+`[0.25, 0.75, 0.75, 0.25]`, leaving a visible full-text ghost.
 
 Current text-engine helper differs in details:
 

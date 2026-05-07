@@ -179,9 +179,14 @@ mod tests {
 
         let root = repo_root();
         assert!(
+            root.join("fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf")
+                .exists(),
+            "Montserrat-BoldItalic.ttf must stay checked into the conformance pack for exact native text layout"
+        );
+        assert!(
             root.join("fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf")
                 .exists(),
-            "Montserrat variable italic TTF must stay checked into the conformance pack"
+            "Montserrat variable italic TTF must stay checked into the conformance pack as fallback/source asset"
         );
         let point_font_path =
             root.join("fixtures/ae_conformance_pack/assets/fonts/Point-Light.ttf");

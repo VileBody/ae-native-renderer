@@ -13,7 +13,7 @@
     {
       "family_or_postscript": "Montserrat-BoldItalic",
       "used_by": ["TXT_010", "TXT_020"],
-      "source_note": "Montserrat is OFL and available from Google Fonts; variable italic TTF is included in assets/fonts for convenience."
+      "source_note": "Montserrat is OFL and available from Google Fonts; exact static BoldItalic TTF is included for native text layout, with the variable italic TTF retained as a fallback/source asset."
     },
     {
       "family_or_postscript": "Point-Light",
@@ -25,6 +25,7 @@
     "primitive_manifest": "assets/primitives/assets_manifest.json",
     "numbered_frame_sequence": "assets/primitives/numbered_frames/frame_0000.png",
     "font_files": [
+      "assets/fonts/Montserrat-BoldItalic.ttf",
       "assets/fonts/Montserrat-Italic[wght].ttf",
       "assets/fonts/Point-Light.ttf",
       "assets/fonts/OFL-Montserrat.txt"

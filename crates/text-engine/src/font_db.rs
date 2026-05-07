@@ -151,9 +151,12 @@ fn resolve_known_fixture_font(font_id: &str) -> Option<FontResolutionTelemetry> 
 
 fn known_fixture_font_paths(font_id: &str) -> Vec<PathBuf> {
     let normalized = normalized_font_name(font_id);
-    let file_name = match normalized.as_str() {
-        "pointlight" | "point" => "Point-Light.ttf",
-        "montserratbolditalic" | "montserratitalic" | "montserrat" => "Montserrat-Italic[wght].ttf",
+    let file_names: &[&str] = match normalized.as_str() {
+        "pointlight" | "point" => &["Point-Light.ttf"],
+        "montserratbolditalic" => &["Montserrat-BoldItalic.ttf", "Montserrat-Italic[wght].ttf"],
+        "montserratitalic" | "montserrat" => {
+            &["Montserrat-Italic[wght].ttf", "Montserrat-BoldItalic.ttf"]
+        }
         _ => return Vec::new(),
     };
 
@@ -164,7 +167,7 @@ fn known_fixture_font_paths(font_id: &str) -> Vec<PathBuf> {
         PathBuf::from("/app/fixtures/ae_conformance_pack/assets/fonts"),
     ]
     .into_iter()
-    .map(|base| base.join(file_name))
+    .flat_map(|base| file_names.iter().map(move |file_name| base.join(file_name)))
     .collect()
 }
 
@@ -180,6 +183,7 @@ fn known_fixture_exact_match(font_id: &str, path: &Path) -> bool {
         (requested.as_str(), file_stem.as_str()),
         ("pointlight", "pointlight")
             | ("point", "pointlight")
+            | ("montserratbolditalic", "montserratbolditalic")
             | ("montserratitalic", "montserratitalicwght")
             | ("montserrat", "montserratitalicwght")
     )
@@ -381,7 +385,7 @@ mod tests {
     #[test]
     fn montserrat_family_resolution_uses_conformance_asset_when_available() {
         let path =
-            PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Montserrat-Italic[wght].ttf");
+            PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf");
         if !path.exists() {
             return;
         }
@@ -389,6 +393,9 @@ mod tests {
 
         assert_eq!(resolution.resolved_path.as_deref(), Some(path.as_path()));
         assert_eq!(resolution.source, FontResolutionSource::FixtureAsset);
-        assert!(resolution.fallback);
+        assert!(!resolution.fallback);
+        if let Some(postscript_name) = resolution.resolved_postscript_name {
+            assert_eq!(postscript_name, "Montserrat-BoldItalic");
+        }
     }
 }

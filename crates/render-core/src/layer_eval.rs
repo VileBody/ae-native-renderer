@@ -3220,7 +3220,7 @@ fn selector_weight(
     let span = (end - start).max(0.0001);
     let t = ((pos - start) / span).clamp(0.0, 1.0);
     let mut weight = match selector.shape {
-        TextSelectorShape::Square => square_selector_weight(pos, start, end, selector.smoothness),
+        TextSelectorShape::Square => 1.0,
         TextSelectorShape::RampUp => t,
         TextSelectorShape::RampDown => 1.0 - t,
         TextSelectorShape::Triangle => (1.0 - (2.0 * t - 1.0).abs()).clamp(0.0, 1.0),
@@ -3253,16 +3253,6 @@ fn selector_order_index(
 
 fn unit_center_percent(index: usize, total: usize) -> f32 {
     ((index as f32 + 0.5) / total as f32) * 100.0
-}
-
-fn square_selector_weight(pos: f32, start: f32, end: f32, smoothness: f32) -> f32 {
-    if smoothness <= 0.0 {
-        return 1.0;
-    }
-    let edge = ((end - start) * (smoothness / 100.0) * 0.5).max(0.0001);
-    let fade_in = ((pos - start) / edge).clamp(0.0, 1.0);
-    let fade_out = ((end - pos) / edge).clamp(0.0, 1.0);
-    fade_in.min(fade_out)
 }
 
 fn deterministic_order_index(index: usize, total: usize, seed: u32) -> usize {
@@ -4492,6 +4482,22 @@ mod tests {
 
         assert_eq!(first, second);
         assert_ne!(first, other);
+    }
+
+    #[test]
+    fn square_selector_full_range_ignores_smoothness_edge_fade() {
+        let selector = TextRangeSelector {
+            shape: TextSelectorShape::Square,
+            smoothness: 100.0,
+            ..TextRangeSelector::default()
+        };
+
+        let weights: Vec<f32> = (0..4)
+            .map(|index| selector_weight(index, 4, &selector, 0.0, 100.0, 0.0))
+            .collect();
+
+        assert_eq!(weights, vec![1.0, 1.0, 1.0, 1.0]);
+        assert_eq!(selector_weight(0, 4, &selector, 100.0, 100.0, 0.0), 0.0);
     }
 
     #[test]

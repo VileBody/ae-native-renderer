@@ -61,8 +61,8 @@ nearby AE math backlog. Template status is derived from this table.
 | `M02` | Footage source-time sampling and media frame selection | `implemented approximate` | all three | `source_start`, activity windows, sequential decode/cache, media plan logs. | Numbered-frame source fixtures, source-time telemetry, AE/reference frame-index goldens. |
 | `M03` | 2D transform matrix, anchor/position/scale/rotation sampling | `implemented approximate` | all three | Matrix convention, inverse sampling, bilinear sampler, ROI bounds, unit tests. | Operator passport, coordinate-field/UV diff fixtures, matrix telemetry, AE transform goldens. |
 | `M04` | Keyframes: hold/linear/cubic Bezier approximation | `instrumented/testable` | all three | Scalar/Vec2 keyframes, compact cubic ease, unit tests, Bezier conformance micro-scene scaffold, and `temporal.keyframe_sample` records with segment/ease/progress diagnostics. | Export AE ease telemetry/PNGs, compare temporal-ease tangent mapping, then tune solver/parameter mapping. |
-| `M05` | Text rasterization and glyph layout | `AE golden exists` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; CoolType glyph metric targets selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows; layout sidecars now emit glyph-run index, advance x/y, comp-space bbox/minmax/centers/baselines, baseline delta slot, metric source, and CoolType reference status. AE sourceRect-based text telemetry refs are imported for `TXT_010`/`TXT_020`/`TXT_030`/`TXT_040`. | Use the text passport mismatches to tune shaping/composer/raster coverage; add deeper CoolType glyph-id/coverage rows and Montserrat instance mapping when the AE scripting subset is not enough. |
-| `M06` | Text Range Selector reveal by words/characters/lines | `instrumented/testable` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, smoothness/randomize/wiggly approximations, glyph/word/line bbox units, selector-unit sidecars linked to glyph-run passports, and clipped-glyph selector units preserved for off-canvas text. | Add boundary fixtures and AE text reveal goldens; tune selector boundaries, order, smoothness, and whitespace treatment. |
+| `M05` | Text rasterization and glyph layout | `AE golden exists` | all three | Fontdue rasterization, glyph bbox/advance/char/word/line indices, Cyrillic-capable fallback; exact static `Montserrat-BoldItalic.ttf` and `Point-Light.ttf` fixture resolution; CoolType glyph metric targets selected for glyph id, widths, bboxes, baselines, feature processing, and CTText rows; layout sidecars emit glyph-run index, advance x/y, comp-space bbox/minmax/centers/baselines, baseline delta slot, metric source, and CoolType reference status. AE sourceRect-based text telemetry refs are imported for `TXT_010`/`TXT_020`/`TXT_030`/`TXT_040`. | Recover/import deeper CoolType glyph-id/coverage rows, then replace the remaining fontdue/sourceRect metric drift. Current blocker is glyph metrics and whitespace/sourceRect distribution, not missing font identity. |
+| `M06` | Text Range Selector reveal by words/characters/lines | `formula tuning` | `template_4th`, `scenes_3rd` | Start/End %, BasedOn, selector shapes, randomize/wiggly approximations, glyph/word/line bbox units, selector-unit sidecars linked to glyph-run passports, clipped-glyph selector units preserved for off-canvas text, and AE-backed Square Range Selector opacity behavior where full-range `Start=0 End=100` gives `weight=1` for every unit even when Smoothness is `100`. `TXT_020` primary visible mean improved `7.296998 -> 5.860491`; `GPH_010` improved `13.529264 -> 1.701600`. | Add focused AE selector boundary/weight refs beyond sourceRect passports; tune partial-edge conventions, line/word whitespace handling, and non-square shapes without hiding M05 glyph metric drift. |
 | `M07` | Character text animator position/scale/rotation/blur | `instrumented/testable` | `impulse_2nd` | Per-unit transforms, blur splat approximation, glyph-level unit rectangles, per-unit glyph refs, final matrix, opacity alpha scale, and blur radius telemetry. | Add AE glyph animator goldens and tune per-glyph transform center, blur kernel, opacity composition, and selector weighting. |
 | `M08` | Expression selector bounce | `implemented approximate` | `impulse_2nd` | Recognized generated `per_character_bounce` selector with deterministic native evaluator path. | Expression selector amount telemetry, AE bounce curve samples, tune delay/frequency/decay semantics. |
 | `M09` | Property expression subset: generated `edge_wobble` | `implemented approximate` | `scenes_3rd` | Named position-expression mode plus small scalar/Vec2 expression evaluator. | Per-property expression telemetry, AE samples for footage motion, tune waveform/envelope. |
@@ -102,16 +102,16 @@ docs/MASTER_CONFORMANCE_GATE.md
 Latest run:
 
 ```text
-target/ae_agents/p0_master_gate_m14_20260506/dashboard.md
+target/ae_agents/p2_text_m05_m06_square_montserrat_gate_20260507/dashboard.md
 ```
 
 Current dashboard:
 
 | Template | Gate status | Notes |
 | --- | --- | --- |
-| `template_4th` | `approximate` | Text/layout, Glow, Drop Shadow, collapse/text graph remain formula-tuning candidates. |
-| `impulse_2nd` | `approximate` | Point-Light glyph animator, expression selector, and Drop Shadow remain approximate. |
-| `scenes_3rd` | `approximate` | `TMP_020` is accepted; isolated `EFF_060` FracAll/pinning is now near-locked (`0.166828`, max `1..2`), while `STK_030` remains `1.017883` with spikes on frames `1` and `59`, so the next blocker is composed stack/edge timing rather than isolated Turbulent field math. |
+| `template_4th` | `approximate` | Glow is in formula tuning and text reveal now uses the corrected Square selector opacity behavior; remaining text residual is M05 CoolType/sourceRect glyph metrics and whitespace distribution. |
+| `impulse_2nd` | `approximate` | Point-Light glyph animator, expression selector, and Drop Shadow remain approximate; text reveal changes improved `GPH_010` but M07/M08 are still separate blockers. |
+| `scenes_3rd` | `approximate` | `TMP_020` is accepted; isolated `EFF_060` is accepted/near-locked, and `STK_030` is low-error approximate after the Turbulent bucket-world routing fix. |
 
 ### Step 1 Component Passport
 
