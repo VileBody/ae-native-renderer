@@ -56,11 +56,54 @@ def parse_ae_rows(path: Path, case_id: str) -> dict[str, Any]:
                 "hook": hook,
                 "regs": spans.get("regs"),
                 "memory_samples": spans.get("memory_samples"),
+                "actual_span_count": spans.get("actual_span_count"),
+                "actual_span_count_source": spans.get("actual_span_count_source"),
+                "actual_span_count_rax": spans.get("actual_span_count_rax"),
+                "actual_span_count_rsi": spans.get("actual_span_count_rsi"),
+                "actual_span_rbx_hex": spans.get("actual_span_rbx_hex"),
+                "actual_span_first_ptr": spans.get("actual_span_first_ptr"),
+                "actual_span_last_ptr": spans.get("actual_span_last_ptr"),
                 "candidates": spans.get("candidates") or [],
             }
             plane_probes.append(probe)
             plane_probe_hooks[hook] += 1
-            if hook == "TXT_ARE_PixelWriter8_type2_sample_byte_3ba80" and last_type2_row:
+            if hook in {
+                "TXT_ARE_PixelWriter8_type2_stride_add_3ba5b",
+                "TXT_ARE_PixelWriter8_type2_span_count_3ba71",
+                "TXT_ARE_PixelWriter8_type2_span_ready_3ba74",
+            } and last_type2_row:
+                actual_hex = spans.get("actual_span_rbx_hex")
+                actual_count = (
+                    spans.get("actual_span_count")
+                    if spans.get("actual_span_count") is not None
+                    else spans.get("actual_span_count_rsi")
+                )
+                if actual_count is None:
+                    actual_count = spans.get("actual_span_count_rax")
+                row_coverage_len = last_type2_row.get("coverage_len")
+                sample_count = actual_count
+                if row_coverage_len is not None:
+                    sample_count = int(row_coverage_len)
+                if not isinstance(actual_hex, str) and hook == "TXT_ARE_PixelWriter8_type2_stride_add_3ba5b":
+                    memory_samples = spans.get("memory_samples") or {}
+                    rbx_hex = memory_samples.get("rbx_u8_32")
+                    if isinstance(rbx_hex, str):
+                        if sample_count is not None:
+                            actual_hex = rbx_hex[: max(0, int(sample_count)) * 2]
+                        else:
+                            actual_hex = rbx_hex
+                elif isinstance(actual_hex, str) and sample_count is not None:
+                    actual_hex = actual_hex[: max(0, int(sample_count)) * 2]
+                if isinstance(actual_hex, str):
+                    last_type2_row["actual_coverage_sample_hex"] = actual_hex
+                    last_type2_row["actual_coverage_sample_count"] = (
+                        sample_count if sample_count is not None else len(actual_hex) // 2
+                    )
+                    last_type2_row["actual_coverage_first_ptr"] = spans.get("actual_span_first_ptr")
+                    last_type2_row["actual_coverage_last_ptr"] = spans.get("actual_span_last_ptr")
+            elif hook == "TXT_ARE_PixelWriter8_type2_sample_byte_3ba80" and last_type2_row:
+                if last_type2_row.get("actual_coverage_sample_hex"):
+                    continue
                 memory_samples = spans.get("memory_samples") or {}
                 regs = spans.get("regs") or {}
                 rbx_hex = memory_samples.get("rbx_u8_32")
@@ -239,6 +282,7 @@ def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
                     "ae_hex": str(ae_hex)[:96],
                     "native_hex": str(native_hex)[:96],
                 })
+    normalized = compare_normalized_rows(ae_type2, native_rows)
     return {
         "schema": "ae-native-renderer.text-row-span-compare.v1",
         "ae_type2_rows": len(ae_type2),
@@ -250,12 +294,66 @@ def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
         "coverage_sample_mismatches": sample_mismatches,
         "coverage_sample_missing": sample_missing,
         "coverage_sample_mismatch_examples": sample_mismatch_examples,
+        "normalized_shape": normalized,
         "ae_only_examples": [
             {"y": k[0], "start_x": k[1], "end_x": k[2], "count": v}
             for k, v in ae_only.most_common(12)
         ],
         "native_only_examples": [
             {"y": k[0], "start_x": k[1], "end_x": k[2], "count": v}
+            for k, v in native_only.most_common(12)
+        ],
+    }
+
+
+def compare_normalized_rows(ae_rows: list[dict[str, Any]], native_rows: list[dict[str, Any]]) -> dict[str, Any]:
+    def normalized_keys(rows: list[dict[str, Any]]) -> tuple[Counter[tuple[int, int, int]], dict[str, Any]]:
+        usable = [
+            row
+            for row in rows
+            if row.get("y") is not None
+            and row.get("start_x") is not None
+            and row.get("end_x") is not None
+        ]
+        if not usable:
+            return Counter(), {"row_count": 0}
+        min_y = min(int(row["y"]) for row in usable)
+        min_x = min(int(row["start_x"]) for row in usable)
+        max_y = max(int(row["y"]) for row in usable)
+        max_x = max(int(row["end_x"]) for row in usable)
+        keys = Counter(
+            (
+                int(row["y"]) - min_y,
+                int(row["start_x"]) - min_x,
+                int(row["end_x"]) - min_x,
+            )
+            for row in usable
+        )
+        return keys, {
+            "row_count": len(usable),
+            "origin": {"y": min_y, "x": min_x},
+            "extent": {"height": max_y - min_y + 1, "width": max_x - min_x},
+            "unique_y_start_end": len(keys),
+        }
+
+    ae_keys, ae_stats = normalized_keys(ae_rows)
+    native_keys, native_stats = normalized_keys(native_rows)
+    common = ae_keys & native_keys
+    ae_only = ae_keys - native_keys
+    native_only = native_keys - ae_keys
+    return {
+        "schema": "ae-native-renderer.text-row-span-normalized-shape.v1",
+        "ae": ae_stats,
+        "native": native_stats,
+        "common_y_start_end": sum(common.values()),
+        "ae_only_y_start_end": sum(ae_only.values()),
+        "native_only_y_start_end": sum(native_only.values()),
+        "ae_only_examples": [
+            {"norm_y": k[0], "start_x": k[1], "end_x": k[2], "count": v}
+            for k, v in ae_only.most_common(12)
+        ],
+        "native_only_examples": [
+            {"norm_y": k[0], "start_x": k[1], "end_x": k[2], "count": v}
             for k, v in native_only.most_common(12)
         ],
     }

@@ -16,6 +16,8 @@ Local `TXT.dll` disassembly for `TXT_ARE_PixelWriter8_span_3b8c0`:
 18003ba2e  imul    rbx, qword ptr [rdx + 0x20] ; row stride in hot formula
 18003ba42  add     rbx, qword ptr [rdx + 0x10] ; coverage base
 18003ba5b  add     rdi, qword ptr [rdx + 0x20] ; output PF rowbytes
+18003ba64  sub     eax, r8d                    ; span count candidate
+18003ba71  movsxd  rsi, eax                    ; span count for loop
 18003ba80  movzx   r8d, byte ptr [rbx]         ; actual coverage byte
 18003ba90  call    0x18003c980                 ; covered pixel blend
 ```
@@ -24,8 +26,14 @@ The earlier `3ba1b` target was useful but incomplete: it fires before `RDX`
 becomes the coverage plane. The actionable dynamic hooks are now:
 
 - `TXT.dll+0x3ba2e`: coverage-plane stride multiplication point.
-- `TXT.dll+0x3ba5b`: output PF-world rowbytes point.
+- `TXT.dll+0x3ba5b`: post coverage-pointer calculation. At this point
+  `RBX` points at the bytes consumed by the pixel loop. The parser clamps the
+  sample length to the row bounds from `3b8c0` (`end_x - start_x`) because the
+  register count can include a loop guard byte on stroke rows.
 - `TXT.dll+0x3ba80`: actual coverage-byte read point.
+- `TXT.dll+0x3ba71`/`0x3ba74`: installed successfully, but did not execute as
+  Frida Interceptor enter events in the focused GUI traces. They are kept as
+  static anchors, not as the primary row-capture mechanism.
 
 ## Live Trace
 
@@ -125,6 +133,72 @@ The current AE job only emitted the first type-2 span for this pack on the
 GUI API route, so a dense multi-row fill capture still needs a smaller
 single-comp JSX or a trace mode that does not stop at the first emitted render.
 
+Fourth trace:
+
+```text
+target/dynamic_tools_85/p2_cov_w_span_count_trace_20260508_001/COV_W.jsonl
+target/ae_agents/p2_row_compare_covw_span_count_20260508/ae_rows.json
+target/ae_agents/p2_row_compare_stroke_stride_fallback_20260508/ae_rows.json
+```
+
+This pass moved the scalable row capture from per-pixel `3ba80` reads to the
+already-hit `3ba5b` point. `3ba5b` exposes the same authoritative byte stream
+via `RBX`, while `3b8c0` supplies the row length:
+
+```json
+{
+  "case": "COV_W",
+  "role": "fill",
+  "y": 0,
+  "start_x": 0,
+  "end_x": 16,
+  "actual_coverage_sample_hex": "2440404040404040404040404040403c"
+}
+```
+
+Re-parsing the stroke trace through the same rule preserves the previous
+per-pixel answer exactly:
+
+```json
+{
+  "case": "STR_LIVE_STROKE_ONLY",
+  "role": "stroke",
+  "y": 7,
+  "start_x": 6,
+  "end_x": 37,
+  "actual_coverage_sample_hex": "22404040404040404040404040404040404040404040404040404040404008"
+}
+```
+
+Dense legacy span trace plus native row diff:
+
+```text
+target/dynamic_tools_85/p2_shared_are_spans_covw_stride_20260507/COV_W.jsonl
+target/ae_agents/p2_cov_w_native_scene_20260508/rendered/text_telemetry.jsonl
+target/ae_agents/p2_row_compare_covw_dense_native_20260508/row_compare.json
+```
+
+The old dense trace has no `3ba5b` byte probe, but it still exposes AE's
+type-2 row topology. Comparing that topology against native `coverage_rows`
+after normalizing both shapes to their own top-left origin gives the current
+tuning target:
+
+```json
+{
+  "ae": { "row_count": 409, "extent": { "height": 68, "width": 109 } },
+  "native": { "row_count": 203, "extent": { "height": 68, "width": 108 } },
+  "common_y_start_end": 1,
+  "ae_only_y_start_end": 408,
+  "native_only_y_start_end": 202
+}
+```
+
+The native outline fallback is therefore not just slightly shifted; it merges
+many AE micro-spans into wider runs and misses AE's row-edge topology. This is
+the concrete next implementation target for CoolType-compatible coverage:
+same glyph id and layout are already known, but the coverage row generator
+needs AE-style hinting/AA/subpixel segmentation.
+
 ## Recovered Semantics
 
 For this live stroke case:
@@ -133,6 +207,9 @@ For this live stroke case:
   `base_0x10=0x16210976720`, `stride_0x20=0`, `stride_0x30=144`.
 - `3ba80` proves the actual read pointer sequence starts at
   `base_0x10 + start_x`, then increments by one byte per covered pixel.
+- `3ba5b` is the scalable row-level capture point for the same bytes. It avoids
+  a per-pixel Frida event storm while still reading the hot `RBX` coverage
+  pointer.
 - Therefore `+0x30` is a useful plane snapshot field, but not a safe proxy for
   the hot coverage-byte address in every text path.
 - Formula tuning must prefer `actual_coverage_sample_hex` when present; a fill
@@ -144,12 +221,16 @@ For this live stroke case:
 
 - `scripts/ae_trace_cooltype_text.py`
   - Added hooks for `3ba2e`, `3ba5b`, and `3ba80`.
+  - Added span-count instrumentation for `3ba5b` and static anchors for
+    `3ba71`/`3ba74`.
   - Added wide register snapshots and memory samples for the type-2 path.
 
 - `scripts/compare_text_row_spans.py`
   - Added AE row-span parser.
   - Added plane-probe summaries by hook.
   - Added reconstruction of `actual_coverage_sample_hex` from `3ba80`.
+  - Added scalable reconstruction from `3ba5b` `RBX` bytes, clamped by the
+    `3b8c0` row bounds.
 
 ## Status
 
@@ -159,14 +240,13 @@ Closed in this pass:
 
 - Static/dynamic location of actual coverage-byte read.
 - Proof that `3ba80` is the authoritative byte stream.
+- Scalable row-level capture via `3ba5b` without per-pixel event volume.
 - Parser support for row-level AE spans plus actual sample bytes.
+- Normalized AE-vs-native coverage-row topology diff for `COV_W`.
 
 Still open:
 
-- Run the same `3ba80` sample-byte hook on a fill case with many type-2 rows.
-  Current fill captures (`TRFLIVE_*`, `COV_W`) prove first-row byte parity, but
-  the GUI API route emitted only one type-2 span for these focused packs.
 - Compare `actual_coverage_sample_hex` against native `coverage_rows` for
-  matched glyph rows.
+  matched glyph rows in a new dense trace that includes `3ba5b`.
 - Use the diff to tune native coverage generation/hinting instead of the
   legacy plane `+0x30` heuristic.

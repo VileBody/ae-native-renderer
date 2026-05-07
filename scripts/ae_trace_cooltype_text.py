@@ -86,7 +86,9 @@ const TXT_HOOKS = [
   {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_load_3ba1b", offset: 0x03ba1b, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_stride_mul_3ba2e", offset: 0x03ba2e, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_stride_add_3ba5b", offset: 0x03ba5b, surface: "txt_are_spans"},
-  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_sample_byte_3ba80", offset: 0x03ba80, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_span_count_3ba71", offset: 0x03ba71, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_span_ready_3ba74", offset: 0x03ba74, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_sample_byte_3ba80", offset: 0x03ba80, surface: "txt_are_pixel_samples"},
   {module: "TXT.dll", name: "TXT_PlayCharOutlines", offset: 0x0416c0, surface: "txt_play_char_outlines"},
   {module: "TXT.dll", name: "TXT_PlayCharOutlines_impl", offset: 0x042ab0, surface: "txt_play_char_outlines_impl"},
   {module: "TXT.dll", name: "TXT_FUN_sourceRect_batch_bboxes_214120", offset: 0x214120, surface: "txt_source_rect_batch_bboxes"},
@@ -192,6 +194,16 @@ function hookEnabled(hook) {
       "txt_drawchar_are",
       "txt_drawchar_outline_core",
       "txt_are_spans",
+      "txt_pf_transferrect"
+    ].indexOf(hook.surface) !== -1;
+  }
+  if (hookProfile === "txt-are-byte-samples") {
+    return [
+      "bee_text_drawchar_target",
+      "txt_drawchar_are",
+      "txt_drawchar_outline_core",
+      "txt_are_spans",
+      "txt_are_pixel_samples",
       "txt_pf_transferrect"
     ].indexOf(hook.surface) !== -1;
   }
@@ -660,7 +672,34 @@ function regSnapshotWide(ctx) {
   };
 }
 
+function smallRegisterCount(v) {
+  try {
+    const n = ptr(v).toInt32();
+    if (n >= 0 && n <= 4096) {
+      return n;
+    }
+  } catch (e) {
+  }
+  return null;
+}
+
+function type2SpanCount(ctx, hook) {
+  if (hook.name === "TXT_ARE_PixelWriter8_type2_stride_add_3ba5b") {
+    return {count: smallRegisterCount(ctx.rax), source: "rax"};
+  }
+  if (hook.name === "TXT_ARE_PixelWriter8_type2_span_count_3ba71") {
+    return {count: smallRegisterCount(ctx.rax), source: "rax"};
+  }
+  if (hook.name === "TXT_ARE_PixelWriter8_type2_span_ready_3ba74") {
+    return {count: smallRegisterCount(ctx.rsi), source: "rsi"};
+  }
+  return {count: null, source: null};
+}
+
 function dumpTxtArePlaneLoadProbe(ctx, hook) {
+  const spanInfo = type2SpanCount(ctx, hook);
+  const spanCount = spanInfo.count;
+  const spanSampleCount = spanCount === null ? null : Math.min(spanCount, 128);
   return {
     hook: hook.name,
     regs: regSnapshotWide(ctx),
@@ -671,6 +710,13 @@ function dumpTxtArePlaneLoadProbe(ctx, hook) {
       rdx_u8_32: memoryBytes(ptr(ctx.rdx), 32),
       rdi_u8_32: memoryBytes(ptr(ctx.rdi), 32)
     },
+    actual_span_count: spanCount,
+    actual_span_count_source: spanInfo.source,
+    actual_span_count_rax: smallRegisterCount(ctx.rax),
+    actual_span_count_rsi: smallRegisterCount(ctx.rsi),
+    actual_span_rbx_hex: spanSampleCount === null ? null : memoryBytes(ptr(ctx.rbx), spanSampleCount),
+    actual_span_first_ptr: ptr(ctx.rbx).toString(),
+    actual_span_last_ptr: spanCount === null || spanCount <= 0 ? null : ptr(ctx.rbx).add(spanCount - 1).toString(),
     candidates: [
       dumpPlanePointerCandidate("rax", ptr(ctx.rax)),
       dumpPlanePointerCandidate("rbx", ptr(ctx.rbx)),
