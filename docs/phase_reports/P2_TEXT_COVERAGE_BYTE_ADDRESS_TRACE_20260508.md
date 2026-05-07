@@ -178,10 +178,14 @@ target/ae_agents/p2_cov_w_native_scene_20260508/rendered/text_telemetry.jsonl
 target/ae_agents/p2_row_compare_covw_dense_native_20260508/row_compare.json
 ```
 
-The old dense trace has no `3ba5b` byte probe, but it still exposes AE's
-type-2 row topology. Comparing that topology against native `coverage_rows`
-after normalizing both shapes to their own top-left origin gives the current
-tuning target:
+The old dense trace has no `3ba5b` byte probe, but it still exposes AE's span
+topology. A direct type-2-only comparison is misleading because AE uses
+`span_type=1` for solid ink runs and `span_type=2` for byte-coverage edge runs.
+The parser now merges adjacent `type2 + type1 + type2` spans into AE ink rows
+and skips `type0` transparent gaps before comparing against native
+`coverage_rows`.
+
+The old, intentionally narrow type-2-only view:
 
 ```json
 {
@@ -193,11 +197,23 @@ tuning target:
 }
 ```
 
-The native outline fallback is therefore not just slightly shifted; it merges
-many AE micro-spans into wider runs and misses AE's row-edge topology. This is
-the concrete next implementation target for CoolType-compatible coverage:
-same glyph id and layout are already known, but the coverage row generator
-needs AE-style hinting/AA/subpixel segmentation.
+The correct merged-ink view:
+
+```json
+{
+  "ae": { "row_count": 202, "extent": { "height": 68, "width": 109 } },
+  "native": { "row_count": 203, "extent": { "height": 68, "width": 108 } },
+  "common_y_start_end": 140,
+  "ae_only_y_start_end": 62,
+  "native_only_y_start_end": 63
+}
+```
+
+That is the useful result: the native outline fallback is not wildly wrong in
+row topology after AE solid spans are modeled. The remaining mismatch is mostly
+edge placement and width by one pixel on many rows, which points to
+CoolType-compatible hinting/AA/subpixel rounding rather than a completely
+different fill/composite path.
 
 ## Recovered Semantics
 
@@ -231,6 +247,8 @@ For this live stroke case:
   - Added reconstruction of `actual_coverage_sample_hex` from `3ba80`.
   - Added scalable reconstruction from `3ba5b` `RBX` bytes, clamped by the
     `3b8c0` row bounds.
+  - Added AE ink-row reconstruction by merging solid `type1` spans with
+    adjacent byte-coverage `type2` spans.
 
 ## Status
 
@@ -242,7 +260,7 @@ Closed in this pass:
 - Proof that `3ba80` is the authoritative byte stream.
 - Scalable row-level capture via `3ba5b` without per-pixel event volume.
 - Parser support for row-level AE spans plus actual sample bytes.
-- Normalized AE-vs-native coverage-row topology diff for `COV_W`.
+- Normalized AE-vs-native merged-ink topology diff for `COV_W`.
 
 Still open:
 

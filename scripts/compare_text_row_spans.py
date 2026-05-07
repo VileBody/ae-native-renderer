@@ -173,16 +173,19 @@ def parse_ae_rows(path: Path, case_id: str) -> dict[str, Any]:
     for row in rows:
         row.pop("_actual_coverage_bytes", None)
         row.pop("_actual_coverage_ptrs", None)
+    ink_rows = build_ae_ink_rows(rows)
 
     return {
         "schema": "ae-native-renderer.text-row-span-parse.v1",
         "case": case_id,
         "source_path": str(path),
         "rows": rows,
+        "ink_rows": ink_rows,
         "plane_probes": plane_probes,
         "summary": {
             "row_count": len(rows),
             "type2_row_count": sum(1 for row in rows if row.get("span_type") == 2),
+            "ink_row_count": len(ink_rows),
             "hook_counts": dict(hook_counts),
             "span_type_counts": dict(span_types),
             "source_pixel_counts": dict(source_pixels),
@@ -194,6 +197,51 @@ def parse_ae_rows(path: Path, case_id: str) -> dict[str, Any]:
             "plane_probe_hooks": dict(plane_probe_hooks),
         },
     }
+
+
+def build_ae_ink_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    ink_rows: list[dict[str, Any]] = []
+    current: dict[str, Any] | None = None
+    for row in rows:
+        span_type = row.get("span_type")
+        if span_type not in {1, 2}:
+            if current is not None:
+                ink_rows.append(current)
+                current = None
+            continue
+        y = row.get("y")
+        start_x = row.get("start_x")
+        end_x = row.get("end_x")
+        if y is None or start_x is None or end_x is None:
+            continue
+        part = {
+            "span_type": span_type,
+            "start_x": start_x,
+            "end_x": end_x,
+            "coverage_hex": row.get("actual_coverage_sample_hex")
+            or row.get("coverage_sample_hex")
+            or ("ff" * max(0, int(end_x) - int(start_x)) if span_type == 1 else None),
+        }
+        if current is not None and current.get("y") == y and current.get("end_x") == start_x:
+            current["end_x"] = end_x
+            current["coverage_len"] = int(current["end_x"]) - int(current["start_x"])
+            current.setdefault("parts", []).append(part)
+        else:
+            if current is not None:
+                ink_rows.append(current)
+            current = {
+                "schema": "ae-native-renderer.ae-text-ink-row-span.v1",
+                "source": "ae_txt_are",
+                "case": row.get("case"),
+                "y": y,
+                "start_x": start_x,
+                "end_x": end_x,
+                "coverage_len": int(end_x) - int(start_x),
+                "parts": [part],
+            }
+    if current is not None:
+        ink_rows.append(current)
+    return ink_rows
 
 
 def parse_native_rows(path: Path, case_id: str) -> dict[str, Any]:
@@ -246,6 +294,7 @@ def parse_native_rows(path: Path, case_id: str) -> dict[str, Any]:
 
 def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
     ae_type2 = [row for row in ae.get("rows", []) if row.get("span_type") == 2]
+    ae_ink_rows = ae.get("ink_rows") or []
     native_rows = native.get("rows", [])
     ae_keys = Counter((row.get("y"), row.get("start_x"), row.get("end_x")) for row in ae_type2)
     native_keys = Counter((row.get("y"), row.get("start_x"), row.get("end_x")) for row in native_rows)
@@ -283,6 +332,7 @@ def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
                     "native_hex": str(native_hex)[:96],
                 })
     normalized = compare_normalized_rows(ae_type2, native_rows)
+    normalized_ink = compare_normalized_rows(ae_ink_rows, native_rows)
     return {
         "schema": "ae-native-renderer.text-row-span-compare.v1",
         "ae_type2_rows": len(ae_type2),
@@ -295,6 +345,7 @@ def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
         "coverage_sample_missing": sample_missing,
         "coverage_sample_mismatch_examples": sample_mismatch_examples,
         "normalized_shape": normalized,
+        "normalized_ink_shape": normalized_ink,
         "ae_only_examples": [
             {"y": k[0], "start_x": k[1], "end_x": k[2], "count": v}
             for k, v in ae_only.most_common(12)
