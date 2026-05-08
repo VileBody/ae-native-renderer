@@ -268,3 +268,112 @@ Still open:
   matched glyph rows in a new dense trace that includes `3ba5b`.
 - Use the diff to tune native coverage generation/hinting instead of the
   legacy plane `+0x30` heuristic.
+
+## TXT Path Builder Direct Trace Follow-up
+
+New direct trace:
+
+```text
+target/dynamic_tools_85/p2_txt_are_producer_direct_covw_20260508_001/COV_W.jsonl
+```
+
+Recovered from `TXT_ARE_Render_8bpc_fill_3d200` for `COV_W`:
+
+```json
+{
+  "clip": { "top": 0, "left": 0, "bottom": 68, "right": 109 },
+  "matrix6_f32_0x68": [1, 0, 0, 1, -9.055999755859375, 68],
+  "fill_color": [1, 1, 1, 1],
+  "stroke_enabled": 0
+}
+```
+
+Recovered from `TXT_ARE_PathBuilder_40580`:
+
+- glyph id `331` (`Montserrat-BoldItalic` `W`);
+- `18` path commands;
+- coordinates match the TTF glyph outline scaled by `96 / 1000`, reversed and
+  with y negated.
+
+This closes the previous "unknown outline producer" suspicion for this glyph:
+the `W` path points are not hidden CoolType grid-fit points. The mismatch was
+the coverage origin and fixed-subrow phase.
+
+Native change:
+
+- `crates/text-engine/src/rasterize.rs` now derives coverage origin in the same
+  coordinate domain as AE:
+
+```text
+abs_left  = floor(glyph_x + bbox_x_min_scaled)
+abs_right = ceil(glyph_x + bbox_x_max_scaled)
+abs_top   = floor(baseline - bbox_y_max_scaled)
+abs_bot   = ceil(baseline - bbox_y_min_scaled)
+
+local_x_origin = abs_left - glyph_x
+local_y_max    = baseline - abs_top
+```
+
+For the traced `COV_W` this gives:
+
+```text
+glyph_x=72.94400024414062
+local_x_origin=9.055999755859375
+local_y_max=68
+width=109
+height=68
+```
+
+which matches the Frida matrix exactly. The ARE scanline loop now samples the
+lower edge of each fixed subrow:
+
+```text
+py = y_max - row - (subrow + 1) / 16
+```
+
+Validation:
+
+```text
+cargo test -p text-engine recovered_txt_are_origin_and_subrow_phase_match_cov_w_trace -- --nocapture
+cargo test -p text-engine -- --nocapture
+cargo test -p render-core text -- --nocapture
+cargo test -p render-cli all_manifest_cases_have_native_recipes -- --nocapture
+cargo run -q -p render-cli -- render \
+  --scene target/ae_agents/p2_cov_w_native_scene_floor_end_20260508/scene.json \
+  --out target/ae_agents/p2_cov_w_origin_phase_native_20260508/rendered
+python3 scripts/compare_text_row_spans.py \
+  --case COV_W \
+  --ae-jsonl target/dynamic_tools_85/p2_shared_are_spans_covw_stride_20260507/COV_W.jsonl \
+  --native-text-telemetry target/ae_agents/p2_cov_w_origin_phase_native_20260508/rendered/text_telemetry.jsonl \
+  --out target/ae_agents/p2_row_compare_covw_origin_phase_dense_20260508/row_compare.json
+cargo run -q -p render-cli -- conformance-pack \
+  --case TXT_010 --case TXT_020 --case TXT_030 --case TXT_040 --case GPH_010 \
+  --out target/ae_agents/p2_text_origin_phase_gate_20260508
+```
+
+`COV_W` dense row diff improved:
+
+```text
+before: common ink rows 180 / 202, byte exact 0 / 2
+after:  common ink rows 199 / 202, byte exact 2 / 3
+```
+
+The first two row-0 byte spans now match AE exactly:
+
+```text
+AE/native row0 0..16:  2440404040404040404040404040403c
+AE/native row0 46..62: 013e4040404040404040404040404024
+```
+
+Remaining open:
+
+- three normalized ink rows differ by one right-edge pixel:
+  - `y=16, x=83..101` vs native `83..100`;
+  - `y=52, x=53..82` vs native `53..81`;
+  - `y=62, x=8..30` vs native `8..29`;
+- the dense trace's third row-0 edge span says final byte `04`, while native
+  produces `02`; this third byte is from the older dense span route and still
+  needs an authoritative `3ba5b`/`3ba80` dense capture before changing formula.
+
+Status: P2 text coverage is now in narrow formula-tuning territory, not
+producer-substrate discovery, for the `Montserrat W` coverage case.

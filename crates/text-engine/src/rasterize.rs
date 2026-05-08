@@ -293,6 +293,8 @@ fn outline_coverage(
         font_key: font_key.to_string(),
         glyph_id,
         font_size_bits: font_size.to_bits(),
+        glyph_x_bits: glyph_x.to_bits(),
+        baseline_bits: baseline.to_bits(),
         supersample: OUTLINE_COVERAGE_SUPERSAMPLE,
     };
     if let Some(mask) = outline_coverage_cache()
@@ -306,6 +308,8 @@ fn outline_coverage(
     let mask = Arc::new(build_outline_coverage_mask(
         face,
         glyph_id,
+        glyph_x,
+        baseline,
         font_size,
         OUTLINE_COVERAGE_SUPERSAMPLE,
     )?);
@@ -321,6 +325,8 @@ struct OutlineCoverageKey {
     font_key: String,
     glyph_id: u16,
     font_size_bits: u32,
+    glyph_x_bits: u32,
+    baseline_bits: u32,
     supersample: u32,
 }
 
@@ -345,7 +351,7 @@ impl CoverageMask {
             bitmap: self.bitmap.clone(),
             backend: "ttf_outline_are_scanline_16x",
             supersample: self.supersample,
-            origin_source: "ttf_outline_bbox_baseline",
+            origin_source: "txt_are_integer_world_bbox_origin",
             nonzero_pixels: self.nonzero_pixels,
         }
     }
@@ -359,6 +365,8 @@ fn outline_coverage_cache() -> &'static Mutex<HashMap<OutlineCoverageKey, Arc<Co
 fn build_outline_coverage_mask(
     face: &Face<'_>,
     glyph_id: u16,
+    glyph_x: f32,
+    baseline: f32,
     font_size: f32,
     supersample: u32,
 ) -> Option<CoverageMask> {
@@ -375,12 +383,18 @@ fn build_outline_coverage_mask(
     }
 
     let scale = font_size / units_per_em;
-    let x_min = (bbox.x_min as f32 * scale).floor();
-    let x_max = (bbox.x_max as f32 * scale).ceil();
-    let y_min = (bbox.y_min as f32 * scale).floor();
-    let y_max = (bbox.y_max as f32 * scale).ceil();
-    let width = (x_max - x_min).max(0.0) as usize;
-    let height = (y_max - y_min).max(0.0) as usize;
+    let bbox_x_min = bbox.x_min as f32 * scale;
+    let bbox_x_max = bbox.x_max as f32 * scale;
+    let bbox_y_min = bbox.y_min as f32 * scale;
+    let bbox_y_max = bbox.y_max as f32 * scale;
+    let abs_left = (glyph_x + bbox_x_min).floor();
+    let abs_right = (glyph_x + bbox_x_max).ceil();
+    let abs_top = (baseline - bbox_y_max).floor();
+    let abs_bottom = (baseline - bbox_y_min).ceil();
+    let x_min = abs_left - glyph_x;
+    let y_max = baseline - abs_top;
+    let width = (abs_right - abs_left).max(0.0) as usize;
+    let height = (abs_bottom - abs_top).max(0.0) as usize;
     if width == 0 || height == 0 {
         return None;
     }
@@ -450,7 +464,8 @@ fn build_are_scanline_coverage(
         let mut row_fixed = vec![0u16; width];
         for sy in 0..ss {
             // ARE.dll+0x76dc seeds 16 row buckets at y*16+subrow; +0x75d0 sums fixed16 spans.
-            let py = y_max - by as f32 - sy as f32 / ss as f32;
+            // TXT traces show the coverage plane samples the lower edge of each fixed subrow.
+            let py = y_max - by as f32 - (sy as f32 + 1.0) / ss as f32;
             for (start_x, end_x) in filled_scanline_intervals(outline, py / scale, scale) {
                 let start_fixed = ((start_x - x_min) * ss as f32).floor() as i32;
                 let end_fixed = ((end_x - x_min) * ss as f32).floor() as i32 + 1;
@@ -997,6 +1012,37 @@ mod tests {
     }
 
     #[test]
+    fn recovered_txt_are_origin_and_subrow_phase_match_cov_w_trace() {
+        let Some(path) = montserrat_bolditalic_fixture() else {
+            return;
+        };
+        let bytes = fs::read(path).unwrap();
+        let face = Face::parse(&bytes, 0).unwrap();
+        let mask = build_outline_coverage_mask(
+            &face,
+            331,
+            72.94400024414062,
+            128.0,
+            96.0,
+            OUTLINE_COVERAGE_SUPERSAMPLE,
+        )
+        .unwrap();
+
+        assert_eq!(mask.width, 109);
+        assert_eq!(mask.height, 68);
+        assert!((mask.x_min - 9.055999755859375).abs() < 0.00001);
+        assert_eq!(mask.y_max, 68.0);
+
+        let first_row = &mask.bitmap[..mask.width];
+        let spans = row_nonzero_spans(first_row);
+        assert_eq!(spans[0], (0, 16, "2440404040404040404040404040403c".to_string()));
+        assert_eq!(spans[1], (46, 62, "013e4040404040404040404040404024".to_string()));
+        assert_eq!(spans[2].0, 92);
+        assert_eq!(spans[2].1, 109);
+        assert!(spans[2].2.starts_with("1e404040404040404040404040404040"));
+    }
+
+    #[test]
     fn recovered_txt_are_pixel8_blend_matches_reverse_formula() {
         assert_eq!(
             blend_text_pixel_ae_u8([10, 20, 30, 128], [200, 40, 80, 128], 64),
@@ -1057,5 +1103,23 @@ mod tests {
         assert_eq!(spans[1].start_x, 11);
         assert_eq!(spans[1].end_x, 13);
         assert_eq!(spans[1].coverage_hex.as_deref(), Some("ff01"));
+    }
+
+    fn row_nonzero_spans(row: &[u8]) -> Vec<(usize, usize, String)> {
+        let mut spans = Vec::new();
+        let mut index = 0usize;
+        while index < row.len() {
+            if row[index] == 0 {
+                index += 1;
+                continue;
+            }
+            let start = index;
+            index += 1;
+            while index < row.len() && row[index] != 0 {
+                index += 1;
+            }
+            spans.push((start, index, bytes_hex(&row[start..index])));
+        }
+        spans
     }
 }

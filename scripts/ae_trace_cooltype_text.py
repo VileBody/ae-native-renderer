@@ -192,6 +192,11 @@ const TXT_RESOLVED_POINTER_HOOKS = [
 
 const ARE_HOOKS = [
   {module: "ARE.dll", name: "ARE_row_getter_8230", offset: 0x008230, surface: "are_row_getter"},
+  {module: "ARE.dll", name: "ARE_event_start_4a04", offset: 0x004a04, surface: "are_event_writer"},
+  {module: "ARE.dll", name: "ARE_event_end_4a80", offset: 0x004a80, surface: "are_event_writer"},
+  {module: "ARE.dll", name: "ARE_event_cursor_advance_6920", offset: 0x006920, surface: "are_event_writer"},
+  {module: "ARE.dll", name: "ARE_event_cursor_insert_6998", offset: 0x006998, surface: "are_event_writer"},
+  {module: "ARE.dll", name: "ARE_event_chunk_merge_84e8", offset: 0x0084e8, surface: "are_event_writer"},
   {module: "ARE.dll", name: "ARE_sampler_eval_row_75d0", offset: 0x0075d0, surface: "are_sampler"},
   {module: "ARE.dll", name: "ARE_sampler_prepare_76dc", offset: 0x0076dc, surface: "are_sampler"},
   {module: "ARE.dll", name: "ARE_edge_project_78e4", offset: 0x0078e4, surface: "are_sampler"},
@@ -261,6 +266,45 @@ function hookEnabled(hook) {
       "TXT_ARE_OutputComposite_8bpc_3de50",
       "TXT_ARE_PixelWriter8_span_3b8c0"
     ].indexOf(hook.name) !== -1;
+  }
+  if (hookProfile === "txt-are-producer-deep") {
+    if ([
+      "bee_text_drawchar_target",
+      "txt_drawchar_are",
+      "txt_drawchar_outline_core",
+      "txt_are_producer",
+      "txt_are_producer_callsite",
+      "txt_are_producer_resolved"
+    ].indexOf(hook.surface) !== -1) {
+      return true;
+    }
+    return [
+      "TXT_ARE_Render_8bpc_fill_3d200",
+      "TXT_ARE_Render_8bpc_stroke_3d960",
+      "TXT_ARE_OutputComposite_8bpc_3de50"
+    ].indexOf(hook.name) !== -1;
+  }
+  if (hookProfile === "txt-are-producer-direct") {
+    if ([
+      "bee_text_drawchar_target",
+      "txt_drawchar_are",
+      "txt_drawchar_outline_core",
+      "txt_are_producer",
+      "txt_are_producer_callsite",
+      "txt_pf_transferrect"
+    ].indexOf(hook.surface) !== -1) {
+      return true;
+    }
+    return [
+      "TXT_ARE_Render_8bpc_3c360",
+      "TXT_ARE_Render_8bpc_fill_3d200",
+      "TXT_ARE_Render_8bpc_stroke_3d960",
+      "TXT_ARE_OutputComposite_8bpc_3de50",
+      "TXT_ARE_PixelWriter8_span_3b8c0"
+    ].indexOf(hook.name) !== -1;
+  }
+  if (hookProfile === "are-event-writer") {
+    return hook.surface === "are_event_writer";
   }
   if (hookProfile === "are-sampler") {
     return hook.surface === "are_sampler" || hook.surface === "are_row_getter";
@@ -776,6 +820,81 @@ function dumpAreSamplerObject(p) {
   };
 }
 
+function dumpAreEventList(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const chunk18 = safeReadPointer(q.add(0x18));
+  const cursor20 = safeReadPointer(q.add(0x20));
+  const cursor28 = safeReadPointer(q.add(0x28));
+  const tail30 = safeReadPointer(q.add(0x30));
+  return {
+    ptr: q.toString(),
+    words_0x00_0x50: memoryWords(q, 10),
+    chunk_0x18: chunk18 === null ? null : chunk18.toString(),
+    cursor_0x20: cursor20 === null ? null : cursor20.toString(),
+    cursor_0x28: cursor28 === null ? null : cursor28.toString(),
+    tail_0x30: tail30 === null ? null : tail30.toString(),
+    chunk_words: chunk18 === null ? [] : memoryWords(chunk18, 8),
+    cursor20_words: cursor20 === null ? [] : memoryWords(cursor20, 8),
+    cursor28_words: cursor28 === null ? [] : memoryWords(cursor28, 8),
+    tail30_words: tail30 === null ? [] : memoryWords(tail30, 8)
+  };
+}
+
+function dumpAreEventCursor(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const current = safeReadPointer(q);
+  const chunk = safeReadPointer(q.add(Process.pointerSize));
+  return {
+    ptr: q.toString(),
+    current_0x00: current === null ? null : current.toString(),
+    current_value_s32: current === null ? null : safeReadS32(current),
+    current_words: current === null ? [] : memoryWords(current, 8),
+    chunk_0x08: chunk === null ? null : chunk.toString(),
+    chunk_words: chunk === null ? [] : memoryWords(chunk, 8),
+    pair_words: memoryWords(q, 4)
+  };
+}
+
+function dumpAreEventWriterHook(ctx, hook) {
+  const base = {
+    arg1: ptr(ctx.rcx).toString(),
+    arg2: ptr(ctx.rdx).toString(),
+    arg3: ptr(ctx.r8).toString()
+  };
+  if (hook.name === "ARE_event_start_4a04" || hook.name === "ARE_event_end_4a80") {
+    const eventPtr = ptr(ctx.rdx);
+    base.boundary_event = {
+      event_list_arg1: dumpAreEventList(ptr(ctx.rcx)),
+      event_value_arg2_ptr: eventPtr.toString(),
+      event_value_arg2_s32: safeReadS32(eventPtr),
+      event_value_arg2_words: memoryWords(eventPtr, 4)
+    };
+  } else if (hook.name === "ARE_event_cursor_advance_6920") {
+    base.cursor_advance = {
+      cursor_arg1: dumpAreEventCursor(ptr(ctx.rcx))
+    };
+  } else if (hook.name === "ARE_event_cursor_insert_6998") {
+    base.cursor_insert = {
+      cursor_arg1: dumpAreEventCursor(ptr(ctx.rcx)),
+      delta_arg2_s32: nativeArgS32(ctx.rdx),
+      delta_arg2_u32: nativeArgU32(ctx.rdx)
+    };
+  } else if (hook.name === "ARE_event_chunk_merge_84e8") {
+    base.chunk_merge = {
+      event_list_arg1: dumpAreEventList(ptr(ctx.rcx)),
+      from_cursor_arg2: dumpAreEventCursor(ptr(ctx.rdx)),
+      to_cursor_arg3: dumpAreEventCursor(ptr(ctx.r8))
+    };
+  }
+  return base;
+}
+
 function dumpAreSamplerHook(ctx, hook) {
   const stack = stackArgs(ctx);
   const base = {
@@ -817,6 +936,8 @@ function dumpAreSamplerHook(ctx, hook) {
       row_arg2_s32: nativeArgS32(ctx.rdx),
       sampler: dumpAreSamplerObject(ptr(ctx.rcx))
     };
+  } else if (hook.surface === "are_event_writer") {
+    base.event_writer = dumpAreEventWriterHook(ctx, hook);
   }
   return base;
 }
@@ -2408,7 +2529,7 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--attach-delay", type=float, default=0.0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-byte-samples", "txt-are-producer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "are-event-writer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
     # Accepted for compatibility with ae_trace_drop_shadow_softness helpers.
     ap.add_argument("--generic-hook-limit", type=int, default=0)
     ap.add_argument("--max-stalk-render-calls", type=int, default=0)
@@ -2664,7 +2785,7 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=240)
     ap.add_argument("--attach-delay", type=int, default=0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-byte-samples", "txt-are-producer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "are-event-writer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
     ap.add_argument("--allow-render-failure", action="store_true")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--live-tail", action="store_true")
