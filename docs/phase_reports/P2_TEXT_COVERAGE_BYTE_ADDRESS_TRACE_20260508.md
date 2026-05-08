@@ -502,3 +502,86 @@ cargo test -p text-engine
 cargo test -p render-core text
 cargo test -p render-cli all_manifest_cases_have_native_recipes
 ```
+
+## TXT Curve Producer Formula - 2026-05-08
+
+Goal: close the `COV_O`/round-glyph path handoff with evidence, not visual
+metric fitting.
+
+Tracer update:
+
+- `scripts/ae_trace_cooltype_text.py` now allows larger path-input captures:
+  `readF32Array/readU32Array` cap `512`, `dumpPathInput` cap `256`.
+- Successful producer trace:
+  `target/dynamic_tools_85/p2_cov_o_full_path_20260508/COV_O.jsonl`
+- Analysis:
+  `target/ae_agents/p2_cov_o_curve_model_20260508/path_order.json`
+
+Finding:
+
+`COV_O` has `88` path commands:
+
+```text
+outer contour: move + 42 curve entries + close
+inner contour: move + 42 curve entries + close
+```
+
+The captured prefix matches this deterministic formula:
+
+```text
+raw TrueType contour
+-> reverse contour direction
+-> if reversed contour starts with consecutive off-curve points, start at their implied midpoint
+-> each quadratic segment becomes cubic triplet:
+   c1 = q0 + 2/3 * (q1 - q0)
+   c2 = q2 + 2/3 * (q1 - q2)
+   end = q2
+```
+
+Evidence:
+
+- `COV_O` curve stream prefix matches reversed TT quadratic-to-cubic with
+  max error `0.001413px`, mean error `0.000482px`.
+- Native unit `recovered_txt_curve_producer_matches_cov_o_prefix` locks the
+  first traced cubic triplet.
+
+Native implementation:
+
+- `crates/text-engine/src/rasterize.rs` now parses simple `glyf` contours from
+  raw `head/maxp/loca/glyf` tables.
+- Line-only contours keep the locked reversed path.
+- Curve contours use the recovered reversed TT quadratic-to-cubic producer and
+  then flatten into the existing ARE scanline substrate.
+- Composite/CFF/non-simple glyphs still fall back to the existing
+  `ttf_parser::outline_glyph` path.
+
+Validation:
+
+```text
+python3 -m py_compile scripts/ae_trace_cooltype_text.py scripts/analyze_text_path_order.py
+python3 scripts/analyze_text_path_order.py --font fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf \
+  --out target/ae_agents/p2_cov_o_curve_model_20260508/path_order.json \
+  target/dynamic_tools_85/p2_cov_o_full_path_20260508/COV_O.jsonl
+cargo test -p text-engine
+cargo test -p render-core text
+cargo test -p render-cli all_manifest_cases_have_native_recipes
+cargo run -q -p render-cli -- conformance-pack \
+  --case TXT_010 --case TXT_020 --case TXT_030 --case TXT_040 --case GPH_010 \
+  --out target/ae_agents/p2_text_curve_producer_gate_20260508
+```
+
+Focused gate remains `ok=true`. Against the previous line-order gate:
+
+```text
+TXT_010 mean: -1.19686
+TXT_020 mean: +0.327816
+TXT_030 mean: -0.363401
+TXT_040 mean: -0.0827256
+GPH_010 mean: +1.23584
+text passport mismatches: 0 in all focused cases
+```
+
+Status: curve producer is now implemented/instrumented from Frida evidence.
+The remaining curve-layer work is not the producer formula; it is the downstream
+ARE curve flatten/edge/raster parity, because `GPH_010` still shows a visible
+metric regression even though the focused gate passes.

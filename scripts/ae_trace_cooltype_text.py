@@ -558,7 +558,7 @@ function readF32Array(p, maxCount) {
     return [];
   }
   const q = ptr(p);
-  const n = Math.max(0, Math.min(maxCount || 0, 128));
+  const n = Math.max(0, Math.min(maxCount || 0, 512));
   const out = [];
   for (let i = 0; i < n; i++) {
     out.push(safeReadFloat(q.add(i * 4)));
@@ -571,7 +571,7 @@ function readU32Array(p, maxCount) {
     return [];
   }
   const q = ptr(p);
-  const n = Math.max(0, Math.min(maxCount || 0, 128));
+  const n = Math.max(0, Math.min(maxCount || 0, 512));
   const out = [];
   for (let i = 0; i < n; i++) {
     out.push(safeReadU32(q.add(i * 4)));
@@ -1151,11 +1151,12 @@ function dumpTxtArePlaneLoadProbe(ctx, hook) {
 }
 
 function dumpPathInput(coordsPtr, commandsPtr, count) {
-  const n = count === null ? 32 : Math.max(0, Math.min(count, 32));
+  const n = count === null ? 32 : Math.max(0, Math.min(count, 256));
   return {
     count: count,
     coords_ptr: ptr(coordsPtr).toString(),
     commands_ptr: ptr(commandsPtr).toString(),
+    sample_count: n,
     coords_f32_sample: readF32Array(coordsPtr, n * 2),
     commands_u32_sample: readU32Array(commandsPtr, n)
   };

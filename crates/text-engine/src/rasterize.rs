@@ -3,7 +3,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex, OnceLock};
-use ttf_parser::{Face, GlyphId, OutlineBuilder};
+use ttf_parser::{Face, GlyphId, OutlineBuilder, Tag};
 
 use crate::{layout_text, load_font_with_telemetry, TextLayoutRequest, TextLayoutResult};
 
@@ -375,9 +375,13 @@ fn build_outline_coverage_mask(
     if units_per_em <= 0.0 {
         return None;
     }
-    let mut outline = FlattenedOutline::default();
-    let bbox = face.outline_glyph(glyph_id, &mut outline)?;
-    outline.finish_contour();
+    let bbox = face.glyph_bounding_box(glyph_id)?;
+    let outline = ae_outline_from_simple_glyf(face, glyph_id).unwrap_or_else(|| {
+        let mut outline = FlattenedOutline::default();
+        let _ = face.outline_glyph(glyph_id, &mut outline);
+        outline.finish_contour();
+        outline
+    });
     if outline.contours.is_empty() {
         return None;
     }
@@ -449,6 +453,310 @@ struct ProjectedScanlineEvent {
     x_min_fixed: i32,
     x_max_fixed: i32,
     winding_delta: i32,
+}
+
+#[derive(Debug, Copy, Clone)]
+struct RawOutlinePoint {
+    point: Point,
+    on_curve: bool,
+}
+
+fn ae_outline_from_simple_glyf(face: &Face<'_>, glyph_id: GlyphId) -> Option<FlattenedOutline> {
+    let glyph = raw_simple_glyph_contours(face, glyph_id)?;
+    let mut contours = Vec::new();
+    for contour in glyph {
+        if contour.len() < 2 {
+            continue;
+        }
+        let has_curve = contour.iter().any(|point| !point.on_curve);
+        let flattened = if has_curve {
+            flatten_ae_curve_contour(&contour)
+        } else {
+            let mut points = contour.iter().map(|point| point.point).collect::<Vec<_>>();
+            // TXT_ARE_PathBuilder traces for line-only glyphs emit scaled TTF
+            // contour points in reverse order.
+            points.reverse();
+            points
+        };
+        if flattened.len() >= 2 {
+            contours.push(flattened);
+        }
+    }
+    Some(FlattenedOutline {
+        contours,
+        current: Vec::new(),
+        current_point: Point::default(),
+        current_has_curve: false,
+    })
+}
+
+fn raw_simple_glyph_contours(
+    face: &Face<'_>,
+    glyph_id: GlyphId,
+) -> Option<Vec<Vec<RawOutlinePoint>>> {
+    let head = face.raw_face().table(Tag::from_bytes(b"head"))?;
+    let maxp = face.raw_face().table(Tag::from_bytes(b"maxp"))?;
+    let loca = face.raw_face().table(Tag::from_bytes(b"loca"))?;
+    let glyf = face.raw_face().table(Tag::from_bytes(b"glyf"))?;
+    let units = face.units_per_em();
+    if units == 0 || maxp.len() < 6 || head.len() < 52 {
+        return None;
+    }
+    let glyph_count = read_u16(maxp, 4)? as usize;
+    let glyph_index = glyph_id.0 as usize;
+    if glyph_index >= glyph_count {
+        return None;
+    }
+    let long_loca = read_i16(head, 50)? != 0;
+    let glyph_start = loca_offset(loca, glyph_index, long_loca)?;
+    let glyph_end = loca_offset(loca, glyph_index + 1, long_loca)?;
+    if glyph_start == glyph_end {
+        return None;
+    }
+    let data = glyf.get(glyph_start..glyph_end)?;
+    if data.len() < 10 {
+        return None;
+    }
+    let contour_count = read_i16(data, 0)?;
+    if contour_count <= 0 {
+        return None;
+    }
+    parse_simple_glyf_contours(data.get(10..)?, contour_count as usize)
+}
+
+fn parse_simple_glyf_contours(
+    data: &[u8],
+    contour_count: usize,
+) -> Option<Vec<Vec<RawOutlinePoint>>> {
+    let mut offset = 0usize;
+    let mut end_points = Vec::with_capacity(contour_count);
+    for _ in 0..contour_count {
+        end_points.push(read_u16(data, offset)? as usize);
+        offset += 2;
+    }
+    let point_count = end_points.last().copied()? + 1;
+    if point_count == 0 {
+        return None;
+    }
+    let instruction_len = read_u16(data, offset)? as usize;
+    offset = offset.checked_add(2 + instruction_len)?;
+    if offset > data.len() {
+        return None;
+    }
+
+    let mut flags = Vec::with_capacity(point_count);
+    while flags.len() < point_count {
+        let flag = *data.get(offset)?;
+        offset += 1;
+        let repeat = if flag & 0x08 != 0 {
+            let count = *data.get(offset)? as usize + 1;
+            offset += 1;
+            count
+        } else {
+            1
+        };
+        for _ in 0..repeat {
+            flags.push(flag);
+            if flags.len() > point_count {
+                return None;
+            }
+        }
+    }
+
+    let mut xs = Vec::with_capacity(point_count);
+    let mut x = 0i16;
+    for flag in &flags {
+        let delta = if flag & 0x02 != 0 {
+            let value = *data.get(offset)? as i16;
+            offset += 1;
+            if flag & 0x10 != 0 {
+                value
+            } else {
+                -value
+            }
+        } else if flag & 0x10 != 0 {
+            0
+        } else {
+            let value = read_i16(data, offset)?;
+            offset += 2;
+            value
+        };
+        x = x.checked_add(delta)?;
+        xs.push(x);
+    }
+
+    let mut ys = Vec::with_capacity(point_count);
+    let mut y = 0i16;
+    for flag in &flags {
+        let delta = if flag & 0x04 != 0 {
+            let value = *data.get(offset)? as i16;
+            offset += 1;
+            if flag & 0x20 != 0 {
+                value
+            } else {
+                -value
+            }
+        } else if flag & 0x20 != 0 {
+            0
+        } else {
+            let value = read_i16(data, offset)?;
+            offset += 2;
+            value
+        };
+        y = y.checked_add(delta)?;
+        ys.push(y);
+    }
+
+    let mut contours = Vec::with_capacity(contour_count);
+    let mut start = 0usize;
+    for end in end_points {
+        if end < start || end >= point_count {
+            return None;
+        }
+        let mut contour = Vec::with_capacity(end - start + 1);
+        for index in start..=end {
+            contour.push(RawOutlinePoint {
+                point: Point {
+                    x: xs[index] as f32,
+                    y: ys[index] as f32,
+                },
+                on_curve: flags[index] & 0x01 != 0,
+            });
+        }
+        contours.push(contour);
+        start = end + 1;
+    }
+    Some(contours)
+}
+
+fn flatten_ae_curve_contour(contour: &[RawOutlinePoint]) -> Vec<Point> {
+    let stream = ae_curve_stream_from_reversed_tt(contour);
+    if stream.is_empty() {
+        return Vec::new();
+    }
+    let mut flattened = vec![stream[0]];
+    let mut index = 1usize;
+    let mut current = stream[0];
+    while index + 2 < stream.len() {
+        let control1 = stream[index];
+        let control2 = stream[index + 1];
+        let end = stream[index + 2];
+        flatten_cubic_points(current, control1, control2, end, &mut flattened);
+        current = end;
+        index += 3;
+    }
+    if flattened.len() >= 2 && distance(flattened[0], *flattened.last().unwrap()) < 0.0001 {
+        flattened.pop();
+    }
+    flattened
+}
+
+fn ae_curve_stream_from_reversed_tt(contour: &[RawOutlinePoint]) -> Vec<Point> {
+    if contour.is_empty() {
+        return Vec::new();
+    }
+    let points = contour.iter().rev().copied().collect::<Vec<_>>();
+    let (mut current, start_index) = if points[0].on_curve {
+        (points[0].point, 1usize)
+    } else if points.len() > 1 && !points[1].on_curve {
+        (midpoint(points[0].point, points[1].point), 1usize)
+    } else if points.len() > 1 {
+        (points[1].point, 0usize)
+    } else {
+        (points[0].point, 0usize)
+    };
+
+    let mut segments = Vec::new();
+    for offset in 0..points.len() {
+        let raw = points[(start_index + offset) % points.len()];
+        if raw.on_curve {
+            current = raw.point;
+            continue;
+        }
+        let next = points[(start_index + offset + 1) % points.len()];
+        let end = if next.on_curve {
+            next.point
+        } else {
+            midpoint(raw.point, next.point)
+        };
+        segments.push((current, raw.point, end));
+        current = end;
+    }
+    if segments.is_empty() {
+        return vec![current];
+    }
+
+    let mut stream = vec![segments[0].0];
+    for (start, control, end) in segments {
+        stream.push(Point {
+            x: start.x + (2.0 / 3.0) * (control.x - start.x),
+            y: start.y + (2.0 / 3.0) * (control.y - start.y),
+        });
+        stream.push(Point {
+            x: end.x + (2.0 / 3.0) * (control.x - end.x),
+            y: end.y + (2.0 / 3.0) * (control.y - end.y),
+        });
+        stream.push(end);
+    }
+    stream.push(stream[0]);
+    stream
+}
+
+fn flatten_cubic_points(
+    start: Point,
+    control1: Point,
+    control2: Point,
+    end: Point,
+    out: &mut Vec<Point>,
+) {
+    let steps = curve_steps(start, control1, end).max(curve_steps(start, control2, end));
+    for step in 1..=steps {
+        let t = step as f32 / steps as f32;
+        let mt = 1.0 - t;
+        out.push(Point {
+            x: mt * mt * mt * start.x
+                + 3.0 * mt * mt * t * control1.x
+                + 3.0 * mt * t * t * control2.x
+                + t * t * t * end.x,
+            y: mt * mt * mt * start.y
+                + 3.0 * mt * mt * t * control1.y
+                + 3.0 * mt * t * t * control2.y
+                + t * t * t * end.y,
+        });
+    }
+}
+
+fn midpoint(a: Point, b: Point) -> Point {
+    Point {
+        x: (a.x + b.x) * 0.5,
+        y: (a.y + b.y) * 0.5,
+    }
+}
+
+fn loca_offset(loca: &[u8], glyph_index: usize, long_loca: bool) -> Option<usize> {
+    if long_loca {
+        read_u32(loca, glyph_index.checked_mul(4)?)?.try_into().ok()
+    } else {
+        Some((read_u16(loca, glyph_index.checked_mul(2)?)? as usize) * 2)
+    }
+}
+
+fn read_u16(data: &[u8], offset: usize) -> Option<u16> {
+    Some(u16::from_be_bytes(
+        data.get(offset..offset + 2)?.try_into().ok()?,
+    ))
+}
+
+fn read_i16(data: &[u8], offset: usize) -> Option<i16> {
+    Some(i16::from_be_bytes(
+        data.get(offset..offset + 2)?.try_into().ok()?,
+    ))
+}
+
+fn read_u32(data: &[u8], offset: usize) -> Option<u32> {
+    Some(u32::from_be_bytes(
+        data.get(offset..offset + 4)?.try_into().ok()?,
+    ))
 }
 
 fn build_are_scanline_coverage(
@@ -1085,6 +1393,31 @@ mod tests {
             84,
             "b4fffffffffffffffffffffffffff7ffffffffffffffffffffffffffffe006".to_string()
         )));
+    }
+
+    #[test]
+    fn recovered_txt_curve_producer_matches_cov_o_prefix() {
+        let Some(path) = montserrat_bolditalic_fixture() else {
+            return;
+        };
+        let bytes = fs::read(path).unwrap();
+        let face = Face::parse(&bytes, 0).unwrap();
+        let contours = raw_simple_glyph_contours(&face, GlyphId(204)).unwrap();
+        let stream = ae_curve_stream_from_reversed_tt(&contours[0]);
+        let scale = 96.0 / face.units_per_em() as f32;
+        let ae_space = |point: Point| [point.x * scale, -point.y * scale];
+
+        let expected = [
+            [54.576004, -1.9200001],
+            [59.664002, -3.9675002],
+            [64.047005, -6.7995],
+            [67.727997, -10.416],
+        ];
+        for (index, expected) in expected.into_iter().enumerate() {
+            let actual = ae_space(stream[index]);
+            assert!((actual[0] - expected[0]).abs() < 0.002);
+            assert!((actual[1] - expected[1]).abs() < 0.002);
+        }
     }
 
     #[test]

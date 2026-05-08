@@ -18,6 +18,12 @@ class Point:
     y: float
 
 
+@dataclass(frozen=True)
+class RawPoint:
+    point: Point
+    on_curve: bool
+
+
 def iter_payloads(path: Path):
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
         if not line.strip():
@@ -89,16 +95,23 @@ def glyph_scale(active_glyph: dict[str, Any] | None, fallback: float) -> float:
 
 
 def raw_contours(font: TTFont, glyph_id: int, font_size: float) -> list[list[Point]]:
+    return [[raw.point for raw in contour] for contour in raw_flag_contours(font, glyph_id, font_size)]
+
+
+def raw_flag_contours(font: TTFont, glyph_id: int, font_size: float) -> list[list[RawPoint]]:
     glyph_name = font.getGlyphOrder()[glyph_id]
     glyf = font["glyf"]
     glyph = glyf[glyph_name]
-    coords, end_pts, _flags = glyph.getCoordinates(glyf)
+    coords, end_pts, flags = glyph.getCoordinates(glyf)
     scale = font_size / float(font["head"].unitsPerEm)
-    contours: list[list[Point]] = []
+    contours: list[list[RawPoint]] = []
     start = 0
     for end in end_pts:
         contour = [
-            Point(float(coords[index][0]) * scale, -float(coords[index][1]) * scale)
+            RawPoint(
+                Point(float(coords[index][0]) * scale, -float(coords[index][1]) * scale),
+                bool(flags[index] & 1),
+            )
             for index in range(start, end + 1)
         ]
         contours.append(contour)
@@ -166,6 +179,85 @@ def best_cyclic_error(a: list[Point], b: list[Point]) -> dict[str, Any]:
     return best or {"matched": False, "reason": "no_candidate"}
 
 
+def midpoint(a: RawPoint, b: RawPoint) -> Point:
+    return Point((a.point.x + b.point.x) * 0.5, (a.point.y + b.point.y) * 0.5)
+
+
+def ae_curve_stream_from_reversed_tt(contour: list[RawPoint]) -> list[Point]:
+    """Model TXT_ARE_PathBuilder command=2 stream from a closed TT contour.
+
+    Dynamic evidence from COV_O shows TXT walks the TrueType contour in reverse,
+    starts at the implied on-curve midpoint when the reversed contour begins with
+    two off-curve points, and converts each quadratic segment into a cubic
+    triplet: control1, control2, end.
+    """
+
+    if not contour:
+        return []
+    points = list(reversed(contour))
+    if len(points) == 1:
+        return [points[0].point]
+
+    if points[0].on_curve:
+        current = points[0].point
+        start_index = 1
+    elif not points[1].on_curve:
+        current = midpoint(points[0], points[1])
+        start_index = 1
+    else:
+        current = points[1].point
+        start_index = 0
+
+    segments: list[tuple[Point, Point, Point]] = []
+    count = len(points)
+    for offset in range(count):
+        raw = points[(start_index + offset) % count]
+        if raw.on_curve:
+            current = raw.point
+            continue
+        next_raw = points[(start_index + offset + 1) % count]
+        end = next_raw.point if next_raw.on_curve else midpoint(raw, next_raw)
+        segments.append((current, raw.point, end))
+        current = end
+
+    if not segments:
+        return [current]
+
+    stream = [segments[0][0]]
+    for start, control, end in segments:
+        stream.append(
+            Point(
+                start.x + (2.0 / 3.0) * (control.x - start.x),
+                start.y + (2.0 / 3.0) * (control.y - start.y),
+            )
+        )
+        stream.append(
+            Point(
+                end.x + (2.0 / 3.0) * (control.x - end.x),
+                end.y + (2.0 / 3.0) * (control.y - end.y),
+            )
+        )
+        stream.append(end)
+    stream.append(stream[0])
+    return stream
+
+
+def ordered_prefix_error(a: list[Point], b: list[Point]) -> dict[str, Any]:
+    compared = min(len(a), len(b))
+    if compared == 0:
+        return {"matched": False, "reason": "empty_stream", "compared": 0}
+    errors = [distance(a[index], b[index]) for index in range(compared)]
+    return {
+        "matched": len(a) == len(b),
+        "prefix_matched": True,
+        "compared": compared,
+        "ae_points": len(a),
+        "model_points": len(b),
+        "max_error": max(errors),
+        "mean_error": sum(errors) / len(errors),
+    }
+
+
 def classify_path_order(
     font: TTFont,
     entry: dict[str, Any],
@@ -185,6 +277,7 @@ def classify_path_order(
     uses_curves = any(command == 2 for command in commands)
     sampled_contours = split_sampled_line_contours(points, commands)
     contours = raw_contours(font, glyph_id, font_size)
+    raw_with_flags = raw_flag_contours(font, glyph_id, font_size)
     result: dict[str, Any] = {
         "status": "analyzed",
         "glyph_id": glyph_id,
@@ -202,7 +295,29 @@ def classify_path_order(
         },
     }
     if uses_curves:
-        result["order_evidence"] = "curve_path_requires_producer_decode"
+        curve_comparisons = []
+        for contour_index, ae_contour in enumerate(sampled_contours):
+            if contour_index >= len(raw_with_flags):
+                curve_comparisons.append(
+                    {"contour_index": contour_index, "status": "missing_ttf_contour"}
+                )
+                continue
+            model = ae_curve_stream_from_reversed_tt(raw_with_flags[contour_index])
+            comparison = ordered_prefix_error(ae_contour, model)
+            comparison["contour_index"] = contour_index
+            curve_comparisons.append(comparison)
+        result["curve_stream_comparisons"] = curve_comparisons
+        if curve_comparisons and all(
+            item.get("prefix_matched") and float(item.get("max_error") or 999.0) < 0.01
+            for item in curve_comparisons
+            if item.get("status") != "missing_ttf_contour"
+        ):
+            if all(item.get("matched") for item in curve_comparisons):
+                result["order_evidence"] = "curves_match_reversed_tt_quadratic_to_cubic"
+            else:
+                result["order_evidence"] = "curves_prefix_match_reversed_tt_quadratic_to_cubic"
+        else:
+            result["order_evidence"] = "curve_path_requires_producer_decode"
         result["recording_ops"] = [
             {"op": item["op"], "arg_count": len(item["args"])}
             for item in recording_ops(font, glyph_id)
