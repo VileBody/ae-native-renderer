@@ -7,6 +7,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -81,6 +82,22 @@ const TXT_HOOKS = [
   {module: "TXT.dll", name: "TXT_ARE_Render_8bpc_3c360", offset: 0x03c360, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_ARE_Render_8bpc_fill_3d200", offset: 0x03d200, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_ARE_Render_8bpc_stroke_3d960", offset: 0x03d960, surface: "txt_are_spans"},
+  {module: "TXT.dll", name: "TXT_ARE_Fill_or_Stroke_A_3d4a0", offset: 0x03d4a0, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_Fill_or_Stroke_B_3db60", offset: 0x03db60, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_OutlinePlayer_ctor_3e310", offset: 0x03e310, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_PathReserve_3ee10", offset: 0x03ee10, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_PathObjectFactory_3fd40", offset: 0x03fd40, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_OutlinePlayer_setup_40290", offset: 0x040290, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_PathBuilder_40580", offset: 0x040580, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_PathBuilder_indirect_before_40621", offset: 0x040621, surface: "txt_are_producer_callsite"},
+  {module: "TXT.dll", name: "TXT_ARE_PathBuilder_indirect_after_40624", offset: 0x040624, surface: "txt_are_producer_callsite"},
+  {module: "TXT.dll", name: "TXT_ARE_BufferReserve_406b0", offset: 0x0406b0, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_BIBPathObject_refresh_408d0", offset: 0x0408d0, surface: "txt_are_producer"},
+  {module: "TXT.dll", name: "TXT_ARE_StrokeRasterizer_indirect_before_3da78", offset: 0x03da78, surface: "txt_are_producer_callsite"},
+  {module: "TXT.dll", name: "TXT_ARE_StrokeRasterizer_indirect_after_3da7b", offset: 0x03da7b, surface: "txt_are_producer_callsite"},
+  {module: "TXT.dll", name: "TXT_ARE_FillCoverageCtor_after_3d35f", offset: 0x03d35f, surface: "txt_are_producer_callsite"},
+  {module: "TXT.dll", name: "TXT_ARE_StrokeCoverageCtor_after_3daee", offset: 0x03daee, surface: "txt_are_producer_callsite"},
+  {module: "TXT.dll", name: "TXT_ARE_RowGetter_after_3deaa", offset: 0x03deaa, surface: "txt_are_producer_callsite"},
   {module: "TXT.dll", name: "TXT_ARE_OutputComposite_8bpc_3de50", offset: 0x03de50, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_span_3b8c0", offset: 0x03b8c0, surface: "txt_are_spans"},
   {module: "TXT.dll", name: "TXT_ARE_PixelWriter8_type2_load_3ba1b", offset: 0x03ba1b, surface: "txt_are_spans"},
@@ -166,8 +183,18 @@ const TXT_DYNAMIC_POINTERS = [
   {name: "TXT_are_rasterizer_DAT_18087f780", offset: 0x87f780}
 ];
 
+const TXT_RESOLVED_POINTER_HOOKS = [
+  {name: "TXT_RESOLVED_bib_make_path_DAT_18087beb8", slotOffset: 0x87beb8, surface: "txt_are_producer_resolved"},
+  {name: "TXT_RESOLVED_bib_path_vtable_DAT_18087bec8", slotOffset: 0x87bec8, surface: "txt_are_producer_resolved"},
+  {name: "TXT_RESOLVED_are_path_builder_DAT_18087f778", slotOffset: 0x87f778, surface: "txt_are_producer_resolved"},
+  {name: "TXT_RESOLVED_are_rasterizer_DAT_18087f780", slotOffset: 0x87f780, surface: "txt_are_producer_resolved"}
+];
+
 function hookEnabled(hook) {
   if (hookProfile === "all") {
+    if (hook.surface === "txt_are_producer_callsite") {
+      return false;
+    }
     return true;
   }
   if (hookProfile === "bee-text-render") {
@@ -206,6 +233,24 @@ function hookEnabled(hook) {
       "txt_are_pixel_samples",
       "txt_pf_transferrect"
     ].indexOf(hook.surface) !== -1;
+  }
+  if (hookProfile === "txt-are-producer") {
+    if ([
+      "bee_text_drawchar_target",
+      "txt_drawchar_are",
+      "txt_drawchar_outline_core",
+      "txt_are_producer",
+      "txt_pf_transferrect"
+    ].indexOf(hook.surface) !== -1) {
+      return true;
+    }
+    return [
+      "TXT_ARE_Render_8bpc_3c360",
+      "TXT_ARE_Render_8bpc_fill_3d200",
+      "TXT_ARE_Render_8bpc_stroke_3d960",
+      "TXT_ARE_OutputComposite_8bpc_3de50",
+      "TXT_ARE_PixelWriter8_span_3b8c0"
+    ].indexOf(hook.name) !== -1;
   }
   if (hookProfile === "bee-text-raster") {
     return hook.module === "BEE.dll" || [
@@ -415,6 +460,32 @@ function readStdVectorF32(p, maxCount) {
     count: count,
     values: values
   };
+}
+
+function readF32Array(p, maxCount) {
+  if (isNullPtr(p)) {
+    return [];
+  }
+  const q = ptr(p);
+  const n = Math.max(0, Math.min(maxCount || 0, 128));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(safeReadFloat(q.add(i * 4)));
+  }
+  return out;
+}
+
+function readU32Array(p, maxCount) {
+  if (isNullPtr(p)) {
+    return [];
+  }
+  const q = ptr(p);
+  const n = Math.max(0, Math.min(maxCount || 0, 128));
+  const out = [];
+  for (let i = 0; i < n; i++) {
+    out.push(safeReadU32(q.add(i * 4)));
+  }
+  return out;
 }
 
 function pointerFieldSamples(p, offsets) {
@@ -662,8 +733,13 @@ function regSnapshotWide(ctx) {
     rbx: ptr(ctx.rbx).toString(),
     rcx: ptr(ctx.rcx).toString(),
     rdx: ptr(ctx.rdx).toString(),
+    rbp: ptr(ctx.rbp).toString(),
     rsi: ptr(ctx.rsi).toString(),
     rdi: ptr(ctx.rdi).toString(),
+    r12: ptr(ctx.r12).toString(),
+    r13: ptr(ctx.r13).toString(),
+    r14: ptr(ctx.r14).toString(),
+    r15: ptr(ctx.r15).toString(),
     r8: ptr(ctx.r8).toString(),
     r9: ptr(ctx.r9).toString(),
     r10: ptr(ctx.r10).toString(),
@@ -730,6 +806,187 @@ function dumpTxtArePlaneLoadProbe(ctx, hook) {
       dumpPlanePointerCandidate("r11", ptr(ctx.r11))
     ],
     stack_words: memoryWords(ptr(ctx.rsp), 12),
+    backtrace: backtrace(ctx)
+  };
+}
+
+function dumpPathInput(coordsPtr, commandsPtr, count) {
+  const n = count === null ? 32 : Math.max(0, Math.min(count, 32));
+  return {
+    count: count,
+    coords_ptr: ptr(coordsPtr).toString(),
+    commands_ptr: ptr(commandsPtr).toString(),
+    coords_f32_sample: readF32Array(coordsPtr, n * 2),
+    commands_u32_sample: readU32Array(commandsPtr, n)
+  };
+}
+
+function dumpMethodBlock(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const entries = [];
+  for (let i = 0; i < 8; i++) {
+    const target = safeReadPointer(q.add(i * Process.pointerSize));
+    entries.push({
+      index: i,
+      ptr: target === null ? null : target.toString(),
+      target: target === null ? null : moduleOffset(target)
+    });
+  }
+  return {
+    ptr: q.toString(),
+    entries: entries,
+    words: memoryWords(q, 8)
+  };
+}
+
+function dumpTxtAreProducerHook(ctx, hook) {
+  const rsp = ptr(ctx.rsp);
+  const stack = stackArgs(ctx);
+  const base = {
+    hook: hook.name,
+    surface: hook.surface,
+    regs: regSnapshotWide(ctx),
+    stack: stack,
+    stack_words_0x00_0xc0: memoryWords(rsp, 24),
+    txt_dynamic_pointers: txtDynamicPointers(),
+    backtrace: backtrace(ctx)
+  };
+  if (hook.name === "TXT_ARE_OutlinePlayer_ctor_3e310") {
+    base.outline_player_ctor = {
+      are_arg1: ptr(ctx.rcx).toString(),
+      draw_fill_arg2_s32: nativeArgS32(ctx.rdx),
+      draw_stroke_arg3_s32: nativeArgS32(ctx.r8),
+      fill_first_arg4_s32: nativeArgS32(ctx.r9),
+      are_object: dumpAreObject(ptr(ctx.rcx)),
+      source_pf_world_candidate: dumpPfWorldForText(stack.p10_0x50)
+    };
+  } else if (hook.name === "TXT_ARE_PathReserve_3ee10") {
+    base.path_reserve = {
+      are_or_buffer_arg1: ptr(ctx.rcx).toString(),
+      count_arg2_s32: nativeArgS32(ctx.rdx),
+      flag_arg3_s32: nativeArgS32(ctx.r8),
+      object_words: memoryWords(ptr(ctx.rcx), 16)
+    };
+  } else if (hook.name === "TXT_ARE_PathObjectFactory_3fd40") {
+    base.path_object_factory = {
+      cache_root_arg1: ptr(ctx.rcx).toString(),
+      handle_arg2: ptr(ctx.rdx).toString(),
+      callback_arg3: ptr(ctx.r8).toString(),
+      callback_arg3_target: moduleOffset(ptr(ctx.r8)),
+      cache_root_words: memoryWords(ptr(ctx.rcx), 12)
+    };
+  } else if (hook.name === "TXT_ARE_BIBPathObject_refresh_408d0") {
+    base.bib_path_object_refresh = {
+      object_arg1: ptr(ctx.rcx).toString(),
+      handle_arg2: ptr(ctx.rdx).toString(),
+      callback_arg3: ptr(ctx.r8).toString(),
+      callback_arg3_target: moduleOffset(ptr(ctx.r8)),
+      object_words: memoryWords(ptr(ctx.rcx), 16)
+    };
+  } else if (hook.name === "TXT_ARE_PathBuilder_40580") {
+    base.path_builder = {
+      out_handle_arg1: ptr(ctx.rcx).toString(),
+      count_arg2_s32: nativeArgS32(ctx.rdx),
+      path_input: dumpPathInput(ptr(ctx.r8), ptr(ctx.r9), nativeArgS32(ctx.rdx)),
+      stack_p5: stack.p5_0x28,
+      stack_p6: stack.p6_0x30,
+      stack_p7: stack.p7_0x38,
+      stack_p8: stack.p8_0x40_ptr
+    };
+  } else if (hook.name === "TXT_ARE_PathBuilder_indirect_before_40621") {
+    base.path_builder_callsite_before = {
+      target_r10: ptr(ctx.r10).toString(),
+      target_r10_module: moduleOffset(ptr(ctx.r10)),
+      out_handle_rcx: ptr(ctx.rcx).toString(),
+      count_rdx_s32: nativeArgS32(ctx.rdx),
+      path_input: dumpPathInput(ptr(ctx.r8), ptr(ctx.r9), nativeArgS32(ctx.rdx)),
+      stack_args_for_dynamic_call: memoryWords(rsp.add(0x20), 4)
+    };
+  } else if (hook.name === "TXT_ARE_PathBuilder_indirect_after_40624") {
+    base.path_builder_callsite_after = {
+      status_rax: ptr(ctx.rax).toString(),
+      out_handle_stack_0x48: safeReadPointerString(rsp.add(0x48)),
+      out_handle_words: memoryWords(safeReadPointer(rsp.add(0x48)), 8)
+    };
+  } else if (
+    hook.name === "TXT_ARE_Render_8bpc_fill_3d200" ||
+    hook.name === "TXT_ARE_Render_8bpc_stroke_3d960" ||
+    hook.name === "TXT_ARE_Fill_or_Stroke_A_3d4a0" ||
+    hook.name === "TXT_ARE_Fill_or_Stroke_B_3db60"
+  ) {
+    base.fill_or_stroke_entry = {
+      are_arg1: ptr(ctx.rcx).toString(),
+      are_object: dumpAreObject(ptr(ctx.rcx)),
+      bounds_or_clip_arg2_words: memoryWords(ptr(ctx.rdx), 8),
+      source_pixel_arg3: ptr(ctx.r8).toString(),
+      source_pixel8_arg3: readPixel8(ptr(ctx.r8)),
+      pf_world_or_stack_arg4: ptr(ctx.r9).toString(),
+      pf_world_or_stack_arg4_snapshot: dumpPfWorldForText(ptr(ctx.r9))
+    };
+  } else if (hook.name === "TXT_ARE_StrokeRasterizer_indirect_before_3da78") {
+    base.stroke_rasterizer_callsite_before = {
+      target_r10: ptr(ctx.r10).toString(),
+      target_r10_module: moduleOffset(ptr(ctx.r10)),
+      out_handle_rcx: ptr(ctx.rcx).toString(),
+      count_rdx_s32: nativeArgS32(ctx.rdx),
+      path_input: dumpPathInput(ptr(ctx.r8), ptr(ctx.r9), nativeArgS32(ctx.rdx)),
+      stroke_stack_args_0x20_0x88: memoryWords(rsp.add(0x20), 14)
+    };
+  } else if (hook.name === "TXT_ARE_StrokeRasterizer_indirect_after_3da7b") {
+    base.stroke_rasterizer_callsite_after = {
+      status_rax: ptr(ctx.rax).toString(),
+      out_handle_stack_0x128: safeReadPointerString(rsp.add(0x128)),
+      out_handle_words: memoryWords(safeReadPointer(rsp.add(0x128)), 8)
+    };
+  } else if (hook.name === "TXT_ARE_FillCoverageCtor_after_3d35f") {
+    const tuple = ptr(ctx.rbp).sub(0x49);
+    const coveragePtr = safeReadPointer(ptr(ctx.rbp).sub(0x39));
+    base.fill_coverage_ctor_after = {
+      status_rax: ptr(ctx.rax).toString(),
+      tuple_ptr: tuple.toString(),
+      tuple: dumpPathTuple(tuple),
+      coverage_ptr_local: coveragePtr === null ? null : coveragePtr.toString(),
+      coverage_object_local: dumpCoverageObject(coveragePtr)
+    };
+  } else if (hook.name === "TXT_ARE_StrokeCoverageCtor_after_3daee") {
+    const tuple = rsp.add(0x90);
+    const coveragePtr = safeReadPointer(rsp.add(0xa0));
+    base.stroke_coverage_ctor_after = {
+      status_rax: ptr(ctx.rax).toString(),
+      tuple_ptr: tuple.toString(),
+      tuple: dumpPathTuple(tuple),
+      coverage_ptr_local: coveragePtr === null ? null : coveragePtr.toString(),
+      coverage_object_local: dumpCoverageObject(coveragePtr)
+    };
+  } else if (hook.name === "TXT_ARE_RowGetter_after_3deaa") {
+    base.row_getter_after = {
+      y_ebp_s32: nativeArgS32(ctx.rbp),
+      row_ptr_rax: ptr(ctx.rax).toString(),
+      row_cells: readSpanCells(ptr(ctx.rax), 32),
+      are_object_rsi: dumpAreObject(ptr(ctx.rsi)),
+      tuple_r14: dumpPathTuple(ptr(ctx.r14))
+    };
+  }
+  return base;
+}
+
+function dumpTxtResolvedPointerHook(ctx, hook, target) {
+  const count = nativeArgS32(ctx.rdx);
+  return {
+    hook: hook.name,
+    surface: hook.surface,
+    target: target.toString(),
+    target_module: moduleOffset(target),
+    regs: regSnapshotWide(ctx),
+    stack: stackArgs(ctx),
+    stack_words_0x00_0xc0: memoryWords(ptr(ctx.rsp), 24),
+    path_input: dumpPathInput(ptr(ctx.r8), ptr(ctx.r9), count),
+    out_handle_arg1: ptr(ctx.rcx).toString(),
+    count_arg2_s32: count,
+    dynamic_pointers: txtDynamicPointers(),
     backtrace: backtrace(ctx)
   };
 }
@@ -1521,6 +1778,9 @@ function dumpEnterCommon(ctx, hook) {
   if (hook.surface === "txt_are_spans") {
     payload.txt_are_spans = dumpTxtAreSpanHook(ctx, hook);
   }
+  if (hook.surface === "txt_are_producer" || hook.surface === "txt_are_producer_callsite") {
+    payload.txt_are_producer = dumpTxtAreProducerHook(ctx, hook);
+  }
   if (hook.name === "TXT_DrawChar_outline_core_42b80") {
     payload.txt_draw_char_outline_core = dumpTxtDrawCharOutlineCore(ctx);
   }
@@ -1586,10 +1846,21 @@ function installHook(module, hook) {
       onEnter: function () {
         this.hook = hook;
         this.ctx = {
+          rax: ptr(this.context.rax),
+          rbx: ptr(this.context.rbx),
           rcx: ptr(this.context.rcx),
           rdx: ptr(this.context.rdx),
+          rbp: ptr(this.context.rbp),
+          rsi: ptr(this.context.rsi),
+          rdi: ptr(this.context.rdi),
+          r12: ptr(this.context.r12),
+          r13: ptr(this.context.r13),
+          r14: ptr(this.context.r14),
+          r15: ptr(this.context.r15),
           r8: ptr(this.context.r8),
           r9: ptr(this.context.r9),
+          r10: ptr(this.context.r10),
+          r11: ptr(this.context.r11),
           rsp: ptr(this.context.rsp)
         };
         this.stack = stackArgs(this.context);
@@ -1669,6 +1940,9 @@ function installHook(module, hook) {
         }
         if (hook.surface === "txt_are_spans") {
           payload.txt_are_spans_after = dumpTxtAreSpanHook(this.ctx, hook);
+        }
+        if (hook.surface === "txt_are_producer" || hook.surface === "txt_are_producer_callsite") {
+          payload.txt_are_producer_after = dumpTxtAreProducerHook(this.ctx, hook);
         }
         if (hook.name === "TXT_DrawChar_outline_core_42b80") {
           payload.txt_draw_char_outline_core_after = dumpTxtDrawCharOutlineCore(this.ctx);
@@ -1825,6 +2099,74 @@ function installTxtImportHooks(module) {
   });
 }
 
+function installTxtResolvedPointerHooks(module) {
+  TXT_RESOLVED_POINTER_HOOKS.filter(hookEnabled).forEach(function (hook) {
+    const slot = module.base.add(hook.slotOffset);
+    const target = safeReadPointer(slot);
+    if (target === null || target.isNull()) {
+      meta("cooltype_resolved_hook_skipped", {
+        hook: hook.name,
+        surface: hook.surface,
+        slot_offset: "0x" + hook.slotOffset.toString(16),
+        slot: slot.toString(),
+        reason: "null_target"
+      });
+      return;
+    }
+    const key = hook.name + "@" + target.toString();
+    if (installedHooks[key]) {
+      return;
+    }
+    try {
+      Interceptor.attach(target, {
+        onEnter: function () {
+          this.hook = hook;
+          this.target = target;
+          this.ctx = {
+            rcx: ptr(this.context.rcx),
+            rdx: ptr(this.context.rdx),
+            r8: ptr(this.context.r8),
+            r9: ptr(this.context.r9),
+            rsp: ptr(this.context.rsp)
+          };
+          emit("cooltype_hook_enter", dumpTxtResolvedPointerHook(this.context, hook, target));
+        },
+        onLeave: function (retval) {
+          emit("cooltype_hook_leave", {
+            hook: hook.name,
+            surface: hook.surface,
+            retval: ptr(retval).toString(),
+            target: target.toString(),
+            target_module: moduleOffset(target),
+            out_handle_arg1_after: this.ctx.rcx.toString(),
+            out_handle_value_after: safeReadPointerString(this.ctx.rcx),
+            out_handle_words_after: memoryWords(safeReadPointer(this.ctx.rcx), 8)
+          });
+        }
+      });
+      installedHooks[key] = true;
+      meta("cooltype_hook_installed", {
+        hook: hook.name,
+        surface: hook.surface,
+        slot_offset: "0x" + hook.slotOffset.toString(16),
+        slot: slot.toString(),
+        target: target.toString(),
+        target_module: moduleOffset(target)
+      });
+    } catch (e) {
+      installedHooks[key] = true;
+      meta("cooltype_hook_error", {
+        hook: hook.name,
+        slot_offset: "0x" + hook.slotOffset.toString(16),
+        slot: slot.toString(),
+        target: target.toString(),
+        target_module: moduleOffset(target),
+        error: String(e)
+      });
+    }
+  });
+}
+
 function installAll() {
   ["CoolType.dll", "TXT.dll", "BEE.dll"].forEach(function (moduleName) {
     const module = Process.findModuleByName(moduleName);
@@ -1840,6 +2182,7 @@ function installAll() {
     }
     if (module.name === "TXT.dll") {
       installTxtImportHooks(module);
+      installTxtResolvedPointerHooks(module);
     }
   });
 }
@@ -1864,7 +2207,7 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--attach-delay", type=float, default=0.0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-producer", "all"], default="source-rect")
     # Accepted for compatibility with ae_trace_drop_shadow_softness helpers.
     ap.add_argument("--generic-hook-limit", type=int, default=0)
     ap.add_argument("--max-stalk-render-calls", type=int, default=0)
@@ -1991,6 +2334,7 @@ def summarize_events(case_id: str, events: list[dict[str, Any]]) -> dict[str, An
             "bbox_sample": (event.get("core_bbox_out_after") or [])[:4],
             "width_candidates_sample": event.get("core_width_out_candidates_after"),
             "txt_are_spans": event.get("txt_are_spans") or event.get("txt_are_spans_after"),
+            "txt_are_producer": event.get("txt_are_producer") or event.get("txt_are_producer_after"),
             "pf_transfer_rect": event.get("pf_transfer_rect"),
             "backtrace": backtrace[:10] if isinstance(backtrace, list) else [],
         }
@@ -2119,10 +2463,11 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=240)
     ap.add_argument("--attach-delay", type=int, default=0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-producer", "all"], default="source-rect")
     ap.add_argument("--allow-render-failure", action="store_true")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--live-tail", action="store_true")
+    ap.add_argument("--post-render-trace-s", type=float, default=0.0)
     args = ap.parse_args()
 
     helpers = load_trace_helpers()
@@ -2176,6 +2521,8 @@ def main() -> int:
             render_error = repr(exc)
             helpers.capture_failure_screenshot_ssh(args.ssh_host, out_dir, f"cooltype_{label}_failure")
         finally:
+            if args.post_render_trace_s > 0:
+                time.sleep(args.post_render_trace_s)
             helpers.stop_ssh_process(trace_proc)
             helpers.stop_remote_traces_ssh(args.ssh_host)
             helpers.stop_tail(tail_proc)
