@@ -500,7 +500,13 @@ fn eval_generated_bounce_selector(source: &str, ctx: &ExprContext) -> anyhow::Re
             .context("generated bounce selector requires context.text_index")? as f64;
     let t = ctx.time - ctx.in_point - delay * text_index;
     if t < -1.0e-9 {
-        return Ok(ExprValue::Number(0.0));
+        let amount = ctx
+            .value
+            .as_ref()
+            .map(expr_value_to_number)
+            .transpose()?
+            .unwrap_or(0.0);
+        return Ok(ExprValue::Number(amount));
     }
     let t = t.max(0.0);
     let value = amplitude * (freq * t * 2.0 * std::f64::consts::PI).cos() * (-decay * t).exp();
@@ -650,6 +656,41 @@ mod tests {
         };
 
         assert_eq!(eval(source, &ctx).unwrap(), ExprValue::Number(100.0));
+    }
+
+    #[test]
+    fn generated_bounce_selector_uses_value_before_delay() {
+        let source = r#"
+            delay = 0.05;
+            myDelay = delay * textIndex;
+            t = (time - inPoint) - myDelay;
+            if (t >= 0){
+              freq = 2; amplitude = 100; decay = 8;
+              amplitude * Math.cos(freq * t * 2 * Math.PI) / Math.exp(decay * t);
+            } else { value }
+        "#;
+        let ctx = ExprContext {
+            time: 0.0,
+            in_point: 0.0,
+            text_index: Some(1),
+            value: Some(ExprValue::Number(100.0)),
+            ..ExprContext::default()
+        };
+
+        assert_eq!(eval(source, &ctx).unwrap(), ExprValue::Number(100.0));
+    }
+
+    #[test]
+    fn generated_bounce_selector_defaults_to_zero_before_delay_without_value() {
+        let source = "delay = 0.05; myDelay = delay * textIndex; Math.cos(time); Math.exp(time);";
+        let ctx = ExprContext {
+            time: 0.0,
+            in_point: 0.0,
+            text_index: Some(1),
+            ..ExprContext::default()
+        };
+
+        assert_eq!(eval(source, &ctx).unwrap(), ExprValue::Number(0.0));
     }
 
     #[test]

@@ -179,6 +179,50 @@ pub struct RangeSelectorTelemetry {
     pub weights: Vec<TextUnitWeight>,
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+pub struct BounceExpressionSelector {
+    pub delay_seconds: f32,
+    pub frequency_hz: f32,
+    pub amplitude_percent: f32,
+    pub decay: f32,
+    pub pre_delay_amount_percent: Option<f32>,
+}
+
+impl Default for BounceExpressionSelector {
+    fn default() -> Self {
+        Self {
+            delay_seconds: 0.05,
+            frequency_hz: 2.0,
+            amplitude_percent: 100.0,
+            decay: 8.0,
+            pre_delay_amount_percent: None,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextExpressionSelectorWeight {
+    pub unit_index: usize,
+    pub text_index: usize,
+    pub text_total: usize,
+    pub local_time_after_delay: f32,
+    pub raw_amount_percent: f32,
+    pub clamped_amount_percent: f32,
+    pub weight: f32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextComposedSelectorWeight {
+    pub unit: TextUnit,
+    pub selector_index: usize,
+    pub selector_position_percent: f32,
+    pub total: usize,
+    pub range_weight: f32,
+    pub expression_weight: f32,
+    pub final_weight: f32,
+    pub expression: Option<TextExpressionSelectorWeight>,
+}
+
 pub fn text_units(text: &str, based_on: BasedOn) -> Vec<TextUnit> {
     match based_on {
         BasedOn::Characters => character_units(text),
@@ -208,6 +252,82 @@ pub fn evaluate_range_selector_v2_telemetry(
         unit_count: weights.len(),
         weights,
     }
+}
+
+pub fn evaluate_bounce_expression_selector(
+    range_weights: &[TextUnitWeight],
+    selector: &BounceExpressionSelector,
+    time_seconds: f32,
+    layer_start_seconds: f32,
+) -> Vec<TextExpressionSelectorWeight> {
+    let text_total = range_weights.len();
+    range_weights
+        .iter()
+        .map(|range_weight| {
+            let text_index = range_weight.unit.index + 1;
+            let local_time_after_delay =
+                time_seconds - layer_start_seconds - selector.delay_seconds * text_index as f32;
+            let raw_amount_percent = if local_time_after_delay < 0.0 {
+                selector.pre_delay_amount_percent.unwrap_or(0.0)
+            } else {
+                let t = local_time_after_delay;
+                selector.amplitude_percent
+                    * (selector.frequency_hz * t * std::f32::consts::TAU).cos()
+                    / (selector.decay * t).exp()
+            };
+            let weight = (raw_amount_percent / 100.0).clamp(-2.0, 2.0);
+            TextExpressionSelectorWeight {
+                unit_index: range_weight.unit.index,
+                text_index,
+                text_total,
+                local_time_after_delay,
+                raw_amount_percent,
+                clamped_amount_percent: weight * 100.0,
+                weight,
+            }
+        })
+        .collect()
+}
+
+pub fn compose_range_and_bounce_selector_weights(
+    range_weights: &[TextUnitWeight],
+    selector: Option<&BounceExpressionSelector>,
+    time_seconds: f32,
+    layer_start_seconds: f32,
+) -> Vec<TextComposedSelectorWeight> {
+    let expression_weights = selector.map(|selector| {
+        evaluate_bounce_expression_selector(
+            range_weights,
+            selector,
+            time_seconds,
+            layer_start_seconds,
+        )
+    });
+
+    range_weights
+        .iter()
+        .enumerate()
+        .map(|(index, range_weight)| {
+            let expression = expression_weights
+                .as_ref()
+                .and_then(|weights| weights.get(index))
+                .cloned();
+            let expression_weight = expression
+                .as_ref()
+                .map(|weight| weight.weight)
+                .unwrap_or(1.0);
+            TextComposedSelectorWeight {
+                unit: range_weight.unit.clone(),
+                selector_index: range_weight.selector_index,
+                selector_position_percent: range_weight.selector_position_percent,
+                total: range_weight.total,
+                range_weight: range_weight.weight,
+                expression_weight,
+                final_weight: range_weight.weight * expression_weight,
+                expression,
+            }
+        })
+        .collect()
 }
 
 pub fn range_selector_weights(
@@ -830,5 +950,59 @@ mod tests {
             .weights
             .iter()
             .all(|weight| weight.selector_index < weight.total));
+    }
+
+    #[test]
+    fn bounce_expression_selector_exposes_pre_delay_value_branch() {
+        let range_weights = evaluate_range_selector_v2("abcd", &RangeSelectorV2::default(), 0.0);
+        let selector = BounceExpressionSelector {
+            pre_delay_amount_percent: Some(100.0),
+            ..BounceExpressionSelector::default()
+        };
+
+        let weights = evaluate_bounce_expression_selector(&range_weights, &selector, 0.0, 0.0);
+
+        assert_eq!(weights.len(), 4);
+        assert_eq!(weights[0].text_index, 1);
+        assert!(weights[0].local_time_after_delay < 0.0);
+        assert_approx(weights[0].raw_amount_percent, 100.0);
+        assert_approx(weights[0].weight, 1.0);
+    }
+
+    #[test]
+    fn composed_selector_weights_keep_range_expression_and_final_amounts() {
+        let range_selector = RangeSelectorV2 {
+            start_percent: 0.0,
+            end_percent: 100.0,
+            shape: SelectorShape::RampUp,
+            smoothness: 0.0,
+            ..RangeSelectorV2::default()
+        };
+        let range_weights = evaluate_range_selector_v2("abcd", &range_selector, 0.0);
+        let expression_selector = BounceExpressionSelector {
+            delay_seconds: 0.05,
+            ..BounceExpressionSelector::default()
+        };
+
+        let composed = compose_range_and_bounce_selector_weights(
+            &range_weights,
+            Some(&expression_selector),
+            0.05,
+            0.0,
+        );
+
+        assert_eq!(
+            composed
+                .iter()
+                .map(|weight| weight.unit.index)
+                .collect::<Vec<_>>(),
+            vec![0, 1, 2, 3]
+        );
+        assert_approx(composed[0].range_weight, 0.125);
+        assert_approx(composed[0].expression_weight, 1.0);
+        assert_approx(composed[0].final_weight, 0.125);
+        assert_approx(composed[1].expression_weight, 0.0);
+        assert_approx(composed[1].final_weight, 0.0);
+        assert_eq!(composed[0].expression.as_ref().unwrap().text_total, 4);
     }
 }

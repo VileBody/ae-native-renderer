@@ -359,8 +359,12 @@ fn glow_blur_canvas(input: &Canvas, sigma: f32) -> Canvas {
     }
 
     let coeffs = ir_recursive_gaussian_coefficients(sigma.max(IR_GAUSSIAN_MIN_RADIUS));
-    let horizontal = ir_recursive_gaussian_pass_horizontal(input, coeffs);
-    ir_recursive_gaussian_pass_vertical(&horizontal, coeffs)
+    let source = float_canvas_from_canvas(input);
+    let horizontal =
+        ir_recursive_gaussian_pass_horizontal_float(input.width, input.height, &source, coeffs);
+    let blurred =
+        ir_recursive_gaussian_pass_vertical_float(input.width, input.height, &horizontal, coeffs);
+    float_canvas_to_canvas(input.width, input.height, &blurred)
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -404,37 +408,64 @@ fn ir_recursive_gaussian_coefficients(radius: f32) -> IrRecursiveGaussianCoeffic
     }
 }
 
-fn ir_recursive_gaussian_pass_horizontal(
-    input: &Canvas,
+fn ir_recursive_gaussian_pass_horizontal_float(
+    width: u32,
+    height: u32,
+    input: &[[f32; 4]],
     coeffs: IrRecursiveGaussianCoefficients,
-) -> Canvas {
-    let mut output = Canvas::transparent(input.width, input.height);
-    for y in 0..input.height {
-        let mut line = Vec::with_capacity(input.width as usize);
-        for x in 0..input.width {
-            line.push(pixel_to_float(input.pixel(x, y)));
+) -> Vec<[f32; 4]> {
+    let mut output = vec![[0.0_f32; 4]; (width * height) as usize];
+    for y in 0..height {
+        let mut line = Vec::with_capacity(width as usize);
+        for x in 0..width {
+            line.push(input[(y * width + x) as usize]);
         }
         let filtered = ir_recursive_gaussian_filter_line(&line, coeffs);
         for (x, pixel) in filtered.into_iter().enumerate() {
-            output.set_pixel(x as u32, y, float_pixel_to_u8(pixel));
+            output[(y * width + x as u32) as usize] = pixel;
         }
     }
     output
 }
 
-fn ir_recursive_gaussian_pass_vertical(
-    input: &Canvas,
+fn ir_recursive_gaussian_pass_vertical_float(
+    width: u32,
+    height: u32,
+    input: &[[f32; 4]],
     coeffs: IrRecursiveGaussianCoefficients,
-) -> Canvas {
-    let mut output = Canvas::transparent(input.width, input.height);
-    for x in 0..input.width {
-        let mut line = Vec::with_capacity(input.height as usize);
-        for y in 0..input.height {
-            line.push(pixel_to_float(input.pixel(x, y)));
+) -> Vec<[f32; 4]> {
+    let mut output = vec![[0.0_f32; 4]; (width * height) as usize];
+    for x in 0..width {
+        let mut line = Vec::with_capacity(height as usize);
+        for y in 0..height {
+            line.push(input[(y * width + x) as usize]);
         }
         let filtered = ir_recursive_gaussian_filter_line(&line, coeffs);
         for (y, pixel) in filtered.into_iter().enumerate() {
-            output.set_pixel(x, y as u32, float_pixel_to_u8(pixel));
+            output[(y as u32 * width + x) as usize] = pixel;
+        }
+    }
+    output
+}
+
+fn float_canvas_from_canvas(input: &Canvas) -> Vec<[f32; 4]> {
+    let mut output = Vec::with_capacity((input.width * input.height) as usize);
+    for chunk in input.data.chunks_exact(4) {
+        output.push([
+            chunk[0] as f32,
+            chunk[1] as f32,
+            chunk[2] as f32,
+            chunk[3] as f32,
+        ]);
+    }
+    output
+}
+
+fn float_canvas_to_canvas(width: u32, height: u32, input: &[[f32; 4]]) -> Canvas {
+    let mut output = Canvas::transparent(width, height);
+    for y in 0..height {
+        for x in 0..width {
+            output.set_pixel(x, y, float_pixel_to_u8(input[(y * width + x) as usize]));
         }
     }
     output
@@ -486,15 +517,6 @@ fn ir_recursive_gaussian_filter_line(
     }
 
     output
-}
-
-fn pixel_to_float(pixel: [u8; 4]) -> [f32; 4] {
-    [
-        pixel[0] as f32,
-        pixel[1] as f32,
-        pixel[2] as f32,
-        pixel[3] as f32,
-    ]
 }
 
 fn float_pixel_to_u8(pixel: [f32; 4]) -> [u8; 4] {
@@ -854,6 +876,53 @@ mod tests {
         assert_eq!(large.params.radius, 10.0);
         assert_eq!(large.params.ir_gaussian_radius, 4.0);
         assert_eq!(large.params.kernel_radius, 8);
+    }
+
+    #[test]
+    fn recursive_gaussian_quantizes_once_after_both_axes() {
+        let mut input = Canvas::transparent(3, 3);
+        input.set_pixel(1, 1, [191, 113, 47, 173]);
+
+        let sigma = 0.8;
+        let coeffs = ir_recursive_gaussian_coefficients(sigma);
+        let source = float_canvas_from_canvas(&input);
+        let horizontal =
+            ir_recursive_gaussian_pass_horizontal_float(input.width, input.height, &source, coeffs);
+        let final_float = ir_recursive_gaussian_pass_vertical_float(
+            input.width,
+            input.height,
+            &horizontal,
+            coeffs,
+        );
+        let final_once = float_canvas_to_canvas(input.width, input.height, &final_float);
+
+        let mut quantized_horizontal = Canvas::transparent(input.width, input.height);
+        for y in 0..input.height {
+            for x in 0..input.width {
+                quantized_horizontal.set_pixel(
+                    x,
+                    y,
+                    float_pixel_to_u8(horizontal[(y * input.width + x) as usize]),
+                );
+            }
+        }
+        let staged_source = float_canvas_from_canvas(&quantized_horizontal);
+        let staged_float = ir_recursive_gaussian_pass_vertical_float(
+            input.width,
+            input.height,
+            &staged_source,
+            coeffs,
+        );
+        let staged_u8 = float_canvas_to_canvas(input.width, input.height, &staged_float);
+
+        assert_eq!(
+            canvas_debug_hash(&glow_blur_canvas(&input, sigma)),
+            canvas_debug_hash(&final_once)
+        );
+        assert_ne!(
+            canvas_debug_hash(&final_once),
+            canvas_debug_hash(&staged_u8)
+        );
     }
 
     #[test]

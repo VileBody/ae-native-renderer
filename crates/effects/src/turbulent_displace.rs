@@ -461,6 +461,8 @@ struct AeTurbulentFieldModel {
     coordinate_scale: f64,
     pinning: AeTurbulentPinningState,
     table: Vec<f64>,
+    h_lookup: Option<Vec<f32>>,
+    v_lookup: Option<Vec<f32>>,
 }
 
 impl AeTurbulentFieldModel {
@@ -468,17 +470,48 @@ impl AeTurbulentFieldModel {
         let coordinate_scale = ae_coordinate_scale(resolved);
         let pinning = AeTurbulentPinningState::new(input, resolved);
         let table = ae_turbulent_table(resolved);
+        let internal_mode = inferred_ae_internal_displacement_mode(resolved.displacement_type);
+        let h_lookup = if matches!(internal_mode, 9 | 11) {
+            Some(ae_frac1d_lookup(
+                input.width,
+                resolved.offset[0],
+                coordinate_scale,
+                AE_NOISE_X_BIAS,
+                resolved,
+                &table,
+            ))
+        } else {
+            None
+        };
+        let v_lookup = if matches!(internal_mode, 10 | 11) {
+            Some(ae_frac1d_lookup(
+                input.height,
+                resolved.offset[1],
+                coordinate_scale,
+                AE_NOISE_Y_BIAS,
+                resolved,
+                &table,
+            ))
+        } else {
+            None
+        };
         Self {
             amount_pixels: resolved.amplitude as f64,
             resolved,
             coordinate_scale,
             pinning,
             table,
+            h_lookup,
+            v_lookup,
         }
     }
 
     fn field_vector(&self, x: u32, y: u32) -> TurbulentDisplaceFieldVector {
-        let noise = self.field_noise(x, y);
+        let noise = if self.h_lookup.is_some() || self.v_lookup.is_some() {
+            self.frac1d_field_noise(x, y)
+        } else {
+            self.field_noise(x, y)
+        };
         let displacement = self.displacement_from_noise(noise);
         TurbulentDisplaceFieldVector {
             noise,
@@ -501,6 +534,25 @@ impl AeTurbulentFieldModel {
             matches!(self.resolved.displacement_type, 3 | 7),
         );
         [first as f32, second as f32]
+    }
+
+    fn frac1d_field_noise(&self, x: u32, y: u32) -> [f32; 2] {
+        let mut dx_noise = self
+            .v_lookup
+            .as_ref()
+            .and_then(|lookup| lookup.get(y as usize + 1))
+            .copied()
+            .unwrap_or(0.0) as f64;
+        let mut dy_noise = self
+            .h_lookup
+            .as_ref()
+            .and_then(|lookup| lookup.get(x as usize + 1))
+            .copied()
+            .unwrap_or(0.0) as f64;
+        [dx_noise, dy_noise] = self
+            .pinning
+            .apply(x as f64, y as f64, dx_noise, dy_noise, false);
+        [dx_noise as f32, dy_noise as f32]
     }
 
     fn field_pair(&self, x: f64, y: f64) -> [f64; 2] {
@@ -526,7 +578,7 @@ impl AeTurbulentFieldModel {
         }
         let mut dx = self.amount_pixels * noise[0] as f64;
         let mut dy = self.amount_pixels * noise[1] as f64;
-        if matches!(self.resolved.displacement_type, 3 | 7) {
+        if matches!(self.resolved.displacement_type, 3 | 7) && self.h_lookup.is_none() {
             std::mem::swap(&mut dx, &mut dy);
             dx = -dx;
         }
@@ -1039,6 +1091,57 @@ fn ae_table_lookup_bicubic(table: &[f64], x: f64, y: f64) -> f64 {
     ae_bspline(row_ym1, row_y0, row_y1, row_y2, fy)
 }
 
+fn ae_frac1d_lookup(
+    len: u32,
+    offset: f32,
+    coordinate_scale: f64,
+    bias: f64,
+    resolved: TurbulentDisplaceResolvedParams,
+    table: &[f64],
+) -> Vec<f32> {
+    let mut lookup = Vec::with_capacity(len as usize + 2);
+    for index in 0..len + 2 {
+        let coord = (index as f64 - 1.0 - offset as f64) * coordinate_scale + bias;
+        lookup.push(ae_lookup_noise_1d(
+            table,
+            coord,
+            resolved.complexity,
+            resolved.complexity_fraction,
+        ) as f32);
+    }
+    lookup
+}
+
+fn ae_lookup_noise_1d(
+    table: &[f64],
+    mut coord: f64,
+    complexity: u32,
+    complexity_fraction: f32,
+) -> f64 {
+    let mut value = 0.0;
+    let mut amplitude = AE_OCTAVE_INITIAL_AMPLITUDE;
+    for _ in 0..complexity {
+        coord *= AE_LACUNARITY;
+        value += ae_lookup_noise_1d_once(table, coord) * amplitude;
+        amplitude *= AE_OCTAVE_PERSISTENCE;
+    }
+    if complexity_fraction > 0.0 {
+        value += ae_lookup_noise_1d_once(table, coord * AE_LACUNARITY)
+            * amplitude
+            * complexity_fraction as f64;
+    }
+    value
+}
+
+fn ae_lookup_noise_1d_once(table: &[f64], coord: f64) -> f64 {
+    let ix = ae_floor_i32(coord);
+    let fraction = coord - ix as f64;
+    let weight = ae_smoothstep(fraction);
+    let first = table[ae_table_index_1d(ix)];
+    let second = table[ae_table_index_1d(ix.wrapping_add(1))];
+    (1.0 - weight) * first + weight * second
+}
+
 fn ae_bicubic_row(table: &[f64], ix: i32, iy: i32, fx: f64) -> f64 {
     ae_bspline(
         table[ae_table_index_2d(ix.wrapping_sub(1), iy)],
@@ -1052,6 +1155,12 @@ fn ae_bicubic_row(table: &[f64], ix: i32, iy: i32, fx: f64) -> f64 {
 fn ae_table_index_2d(ix: i32, iy: i32) -> usize {
     let row = (((iy >> 6) as u32 ^ ix as u32) & 0x3f) as usize;
     let col = (((ix >> 6) as u32 ^ iy as u32) & 0x3f) as usize;
+    row * AE_TABLE_SIZE + col
+}
+
+fn ae_table_index_1d(ix: i32) -> usize {
+    let row = (ix as u32 & 0x3f) as usize;
+    let col = ((((ix ^ 0x440) >> 6) as u32) & 0x3f) as usize;
     row * AE_TABLE_SIZE + col
 }
 
@@ -1470,6 +1579,54 @@ mod tests {
         assert_eq!(telemetry.ae_wrapper.offset_fixed16, [163_840, -196_608]);
         assert_eq!(telemetry.ae_wrapper.complexity_octaves, 2);
         assert_close(telemetry.ae_wrapper.complexity_fraction, 0.75);
+    }
+
+    #[test]
+    fn frac1d_modes_use_recovered_axis_lookup_buffers() {
+        let input = Canvas::transparent(17, 19);
+        let horizontal_params = json!({
+            "0001": 7,
+            "0002": 45,
+            "0003": 65,
+            "0004": [8, 9],
+            "0005": 2,
+            "0006": 0,
+            "0012": 0
+        });
+        let vertical_params = json!({
+            "0001": 8,
+            "0002": 45,
+            "0003": 65,
+            "0004": [8, 9],
+            "0005": 2,
+            "0006": 0,
+            "0012": 0
+        });
+        let cross_params = json!({
+            "0001": 9,
+            "0002": 45,
+            "0003": 65,
+            "0004": [8, 9],
+            "0005": 2,
+            "0006": 0,
+            "0012": 0
+        });
+
+        let horizontal =
+            turbulent_displace_field_samples(&input, &horizontal_params, 0.0, &[[8, 6], [8, 12]]);
+        assert_close(horizontal[0].displacement[0], 0.0);
+        assert_close(horizontal[1].displacement[0], 0.0);
+        assert_close(horizontal[0].displacement[1], horizontal[1].displacement[1]);
+
+        let vertical =
+            turbulent_displace_field_samples(&input, &vertical_params, 0.0, &[[6, 9], [12, 9]]);
+        assert_close(vertical[0].displacement[1], 0.0);
+        assert_close(vertical[1].displacement[1], 0.0);
+        assert_close(vertical[0].displacement[0], vertical[1].displacement[0]);
+
+        let cross = turbulent_displace_field_samples(&input, &cross_params, 0.0, &[[8, 9]]);
+        assert_ne!(cross[0].displacement[0], 0.0);
+        assert_ne!(cross[0].displacement[1], 0.0);
     }
 
     #[test]
