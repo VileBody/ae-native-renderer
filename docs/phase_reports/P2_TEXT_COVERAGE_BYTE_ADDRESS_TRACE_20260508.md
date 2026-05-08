@@ -458,3 +458,47 @@ Status: P2 coverage for the recovered `COV_W` row-getter fixture is accepted
 and no longer blocked on the ARE integrator. The remaining raster work is
 multi-glyph path-order/CoolType path handoff evidence plus broader text-case
 visual parity.
+
+## TXT Path Order and Final Coverage Gates - 2026-05-08
+
+New script: `scripts/analyze_text_path_order.py` compared TXT_ARE_PathBuilder traces against raw `Montserrat-BoldItalic` contours for three fixtures:
+
+- `target/dynamic_tools_85/p2_cov_rows_safe_COV_I_20260508/COV_I.jsonl`
+- `target/dynamic_tools_85/p2_cov_rows_safe_COV_O_20260508/COV_O.jsonl`
+- `target/dynamic_tools_85/p2_txt_are_producer_direct_covw_20260508_001/COV_W.jsonl`
+
+Output:
+
+`target/ae_agents/p2_path_order_existing_20260508/path_order.json`
+
+Findings:
+
+- `COV_I` glyph `gid 134` is line-only and matches reversed TTF geometry with max error `0.000004865` while normal order is far off (`15.648`).
+- `COV_W` glyph `gid 331` is line-only and matches reversed TTF geometry with max error `0.000009766` while normal order is far off (`19.433`).
+- `COV_O` glyph `gid 204` uses curve commands and still requires curve producer decode.
+
+Decision:
+
+- Production now reverses only line-only contours.
+- **Guardrail:** do not reverse curve contours until the TXT curve producer is decoded.
+
+Artifacts:
+
+- `target/ae_agents/p2_row_compare_covw_line_order_20260508/row_compare.json` (status: accepted)
+  - normalized ink shape: `1.0`
+  - coverage byte exact ratio: `1.0`
+  - merged ink rows exact: `202/202`
+  - mismatch examples: none
+
+- `target/ae_agents/p2_text_line_order_gate_20260508/report.json` (focused gate ok for `TXT_010`, `TXT_020`, `TXT_030`, `TXT_040`, `GPH_010`)
+- `target/ae_agents/p2_text_projected_stable_gate_20260508/report.json` (`TXT_010` mean improved by `-0.0372148`, `TXT_020` mean changed `+0.0185434`, `TXT_030`/`TXT_040`/`GPH_010` effectively unchanged, `text_mismatches=0`)
+
+Validation commands:
+
+```text
+python3 -m py_compile scripts/analyze_text_path_order.py
+cargo test -p text-engine recovered_txt_are_origin_and_subrow_phase_match_cov_w_trace
+cargo test -p text-engine
+cargo test -p render-core text
+cargo test -p render-cli all_manifest_cases_have_native_recipes
+```

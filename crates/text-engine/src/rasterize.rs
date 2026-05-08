@@ -468,14 +468,9 @@ fn build_are_scanline_coverage(
             // edge projector at +0x78e4 computes min/max x over each fixed
             // subrow strip, and +0x430c emits floor(min)..floor(max)+1 events.
             let strip_y_fixed = by as i32 * ss + sy;
-            for (start_fixed, end_fixed) in projected_are_scanline_intervals(
-                outline,
-                scale,
-                x_min,
-                y_max,
-                strip_y_fixed,
-                ss,
-            ) {
+            for (start_fixed, end_fixed) in
+                projected_are_scanline_intervals(outline, scale, x_min, y_max, strip_y_fixed, ss)
+            {
                 if end_fixed <= start_fixed {
                     continue;
                 }
@@ -580,15 +575,23 @@ struct FlattenedOutline {
     contours: Vec<Vec<Point>>,
     current: Vec<Point>,
     current_point: Point,
+    current_has_curve: bool,
 }
 
 impl FlattenedOutline {
     fn finish_contour(&mut self) {
         if self.current.len() >= 2 {
-            self.contours.push(std::mem::take(&mut self.current));
+            let mut contour = std::mem::take(&mut self.current);
+            if !self.current_has_curve {
+                // TXT_ARE_PathBuilder traces for line-only glyphs emit scaled
+                // TTF contour points in reverse order.
+                contour.reverse();
+            }
+            self.contours.push(contour);
         } else {
             self.current.clear();
         }
+        self.current_has_curve = false;
     }
 
     fn push_line(&mut self, point: Point) {
@@ -650,10 +653,12 @@ impl OutlineBuilder for FlattenedOutline {
     }
 
     fn quad_to(&mut self, x1: f32, y1: f32, x: f32, y: f32) {
+        self.current_has_curve = true;
         self.flatten_quad(Point { x: x1, y: y1 }, Point { x, y });
     }
 
     fn curve_to(&mut self, x1: f32, y1: f32, x2: f32, y2: f32, x: f32, y: f32) {
+        self.current_has_curve = true;
         self.flatten_cubic(
             Point { x: x1, y: y1 },
             Point { x: x2, y: y2 },
@@ -1059,9 +1064,27 @@ mod tests {
 
         let first_row = &mask.bitmap[..mask.width];
         let spans = row_nonzero_spans(first_row);
-        assert_eq!(spans[0], (0, 16, "2440404040404040404040404040403c".to_string()));
-        assert_eq!(spans[1], (46, 62, "013e4040404040404040404040404024".to_string()));
-        assert_eq!(spans[2], (92, 109, "1e40404040404040404040404040404004".to_string()));
+        assert_eq!(
+            spans[0],
+            (0, 16, "2440404040404040404040404040403c".to_string())
+        );
+        assert_eq!(
+            spans[1],
+            (46, 62, "013e4040404040404040404040404024".to_string())
+        );
+        assert_eq!(
+            spans[2],
+            (92, 109, "1e40404040404040404040404040404004".to_string())
+        );
+
+        let row48_start = 48 * mask.width;
+        let row48 = &mask.bitmap[row48_start..row48_start + mask.width];
+        let row48_spans = row_nonzero_spans(row48);
+        assert!(row48_spans.contains(&(
+            53,
+            84,
+            "b4fffffffffffffffffffffffffff7ffffffffffffffffffffffffffffe006".to_string()
+        )));
     }
 
     #[test]
