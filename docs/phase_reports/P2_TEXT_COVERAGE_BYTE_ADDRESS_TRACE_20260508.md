@@ -585,3 +585,100 @@ Status: curve producer is now implemented/instrumented from Frida evidence.
 The remaining curve-layer work is not the producer formula; it is the downstream
 ARE curve flatten/edge/raster parity, because `GPH_010` still shows a visible
 metric regression even though the focused gate passes.
+
+## Static Follow-up: Where the Remaining Curve Drift Lives - 2026-05-08
+
+Goal: answer whether the remaining P2 curve mismatch can be solved from the
+current static corpus before sending more AE probes.
+
+Static files read:
+
+- `target/reverse/predecoded/20260507_223624_txt_drawchar_are_vtable`
+- `target/reverse/predecoded/20260507_223741_txt_drawchar_are_helpers`
+- `target/reverse/predecoded/20260507_223902_txt_drawchar_are_lower_helpers`
+- `target/reverse/predecoded/20260507_224844_txt_drawchar_are_pixel_writers`
+- `target/reverse/predecoded/20260508_162000_p2_are_sampler_core`
+- `target/reverse/predecoded/20260508_163607_p2_are_sampler_followups`
+
+Confirmed TXT path command ABI:
+
+```text
+TXT.dll+0x404e0 move:  write x/y float pair, command 0
+TXT.dll+0x40430 line:  write x/y float pair, command 1
+TXT.dll+0x3f050 curve: write three x/y float pairs, command 2 for each point
+TXT.dll+0x3ef60 close: re-emit contour start x/y, command 3
+TXT.dll+0x3f310 render: dispatch by PF depth to 8/16/f32 fill/stroke paths
+```
+
+This matches the Frida path-input evidence: the curve producer emits cubic
+triplets before the BIB/ARE handoff. TXT does not flatten those cubic triplets
+in this layer.
+
+Confirmed handoff:
+
+```text
+TXT.dll+0x3d200 / 0x3d4a0:
+  path command buffer -> TXT.dll+0x40580
+
+TXT.dll+0x40580:
+  calls DAT_18087f778(&out_path, count, coords, commands, ...)
+  retains returned path handle through DAT_18087c038
+
+TXT.dll+0x3fd40:
+  maps path handle through DAT_18087bd40 + 8 + path_id
+  caches BIB path object under a critical section
+  refreshes it through TXT.dll+0x408d0 when the version stamp changes
+
+TXT.dll+0x408d0:
+  DAT_18087beb8(path_table_entry) -> BIB path object
+  DAT_18087bec8(BIB path object)  -> method/API block
+  callback(path_id, 1, object+0x38) fills the returned coverage method block
+```
+
+Known dynamic mapping from the initialized process still applies:
+
+```text
+DAT_18087beb8 -> BIB.dll + 0x18150
+DAT_18087bec0 -> BIB.dll + 0x18130
+DAT_18087bec8 -> BIB.dll + 0x18140
+DAT_18087c038 -> BIB.dll + 0x0a5f0
+DAT_18087c040 -> BIB.dll + 0x0b080
+```
+
+Confirmed TXT row/span output layer:
+
+- `TXT.dll+0x3de50` / `0x3df40` iterate y rows and consume row cells.
+- Row cell ABI is `{ int32 span_type, int32 end_x }`.
+- `span_type == 1` is solid coverage.
+- `span_type == 2` reads one coverage byte per pixel and calls
+  `TXT.dll+0x3c980`.
+- `TXT.dll+0x3c980` / `0x3cb10` are the already-implemented AE integer
+  source-over formulas.
+
+Confirmed ARE row sampler layer:
+
+- `ARE.dll+0x76dc` prepares 16 fixed subrow buckets for `row * 16 + subrow`.
+- `ARE.dll+0x78e4` projects active edge x ranges over a unit-high strip.
+- `ARE.dll+0x430c` converts projected ranges to integer event boundaries with
+  `floor(projected_min)` and `floor(projected_max) + 1`.
+- `ARE.dll+0x75d0` integrates the 16 subrows into a row coverage count.
+
+Conclusion:
+
+- The current native code is already on the right side of TXT path production,
+  row/span output, and ARE-style 16-subrow integration.
+- The remaining `COV_O`/`GPH_010` curve drift is upstream of
+  `ARE.dll+0x75d0`, but downstream of TXT path command emission.
+- The next static target is therefore the BIB/ARE path-object construction and
+  raster painter path behind:
+  `BIB.dll+0x18150`, `BIB.dll+0x18140`, `ARE.dll+0xb7e0`,
+  and the painter functions that populate the active edge list before
+  `ARE.dll+0x76dc`.
+
+Guardrail:
+
+- Do not tune curve flatness or byte amplitudes from final PNG metrics yet.
+- If the next code change touches curve coverage, it should be justified by
+  one of: BIB/ARE static decompile, Frida edge-list dump before `ARE+0x76dc`,
+  or row-getter evidence showing the exact edge coordinates that TXT/BIB handed
+  to ARE.
