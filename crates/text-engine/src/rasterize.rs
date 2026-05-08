@@ -461,29 +461,48 @@ struct RawOutlinePoint {
     on_curve: bool,
 }
 
+#[derive(Debug, Copy, Clone)]
+enum AePathSegment {
+    Line {
+        start: Point,
+        end: Point,
+    },
+    Cubic {
+        start: Point,
+        control1: Point,
+        control2: Point,
+        end: Point,
+    },
+}
+
 fn ae_outline_from_simple_glyf(face: &Face<'_>, glyph_id: GlyphId) -> Option<FlattenedOutline> {
     let glyph = raw_simple_glyph_contours(face, glyph_id)?;
     let mut contours = Vec::new();
+    let mut path_contours = Vec::new();
     for contour in glyph {
         if contour.len() < 2 {
             continue;
         }
         let has_curve = contour.iter().any(|point| !point.on_curve);
-        let flattened = if has_curve {
-            flatten_ae_curve_contour(&contour)
+        let (flattened, path_segments) = if has_curve {
+            let stream = ae_curve_stream_from_reversed_tt(&contour);
+            (flatten_ae_curve_stream(&stream), ae_cubic_segments(&stream))
         } else {
             let mut points = contour.iter().map(|point| point.point).collect::<Vec<_>>();
             // TXT_ARE_PathBuilder traces for line-only glyphs emit scaled TTF
             // contour points in reverse order.
             points.reverse();
-            points
+            let segments = ae_line_segments(&points);
+            (points, segments)
         };
         if flattened.len() >= 2 {
             contours.push(flattened);
+            path_contours.push(path_segments);
         }
     }
     Some(FlattenedOutline {
         contours,
+        path_contours,
         current: Vec::new(),
         current_point: Point::default(),
         current_has_curve: false,
@@ -629,8 +648,7 @@ fn parse_simple_glyf_contours(
     Some(contours)
 }
 
-fn flatten_ae_curve_contour(contour: &[RawOutlinePoint]) -> Vec<Point> {
-    let stream = ae_curve_stream_from_reversed_tt(contour);
+fn flatten_ae_curve_stream(stream: &[Point]) -> Vec<Point> {
     if stream.is_empty() {
         return Vec::new();
     }
@@ -649,6 +667,43 @@ fn flatten_ae_curve_contour(contour: &[RawOutlinePoint]) -> Vec<Point> {
         flattened.pop();
     }
     flattened
+}
+
+fn ae_cubic_segments(stream: &[Point]) -> Vec<AePathSegment> {
+    if stream.is_empty() {
+        return Vec::new();
+    }
+    let mut segments = Vec::new();
+    let mut index = 1usize;
+    let mut current = stream[0];
+    while index + 2 < stream.len() {
+        let control1 = stream[index];
+        let control2 = stream[index + 1];
+        let end = stream[index + 2];
+        segments.push(AePathSegment::Cubic {
+            start: current,
+            control1,
+            control2,
+            end,
+        });
+        current = end;
+        index += 3;
+    }
+    segments
+}
+
+fn ae_line_segments(points: &[Point]) -> Vec<AePathSegment> {
+    if points.len() < 2 {
+        return Vec::new();
+    }
+    let mut segments = Vec::with_capacity(points.len());
+    for index in 0..points.len() {
+        segments.push(AePathSegment::Line {
+            start: points[index],
+            end: points[(index + 1) % points.len()],
+        });
+    }
+    segments
 }
 
 fn ae_curve_stream_from_reversed_tt(contour: &[RawOutlinePoint]) -> Vec<Point> {
@@ -818,33 +873,60 @@ fn projected_are_scanline_intervals(
     let strip_start = strip_y_fixed as f32;
     let strip_end = (strip_y_fixed + 1) as f32;
     let mut events = Vec::new();
-    for contour in &outline.contours {
-        if contour.len() < 2 {
-            continue;
-        }
-        for index in 0..contour.len() {
-            let a = contour[index];
-            let b = contour[(index + 1) % contour.len()];
-            let ax = (a.x * scale - x_min) * ss as f32;
-            let bx = (b.x * scale - x_min) * ss as f32;
-            let ay = (y_max - a.y * scale) * ss as f32;
-            let by = (y_max - b.y * scale) * ss as f32;
-            let min_y = ay.min(by);
-            let max_y = ay.max(by);
-            if max_y <= strip_start || min_y >= strip_end || ay == by {
+    if outline.path_contours.is_empty() {
+        for contour in &outline.contours {
+            if contour.len() < 2 {
                 continue;
             }
-            let y0 = strip_start.clamp(min_y, max_y);
-            let y1 = strip_end.clamp(min_y, max_y);
-            let t0 = ((y0 - ay) / (by - ay)).clamp(0.0, 1.0);
-            let t1 = ((y1 - ay) / (by - ay)).clamp(0.0, 1.0);
-            let x0 = ax + (bx - ax) * t0;
-            let x1 = ax + (bx - ax) * t1;
-            events.push(ProjectedScanlineEvent {
-                x_min_fixed: x0.min(x1).floor() as i32,
-                x_max_fixed: x0.max(x1).floor() as i32,
-                winding_delta: if b.y > a.y { 1 } else { -1 },
-            });
+            for index in 0..contour.len() {
+                push_projected_line_event(
+                    contour[index],
+                    contour[(index + 1) % contour.len()],
+                    scale,
+                    x_min,
+                    y_max,
+                    strip_start,
+                    strip_end,
+                    ss,
+                    &mut events,
+                );
+            }
+        }
+    } else {
+        for contour in &outline.path_contours {
+            for segment in contour {
+                match *segment {
+                    AePathSegment::Line { start, end } => push_projected_line_event(
+                        start,
+                        end,
+                        scale,
+                        x_min,
+                        y_max,
+                        strip_start,
+                        strip_end,
+                        ss,
+                        &mut events,
+                    ),
+                    AePathSegment::Cubic {
+                        start,
+                        control1,
+                        control2,
+                        end,
+                    } => push_projected_cubic_events(
+                        start,
+                        control1,
+                        control2,
+                        end,
+                        scale,
+                        x_min,
+                        y_max,
+                        strip_start,
+                        strip_end,
+                        ss,
+                        &mut events,
+                    ),
+                }
+            }
         }
     }
     // ARE's event list preserves insertion order for equal projected starts;
@@ -872,6 +954,181 @@ fn projected_are_scanline_intervals(
     intervals
 }
 
+#[allow(clippy::too_many_arguments)]
+fn push_projected_line_event(
+    a: Point,
+    b: Point,
+    scale: f32,
+    x_min: f32,
+    y_max: f32,
+    strip_start: f32,
+    strip_end: f32,
+    ss: i32,
+    events: &mut Vec<ProjectedScanlineEvent>,
+) {
+    let ax = (a.x * scale - x_min) * ss as f32;
+    let bx = (b.x * scale - x_min) * ss as f32;
+    let ay = (y_max - a.y * scale) * ss as f32;
+    let by = (y_max - b.y * scale) * ss as f32;
+    let min_y = ay.min(by);
+    let max_y = ay.max(by);
+    if max_y <= strip_start || min_y >= strip_end || ay == by {
+        return;
+    }
+    let y0 = strip_start.clamp(min_y, max_y);
+    let y1 = strip_end.clamp(min_y, max_y);
+    let t0 = ((y0 - ay) / (by - ay)).clamp(0.0, 1.0);
+    let t1 = ((y1 - ay) / (by - ay)).clamp(0.0, 1.0);
+    let x0 = ax + (bx - ax) * t0;
+    let x1 = ax + (bx - ax) * t1;
+    events.push(ProjectedScanlineEvent {
+        x_min_fixed: x0.min(x1).floor() as i32,
+        x_max_fixed: x0.max(x1).floor() as i32,
+        winding_delta: if b.y > a.y { 1 } else { -1 },
+    });
+}
+
+#[allow(clippy::too_many_arguments)]
+fn push_projected_cubic_events(
+    start: Point,
+    control1: Point,
+    control2: Point,
+    end: Point,
+    scale: f32,
+    x_min: f32,
+    y_max: f32,
+    strip_start: f32,
+    strip_end: f32,
+    ss: i32,
+    events: &mut Vec<ProjectedScanlineEvent>,
+) {
+    let p0 = device_point(start, scale, x_min, y_max, ss);
+    let p1 = device_point(control1, scale, x_min, y_max, ss);
+    let p2 = device_point(control2, scale, x_min, y_max, ss);
+    let p3 = device_point(end, scale, x_min, y_max, ss);
+    let mut splits = vec![0.0f32, 1.0];
+    extend_cubic_derivative_roots(p0.x, p1.x, p2.x, p3.x, &mut splits);
+    extend_cubic_derivative_roots(p0.y, p1.y, p2.y, p3.y, &mut splits);
+    splits.sort_by(|a, b| a.total_cmp(b));
+    splits.dedup_by(|a, b| (*a - *b).abs() < 0.000001);
+
+    for window in splits.windows(2) {
+        let t_start = window[0];
+        let t_end = window[1];
+        if t_end <= t_start {
+            continue;
+        }
+        let a = cubic_point(p0, p1, p2, p3, t_start);
+        let b = cubic_point(p0, p1, p2, p3, t_end);
+        let min_y = a.y.min(b.y);
+        let max_y = a.y.max(b.y);
+        if max_y <= strip_start || min_y >= strip_end || a.y == b.y {
+            continue;
+        }
+
+        let y0 = strip_start.clamp(min_y, max_y);
+        let y1 = strip_end.clamp(min_y, max_y);
+        let local0 = solve_monotonic_cubic_y(p0, p1, p2, p3, t_start, t_end, y0);
+        let local1 = solve_monotonic_cubic_y(p0, p1, p2, p3, t_start, t_end, y1);
+        let x0 = cubic_point(p0, p1, p2, p3, local0).x;
+        let x1 = cubic_point(p0, p1, p2, p3, local1).x;
+        events.push(ProjectedScanlineEvent {
+            x_min_fixed: x0.min(x1).floor() as i32,
+            x_max_fixed: x0.max(x1).floor() as i32,
+            winding_delta: if cubic_point_y(start, control1, control2, end, t_end)
+                > cubic_point_y(start, control1, control2, end, t_start)
+            {
+                1
+            } else {
+                -1
+            },
+        });
+    }
+}
+
+fn device_point(point: Point, scale: f32, x_min: f32, y_max: f32, ss: i32) -> Point {
+    Point {
+        x: (point.x * scale - x_min) * ss as f32,
+        y: (y_max - point.y * scale) * ss as f32,
+    }
+}
+
+fn cubic_point(p0: Point, p1: Point, p2: Point, p3: Point, t: f32) -> Point {
+    let mt = 1.0 - t;
+    Point {
+        x: mt * mt * mt * p0.x
+            + 3.0 * mt * mt * t * p1.x
+            + 3.0 * mt * t * t * p2.x
+            + t * t * t * p3.x,
+        y: mt * mt * mt * p0.y
+            + 3.0 * mt * mt * t * p1.y
+            + 3.0 * mt * t * t * p2.y
+            + t * t * t * p3.y,
+    }
+}
+
+fn cubic_point_y(p0: Point, p1: Point, p2: Point, p3: Point, t: f32) -> f32 {
+    let mt = 1.0 - t;
+    mt * mt * mt * p0.y + 3.0 * mt * mt * t * p1.y + 3.0 * mt * t * t * p2.y + t * t * t * p3.y
+}
+
+fn extend_cubic_derivative_roots(p0: f32, p1: f32, p2: f32, p3: f32, out: &mut Vec<f32>) {
+    let a = -p0 + 3.0 * p1 - 3.0 * p2 + p3;
+    let b = 2.0 * (p0 - 2.0 * p1 + p2);
+    let c = p1 - p0;
+    if a.abs() < 1e-6 {
+        if b.abs() >= 1e-6 {
+            push_unit_root(-c / b, out);
+        }
+        return;
+    }
+    let discriminant = b * b - 4.0 * a * c;
+    if discriminant < 0.0 {
+        return;
+    }
+    let root = discriminant.sqrt();
+    push_unit_root((-b - root) / (2.0 * a), out);
+    push_unit_root((-b + root) / (2.0 * a), out);
+}
+
+fn push_unit_root(value: f32, out: &mut Vec<f32>) {
+    if value > 0.0 && value < 1.0 && value.is_finite() {
+        out.push(value);
+    }
+}
+
+fn solve_monotonic_cubic_y(
+    p0: Point,
+    p1: Point,
+    p2: Point,
+    p3: Point,
+    t_start: f32,
+    t_end: f32,
+    target_y: f32,
+) -> f32 {
+    let y_start = cubic_point_y(p0, p1, p2, p3, t_start);
+    let y_end = cubic_point_y(p0, p1, p2, p3, t_end);
+    if (target_y - y_start).abs() < 0.000001 {
+        return t_start;
+    }
+    if (target_y - y_end).abs() < 0.000001 {
+        return t_end;
+    }
+    let increasing = y_end > y_start;
+    let mut lo = t_start;
+    let mut hi = t_end;
+    for _ in 0..24 {
+        let mid = (lo + hi) * 0.5;
+        let y = cubic_point_y(p0, p1, p2, p3, mid);
+        if (y < target_y) == increasing {
+            lo = mid;
+        } else {
+            hi = mid;
+        }
+    }
+    (lo + hi) * 0.5
+}
+
 #[derive(Debug, Copy, Clone, Default)]
 struct Point {
     x: f32,
@@ -881,6 +1138,7 @@ struct Point {
 #[derive(Debug, Default)]
 struct FlattenedOutline {
     contours: Vec<Vec<Point>>,
+    path_contours: Vec<Vec<AePathSegment>>,
     current: Vec<Point>,
     current_point: Point,
     current_has_curve: bool,
@@ -895,6 +1153,7 @@ impl FlattenedOutline {
                 // TTF contour points in reverse order.
                 contour.reverse();
             }
+            self.path_contours.push(ae_line_segments(&contour));
             self.contours.push(contour);
         } else {
             self.current.clear();
