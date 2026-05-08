@@ -79,6 +79,16 @@ nearby AE math backlog. Template status is derived from this table.
 | `M20` | Masks, mattes, blend modes | `not implemented` | not observed as required for current snapshots | Capability reporting/fallback policy only where detected. | Implement only when payload inventory shows usage; then add operator fixtures and AE goldens. |
 | `M21` | 3D, camera, spatial paths, roving keyframes, arbitrary ExtendScript | `not implemented` | not required for current snapshots | Explicit later scope. | Separate roadmap phase; do not block current three-template parity unless payloads start using them. |
 
+M05 current note, 2026-05-08: the text coverage backend has advanced from the older
+4x/nonzero outline raster path to `ttf_outline_are_scanline_16x_v1`. Static and
+dynamic ARE evidence now covers `ARE+0x8230`, `0xb7e0`, `0x75d0`, `0x76dc`,
+`0x78e4`, `0x6920`, and `0x430c`; direct row-getter tracing captured `COV_W`
+as `202` merged ink rows over `109x68`. Native matches the row count and has
+`180/202` normalized ink topology, but coverage amplitude remains off
+(`AE 0x40` vs native `0x30` on the first row), so the next M05 blocker is
+CoolType/BIB outline/grid-fit edge-coordinate production before ARE, not the
+ARE row integrator.
+
 ## Template Composition Status
 
 Observed from the current imported scene snapshots in

@@ -452,8 +452,8 @@ fn build_are_scanline_coverage(
             // ARE.dll+0x76dc seeds 16 row buckets at y*16+subrow; +0x75d0 sums fixed16 spans.
             let py = y_max - by as f32 - sy as f32 / ss as f32;
             for (start_x, end_x) in filled_scanline_intervals(outline, py / scale, scale) {
-                let start_fixed = ((start_x - x_min) * ss as f32).round() as i32;
-                let end_fixed = ((end_x - x_min) * ss as f32).round() as i32;
+                let start_fixed = ((start_x - x_min) * ss as f32).floor() as i32;
+                let end_fixed = ((end_x - x_min) * ss as f32).floor() as i32 + 1;
                 if end_fixed <= start_fixed {
                     continue;
                 }
