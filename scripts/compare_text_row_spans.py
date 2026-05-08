@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 
+FNV1A64_OFFSET = 0xCBF29CE484222325
+FNV1A64_PRIME = 0x100000001B3
+
+
 def iter_jsonl(path: Path) -> list[dict[str, Any]]:
     events: list[dict[str, Any]] = []
     for line in path.read_text(encoding="utf-8", errors="replace").splitlines():
@@ -244,6 +248,76 @@ def build_ae_ink_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return ink_rows
 
 
+def fnv1a64(bytes_value: bytes) -> str:
+    value = FNV1A64_OFFSET
+    for byte in bytes_value:
+        value ^= byte
+        value = (value * FNV1A64_PRIME) & 0xFFFFFFFFFFFFFFFF
+    return f"{value:016x}"
+
+
+def hex_to_bytes(hex_value: Any) -> bytes | None:
+    if not isinstance(hex_value, str) or len(hex_value) == 0:
+        return None
+    text = hex_value.strip()
+    if len(text) % 2 != 0:
+        return None
+    try:
+        return bytes.fromhex(text)
+    except ValueError:
+        return None
+
+
+def coverage_hex(row: dict[str, Any]) -> str | None:
+    value = (
+        row.get("actual_coverage_sample_hex")
+        or row.get("coverage_hex")
+        or row.get("coverage_sample_hex")
+    )
+    return value if isinstance(value, str) and value else None
+
+
+def coverage_hash(row: dict[str, Any]) -> str | None:
+    explicit = row.get("coverage_hash_fnv1a64")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+    bytes_value = hex_to_bytes(coverage_hex(row))
+    return fnv1a64(bytes_value) if bytes_value is not None else None
+
+
+def first_byte_diff(a: bytes, b: bytes) -> dict[str, Any] | None:
+    for index, (av, bv) in enumerate(zip(a, b)):
+        if av != bv:
+            return {"index": index, "ae": av, "native": bv, "delta": av - bv}
+    if len(a) != len(b):
+        return {"index": min(len(a), len(b)), "ae_len": len(a), "native_len": len(b)}
+    return None
+
+
+def adapt_native_rows_to_ae_like(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    adapted = []
+    for row in rows:
+        adapted.append({
+            "schema": "ae-native-renderer.native-text-row-span-ae-like.v1",
+            "source": "native_text_engine",
+            "case": row.get("case"),
+            "frame": row.get("frame"),
+            "pass_index": 0,
+            "pass_role": "fill",
+            "span_type": 2,
+            "y": row.get("y"),
+            "start_x": row.get("start_x"),
+            "end_x": row.get("end_x"),
+            "coverage_len": row.get("coverage_len"),
+            "coverage_sample_hex": row.get("coverage_sample_hex"),
+            "coverage_hex": row.get("coverage_hex"),
+            "coverage_hash_fnv1a64": row.get("coverage_hash_fnv1a64"),
+            "glyph_run_index": row.get("glyph_run_index"),
+            "glyph_id": row.get("glyph_id"),
+        })
+    return adapted
+
+
 def parse_native_rows(path: Path, case_id: str) -> dict[str, Any]:
     rows: list[dict[str, Any]] = []
     per_glyph: Counter[str] = Counter()
@@ -284,10 +358,180 @@ def parse_native_rows(path: Path, case_id: str) -> dict[str, Any]:
         "case": case_id,
         "source_path": str(path),
         "rows": rows,
+        "ae_like_rows": adapt_native_rows_to_ae_like(rows),
         "summary": {
             "row_count": len(rows),
             "glyph_row_counts": dict(per_glyph),
             "unique_y_start_end": len(by_key),
+            "rows_with_coverage_hex": sum(1 for row in rows if row.get("coverage_hex")),
+            "rows_with_coverage_hash": sum(1 for row in rows if row.get("coverage_hash_fnv1a64")),
+        },
+    }
+
+
+def compare_coverage_bytes(
+    ae_type2: list[dict[str, Any]],
+    native_by_key: dict[tuple[Any, Any, Any], list[dict[str, Any]]],
+    align: str = "absolute",
+) -> dict[str, Any]:
+    compared = 0
+    exact = 0
+    prefix_exact = 0
+    hash_exact = 0
+    missing = 0
+    mismatch_examples: list[dict[str, Any]] = []
+    ae_unique_values: Counter[int] = Counter()
+    native_unique_values: Counter[int] = Counter()
+
+    for row in ae_type2:
+        key = (row.get("y"), row.get("start_x"), row.get("end_x"))
+        candidates = native_by_key.get(key) or []
+        if not candidates:
+            continue
+        native = candidates[0]
+        ae_hex = coverage_hex(row)
+        native_hex = coverage_hex(native)
+        ae_bytes = hex_to_bytes(ae_hex)
+        native_bytes = hex_to_bytes(native_hex)
+        if ae_bytes is None or native_bytes is None:
+            missing += 1
+            continue
+
+        compared += 1
+        ae_unique_values.update(ae_bytes)
+        native_unique_values.update(native_bytes)
+        min_len = min(len(ae_bytes), len(native_bytes))
+        is_prefix_exact = ae_bytes[:min_len] == native_bytes[:min_len]
+        is_exact = is_prefix_exact and len(ae_bytes) == len(native_bytes)
+        if is_prefix_exact:
+            prefix_exact += 1
+        if is_exact:
+            exact += 1
+        if coverage_hash(row) is not None and coverage_hash(row) == coverage_hash(native):
+            hash_exact += 1
+        if not is_exact and len(mismatch_examples) < 12:
+            mismatch_examples.append({
+                "y": key[0],
+                "start_x": key[1],
+                "end_x": key[2],
+                "ae_hex": (ae_hex or "")[:96],
+                "native_hex": (native_hex or "")[:96],
+                "ae_len": len(ae_bytes),
+                "native_len": len(native_bytes),
+                "first_diff": first_byte_diff(ae_bytes, native_bytes),
+            })
+
+    ratio = exact / compared if compared else None
+    prefix_ratio = prefix_exact / compared if compared else None
+    hash_ratio = hash_exact / compared if compared else None
+    return {
+        "schema": "ae-native-renderer.text-row-coverage-byte-compare.v1",
+        "align": align,
+        "compared_rows": compared,
+        "exact_rows": exact,
+        "prefix_exact_rows": prefix_exact,
+        "hash_exact_rows": hash_exact,
+        "missing_rows": missing,
+        "exact_ratio": ratio,
+        "prefix_exact_ratio": prefix_ratio,
+        "hash_exact_ratio": hash_ratio,
+        "ae_unique_byte_values": len(ae_unique_values),
+        "native_unique_byte_values": len(native_unique_values),
+        "ae_top_byte_values": [
+            {"value": value, "count": count}
+            for value, count in ae_unique_values.most_common(16)
+        ],
+        "native_top_byte_values": [
+            {"value": value, "count": count}
+            for value, count in native_unique_values.most_common(16)
+        ],
+        "mismatch_examples": mismatch_examples,
+    }
+
+
+def compare_coverage_bytes_normalized(
+    ae_type2: list[dict[str, Any]],
+    native_rows: list[dict[str, Any]],
+) -> dict[str, Any]:
+    def usable(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+        return [
+            row
+            for row in rows
+            if row.get("y") is not None
+            and row.get("start_x") is not None
+            and row.get("end_x") is not None
+        ]
+
+    ae_rows = usable(ae_type2)
+    native_usable = usable(native_rows)
+    if not ae_rows or not native_usable:
+        return compare_coverage_bytes(ae_type2, {}, align="normalized")
+
+    ae_min_y = min(int(row["y"]) for row in ae_rows)
+    ae_min_x = min(int(row["start_x"]) for row in ae_rows)
+    native_min_y = min(int(row["y"]) for row in native_usable)
+    native_min_x = min(int(row["start_x"]) for row in native_usable)
+
+    def key(row: dict[str, Any], min_y: int, min_x: int) -> tuple[int, int, int]:
+        return (
+            int(row["y"]) - min_y,
+            int(row["start_x"]) - min_x,
+            int(row["end_x"]) - min_x,
+        )
+
+    native_by_key: defaultdict[tuple[Any, Any, Any], list[dict[str, Any]]] = defaultdict(list)
+    for row in native_usable:
+        native_by_key[key(row, native_min_y, native_min_x)].append(row)
+
+    ae_normalized = []
+    for row in ae_rows:
+        normalized = dict(row)
+        norm_y, norm_start, norm_end = key(row, ae_min_y, ae_min_x)
+        normalized["y"] = norm_y
+        normalized["start_x"] = norm_start
+        normalized["end_x"] = norm_end
+        ae_normalized.append(normalized)
+
+    result = compare_coverage_bytes(ae_normalized, native_by_key, align="normalized")
+    result["origins"] = {
+        "ae": {"y": ae_min_y, "x": ae_min_x},
+        "native": {"y": native_min_y, "x": native_min_x},
+    }
+    return result
+
+
+def acceptance_summary(
+    ae_type2_count: int,
+    native_count: int,
+    common_count: int,
+    normalized_ink: dict[str, Any],
+    byte_compare: dict[str, Any],
+) -> dict[str, Any]:
+    shape_denominator = max(ae_type2_count, native_count, 1)
+    shape_ratio = common_count / shape_denominator
+    ink_ae = (normalized_ink.get("ae") or {}).get("row_count") or 0
+    ink_native = (normalized_ink.get("native") or {}).get("row_count") or 0
+    ink_common = normalized_ink.get("common_y_start_end") or 0
+    ink_ratio = ink_common / max(ink_ae, ink_native, 1)
+    byte_ratio = byte_compare.get("exact_ratio")
+    if byte_compare.get("compared_rows", 0) == 0:
+        status = "instrumentation-incomplete"
+    elif shape_ratio >= 0.99 and ink_ratio >= 0.99 and (byte_ratio or 0.0) >= 0.99:
+        status = "accepted"
+    elif shape_ratio >= 0.90 or ink_ratio >= 0.90:
+        status = "formula-tuning"
+    else:
+        status = "substrate-mismatch"
+    return {
+        "schema": "ae-native-renderer.text-row-span-acceptance.v1",
+        "status": status,
+        "shape_exact_ratio": shape_ratio,
+        "normalized_ink_shape_ratio": ink_ratio,
+        "coverage_byte_exact_ratio": byte_ratio,
+        "criteria": {
+            "accepted": "shape_exact_ratio>=0.99 and normalized_ink_shape_ratio>=0.99 and coverage_byte_exact_ratio>=0.99",
+            "formula_tuning": "shape is mostly aligned but coverage bytes still diverge",
+            "instrumentation_incomplete": "no comparable coverage bytes were captured",
         },
     }
 
@@ -333,6 +577,15 @@ def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
                 })
     normalized = compare_normalized_rows(ae_type2, native_rows)
     normalized_ink = compare_normalized_rows(ae_ink_rows, native_rows)
+    byte_compare_absolute = compare_coverage_bytes(ae_type2, native_by_key)
+    byte_compare = compare_coverage_bytes_normalized(ae_type2, native_rows)
+    acceptance = acceptance_summary(
+        len(ae_type2),
+        len(native_rows),
+        sum(common.values()),
+        normalized_ink,
+        byte_compare,
+    )
     return {
         "schema": "ae-native-renderer.text-row-span-compare.v1",
         "ae_type2_rows": len(ae_type2),
@@ -343,6 +596,9 @@ def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
         "coverage_sample_matches": sample_matches,
         "coverage_sample_mismatches": sample_mismatches,
         "coverage_sample_missing": sample_missing,
+        "coverage_byte_compare": byte_compare,
+        "coverage_byte_compare_absolute": byte_compare_absolute,
+        "acceptance": acceptance,
         "coverage_sample_mismatch_examples": sample_mismatch_examples,
         "normalized_shape": normalized,
         "normalized_ink_shape": normalized_ink,

@@ -7,7 +7,7 @@ use ttf_parser::{Face, GlyphId, OutlineBuilder};
 
 use crate::{layout_text, load_font_with_telemetry, TextLayoutRequest, TextLayoutResult};
 
-const OUTLINE_COVERAGE_SUPERSAMPLE: u32 = 4;
+const OUTLINE_COVERAGE_SUPERSAMPLE: u32 = 16;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextRasterTrace {
@@ -129,7 +129,7 @@ pub fn rasterize_text_with_layout(
                 )
             })
             .unwrap_or_else(|| fontdue_coverage(&font, glyph_id, glyph.x, baseline, req.font_size));
-        used_outline_backend |= coverage.backend == "ttf_outline_nonzero_supersample";
+        used_outline_backend |= coverage.backend == "ttf_outline_are_scanline_16x";
         let clipped_bounds = clipped_bitmap_bounds(
             coverage.raster_x,
             coverage.raster_y,
@@ -232,7 +232,7 @@ pub fn rasterize_text_with_layout(
             fill_rgba,
             stroke_rgba,
             coverage_backend: if used_outline_backend {
-                "ttf_outline_nonzero_supersample_v1"
+                "ttf_outline_are_scanline_16x_v1"
             } else {
                 "fontdue_rasterize_indexed_fallback"
             }
@@ -343,7 +343,7 @@ impl CoverageMask {
             raster_x: glyph_x + self.x_min,
             raster_y: baseline - self.y_max,
             bitmap: self.bitmap.clone(),
-            backend: "ttf_outline_nonzero_supersample",
+            backend: "ttf_outline_are_scanline_16x",
             supersample: self.supersample,
             origin_source: "ttf_outline_bbox_baseline",
             nonzero_pixels: self.nonzero_pixels,
@@ -386,31 +386,36 @@ fn build_outline_coverage_mask(
     }
 
     let ss = supersample.max(1);
-    let sample_count = ss * ss;
-    let sample_step = 1.0 / ss as f32;
     let mut bitmap = vec![0u8; width * height];
     let mut nonzero_pixels = 0u32;
-    for by in 0..height {
-        for bx in 0..width {
-            let mut covered = 0u32;
-            for sy in 0..ss {
-                for sx in 0..ss {
-                    let px = x_min + bx as f32 + (sx as f32 + 0.5) * sample_step;
-                    let py = y_max - by as f32 - (sy as f32 + 0.5) * sample_step;
-                    let design_point = Point {
-                        x: px / scale,
-                        y: py / scale,
-                    };
-                    if outline.contains_nonzero(design_point) {
-                        covered += 1;
+    if ss == 16 {
+        build_are_scanline_coverage(&outline, scale, x_min, y_max, width, height, &mut bitmap);
+        nonzero_pixels = bitmap.iter().filter(|alpha| **alpha > 0).count() as u32;
+    } else {
+        let sample_count = ss * ss;
+        let sample_step = 1.0 / ss as f32;
+        for by in 0..height {
+            for bx in 0..width {
+                let mut covered = 0u32;
+                for sy in 0..ss {
+                    for sx in 0..ss {
+                        let px = x_min + bx as f32 + (sx as f32 + 0.5) * sample_step;
+                        let py = y_max - by as f32 - (sy as f32 + 0.5) * sample_step;
+                        let design_point = Point {
+                            x: px / scale,
+                            y: py / scale,
+                        };
+                        if outline.contains_nonzero(design_point) {
+                            covered += 1;
+                        }
                     }
                 }
+                if covered > 0 {
+                    nonzero_pixels += 1;
+                }
+                bitmap[by * width + bx] =
+                    ((covered as f32 / sample_count as f32) * 255.0).round() as u8;
             }
-            if covered > 0 {
-                nonzero_pixels += 1;
-            }
-            bitmap[by * width + bx] =
-                ((covered as f32 / sample_count as f32) * 255.0).round() as u8;
         }
     }
 
@@ -423,6 +428,106 @@ fn build_outline_coverage_mask(
         nonzero_pixels,
         supersample: ss,
     })
+}
+
+#[derive(Debug, Copy, Clone)]
+struct ScanlineEvent {
+    x: f32,
+    winding_delta: i32,
+}
+
+fn build_are_scanline_coverage(
+    outline: &FlattenedOutline,
+    scale: f32,
+    x_min: f32,
+    y_max: f32,
+    width: usize,
+    height: usize,
+    bitmap: &mut [u8],
+) {
+    let ss = 16i32;
+    for by in 0..height {
+        let mut row_fixed = vec![0u16; width];
+        for sy in 0..ss {
+            // ARE.dll+0x76dc seeds 16 row buckets at y*16+subrow; +0x75d0 sums fixed16 spans.
+            let py = y_max - by as f32 - sy as f32 / ss as f32;
+            for (start_x, end_x) in filled_scanline_intervals(outline, py / scale, scale) {
+                let start_fixed = ((start_x - x_min) * ss as f32).round() as i32;
+                let end_fixed = ((end_x - x_min) * ss as f32).round() as i32;
+                if end_fixed <= start_fixed {
+                    continue;
+                }
+                let bx0 = start_fixed.div_euclid(ss).clamp(0, width as i32);
+                let bx1 = ((end_fixed + ss - 1).div_euclid(ss)).clamp(0, width as i32);
+                for bx in bx0..bx1 {
+                    let pixel_start = bx * ss;
+                    let pixel_end = pixel_start + ss;
+                    let covered =
+                        (end_fixed.min(pixel_end) - start_fixed.max(pixel_start)).clamp(0, ss);
+                    if covered > 0 {
+                        let slot = &mut row_fixed[bx as usize];
+                        *slot = (*slot + covered as u16).min(256);
+                    }
+                }
+            }
+        }
+
+        for (bx, coverage) in row_fixed.into_iter().enumerate() {
+            bitmap[by * width + bx] = if coverage >= 256 {
+                u8::MAX
+            } else {
+                coverage as u8
+            };
+        }
+    }
+}
+
+fn filled_scanline_intervals(
+    outline: &FlattenedOutline,
+    y_design: f32,
+    scale: f32,
+) -> Vec<(f32, f32)> {
+    let mut events = Vec::new();
+    for contour in &outline.contours {
+        if contour.len() < 2 {
+            continue;
+        }
+        for index in 0..contour.len() {
+            let a = contour[index];
+            let b = contour[(index + 1) % contour.len()];
+            if (a.y <= y_design && b.y > y_design) || (b.y <= y_design && a.y > y_design) {
+                let t = (y_design - a.y) / (b.y - a.y);
+                events.push(ScanlineEvent {
+                    x: (a.x + (b.x - a.x) * t) * scale,
+                    winding_delta: if b.y > a.y { 1 } else { -1 },
+                });
+            }
+        }
+    }
+    events.sort_by(|a, b| a.x.total_cmp(&b.x));
+
+    let mut intervals = Vec::new();
+    let mut winding = 0i32;
+    let mut start_x: Option<f32> = None;
+    let mut index = 0usize;
+    while index < events.len() {
+        let x = events[index].x;
+        if winding != 0 {
+            if let Some(start) = start_x.take() {
+                if x > start {
+                    intervals.push((start, x));
+                }
+            }
+        }
+        while index < events.len() && events[index].x == x {
+            winding += events[index].winding_delta;
+            index += 1;
+        }
+        if winding != 0 {
+            start_x = Some(x);
+        }
+    }
+    intervals
 }
 
 #[derive(Debug, Copy, Clone, Default)]
@@ -660,7 +765,7 @@ fn coverage_row_spans(
             let coverage_bytes = &bitmap[by * width + start_bx..by * width + bx];
             spans.push(CoverageRowSpan {
                 schema: "ae-native-renderer.text-coverage-row.v1".to_string(),
-                policy: "native_nonzero_contiguous_runs_with_integer_origin".to_string(),
+                policy: "are_scanline_16x_contiguous_runs_with_integer_origin".to_string(),
                 glyph_run_index,
                 glyph_id,
                 y: py,
@@ -882,9 +987,9 @@ mod tests {
         let (_canvas, trace) =
             rasterize_text_with_layout(&req, &layout, 256, 128, [255, 255, 255, 255]).unwrap();
 
-        assert_eq!(trace.coverage_backend, "ttf_outline_nonzero_supersample_v1");
+        assert_eq!(trace.coverage_backend, "ttf_outline_are_scanline_16x_v1");
         assert!(trace.draw_chars.iter().all(|draw_char| {
-            draw_char.coverage_backend == "ttf_outline_nonzero_supersample"
+            draw_char.coverage_backend == "ttf_outline_are_scanline_16x"
                 && draw_char.coverage_supersample == OUTLINE_COVERAGE_SUPERSAMPLE
                 && draw_char.coverage_nonzero_pixels > 0
                 && !draw_char.coverage_rows.is_empty()
