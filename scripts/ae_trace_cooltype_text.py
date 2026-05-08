@@ -239,6 +239,30 @@ function hookEnabled(hook) {
       "txt_pf_transferrect"
     ].indexOf(hook.surface) !== -1;
   }
+  if (hookProfile === "txt-are-spans-basic") {
+    return [
+      "BEE_IMPORT_TXT_DrawChar_edf6b0",
+      "TXTp_DrawChar3_ARE_42110",
+      "TXT_DrawChar_outline_core_42b80",
+      "TXT_ARE_Render_8bpc_3c360",
+      "TXT_ARE_Render_8bpc_fill_3d200",
+      "TXT_ARE_Render_8bpc_stroke_3d960",
+      "TXT_ARE_OutputComposite_8bpc_3de50",
+      "TXT_ARE_PixelWriter8_span_3b8c0",
+      "TXT_IMPORT_PF_TransferRect_694f30"
+    ].indexOf(hook.name) !== -1;
+  }
+  if (hookProfile === "txt-are-byte-rows") {
+    return [
+      "BEE_IMPORT_TXT_DrawChar_edf6b0",
+      "TXTp_DrawChar3_ARE_42110",
+      "TXT_DrawChar_outline_core_42b80",
+      "TXT_ARE_Render_8bpc_fill_3d200",
+      "TXT_ARE_Render_8bpc_stroke_3d960",
+      "TXT_ARE_PixelWriter8_span_3b8c0",
+      "TXT_ARE_PixelWriter8_type2_stride_add_3ba5b"
+    ].indexOf(hook.name) !== -1;
+  }
   if (hookProfile === "txt-are-byte-samples") {
     return [
       "bee_text_drawchar_target",
@@ -2529,7 +2553,7 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--attach-delay", type=float, default=0.0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "are-event-writer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-spans-basic", "txt-are-byte-rows", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "are-event-writer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
     # Accepted for compatibility with ae_trace_drop_shadow_softness helpers.
     ap.add_argument("--generic-hook-limit", type=int, default=0)
     ap.add_argument("--max-stalk-render-calls", type=int, default=0)
@@ -2785,7 +2809,7 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=240)
     ap.add_argument("--attach-delay", type=int, default=0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "are-event-writer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-spans-basic", "txt-are-byte-rows", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "are-event-writer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
     ap.add_argument("--allow-render-failure", action="store_true")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--live-tail", action="store_true")

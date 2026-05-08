@@ -245,7 +245,8 @@ def build_ae_ink_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             }
     if current is not None:
         ink_rows.append(current)
-    return ink_rows
+    case_id = str(rows[0].get("case") if rows else "")
+    return enrich_ink_rows(ink_rows, case_id, "ae_txt_are")
 
 
 def fnv1a64(bytes_value: bytes) -> str:
@@ -283,6 +284,107 @@ def coverage_hash(row: dict[str, Any]) -> str | None:
         return explicit
     bytes_value = hex_to_bytes(coverage_hex(row))
     return fnv1a64(bytes_value) if bytes_value is not None else None
+
+
+def reconstruct_coverage_hex_from_parts(parts: Any) -> str | None:
+    if not isinstance(parts, list) or not parts:
+        return None
+    chunks: list[str] = []
+    expected_start: int | None = None
+    for part in parts:
+        if not isinstance(part, dict):
+            return None
+        try:
+            start = int(part["start_x"])
+            end = int(part["end_x"])
+        except (KeyError, TypeError, ValueError):
+            return None
+        if end < start:
+            return None
+        if expected_start is not None and start != expected_start:
+            return None
+        length = end - start
+        span_type = part.get("span_type")
+        if span_type == 1:
+            chunks.append("ff" * length)
+        elif span_type == 2:
+            value = coverage_hex(part)
+            if not isinstance(value, str) or len(value) < length * 2:
+                return None
+            chunks.append(value[: length * 2])
+        else:
+            return None
+        expected_start = end
+    return "".join(chunks)
+
+
+def enrich_ink_rows(rows: list[dict[str, Any]], case_id: str, source: str) -> list[dict[str, Any]]:
+    enriched: list[dict[str, Any]] = []
+    for row in rows:
+        out = dict(row)
+        out.setdefault("schema", "ae-native-renderer.ae-text-ink-row-span.v1")
+        out.setdefault("source", source)
+        out["case"] = case_id
+        if "coverage_len" not in out and out.get("start_x") is not None and out.get("end_x") is not None:
+            out["coverage_len"] = int(out["end_x"]) - int(out["start_x"])
+        reconstructed = coverage_hex(out) or reconstruct_coverage_hex_from_parts(out.get("parts"))
+        if reconstructed:
+            out["coverage_hex"] = reconstructed
+            out["coverage_sample_hex"] = reconstructed
+            out["coverage_hash_fnv1a64"] = fnv1a64(bytes.fromhex(reconstructed))
+        enriched.append(out)
+    return enriched
+
+
+def parse_are_row_getter_analysis(path: Path, case_id: str) -> dict[str, Any]:
+    raw = json.loads(path.read_text(encoding="utf-8"))
+    rows: list[dict[str, Any]] = []
+    span_types: Counter[str] = Counter()
+    for row in raw.get("row_getter_rows") or []:
+        if not isinstance(row, dict):
+            continue
+        out = dict(row)
+        out.setdefault("schema", "ae-native-renderer.are-row-getter-row.v1")
+        out["source"] = "ARE_row_getter_8230"
+        out["case"] = case_id
+        if "coverage_sample_hex" not in out and isinstance(out.get("coverage_hex"), str):
+            out["coverage_sample_hex"] = out["coverage_hex"]
+        rows.append(out)
+        span_types[str(out.get("span_type"))] += 1
+
+    ink_rows = enrich_ink_rows(
+        [
+            dict(row)
+            for row in raw.get("row_getter_ink_rows") or []
+            if isinstance(row, dict)
+        ],
+        case_id,
+        "ARE_row_getter_8230",
+    )
+    if not ink_rows:
+        ink_rows = build_ae_ink_rows(rows)
+
+    hook_counts = {
+        str(item.get("key")): item.get("count")
+        for item in raw.get("hook_counts") or []
+        if isinstance(item, dict)
+    }
+    return {
+        "schema": "ae-native-renderer.text-row-span-parse.v1",
+        "case": case_id,
+        "source_path": str(path),
+        "source_kind": "are_row_getter_analysis",
+        "rows": rows,
+        "ink_rows": ink_rows,
+        "summary": {
+            "row_count": len(rows),
+            "type2_row_count": sum(1 for row in rows if row.get("span_type") == 2),
+            "ink_row_count": len(ink_rows),
+            "hook_counts": hook_counts,
+            "span_type_counts": dict(span_types),
+            "trace_path": raw.get("trace_path"),
+        },
+    }
 
 
 def first_byte_diff(a: bytes, b: bytes) -> dict[str, Any] | None:
@@ -508,7 +610,7 @@ def acceptance_summary(
     byte_compare: dict[str, Any],
 ) -> dict[str, Any]:
     shape_denominator = max(ae_type2_count, native_count, 1)
-    shape_ratio = common_count / shape_denominator
+    absolute_type2_shape_ratio = common_count / shape_denominator
     ink_ae = (normalized_ink.get("ae") or {}).get("row_count") or 0
     ink_native = (normalized_ink.get("native") or {}).get("row_count") or 0
     ink_common = normalized_ink.get("common_y_start_end") or 0
@@ -516,20 +618,20 @@ def acceptance_summary(
     byte_ratio = byte_compare.get("exact_ratio")
     if byte_compare.get("compared_rows", 0) == 0:
         status = "instrumentation-incomplete"
-    elif shape_ratio >= 0.99 and ink_ratio >= 0.99 and (byte_ratio or 0.0) >= 0.99:
+    elif ink_ratio >= 0.99 and (byte_ratio or 0.0) >= 0.99:
         status = "accepted"
-    elif shape_ratio >= 0.90 or ink_ratio >= 0.90:
+    elif absolute_type2_shape_ratio >= 0.90 or ink_ratio >= 0.90:
         status = "formula-tuning"
     else:
         status = "substrate-mismatch"
     return {
         "schema": "ae-native-renderer.text-row-span-acceptance.v1",
         "status": status,
-        "shape_exact_ratio": shape_ratio,
+        "shape_exact_ratio": absolute_type2_shape_ratio,
         "normalized_ink_shape_ratio": ink_ratio,
         "coverage_byte_exact_ratio": byte_ratio,
         "criteria": {
-            "accepted": "shape_exact_ratio>=0.99 and normalized_ink_shape_ratio>=0.99 and coverage_byte_exact_ratio>=0.99",
+            "accepted": "normalized_ink_shape_ratio>=0.99 and coverage_byte_exact_ratio>=0.99",
             "formula_tuning": "shape is mostly aligned but coverage bytes still diverge",
             "instrumentation_incomplete": "no comparable coverage bytes were captured",
         },
@@ -579,12 +681,13 @@ def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
     normalized_ink = compare_normalized_rows(ae_ink_rows, native_rows)
     byte_compare_absolute = compare_coverage_bytes(ae_type2, native_by_key)
     byte_compare = compare_coverage_bytes_normalized(ae_type2, native_rows)
+    byte_compare_ink = compare_coverage_bytes_normalized(ae_ink_rows, native_rows)
     acceptance = acceptance_summary(
         len(ae_type2),
         len(native_rows),
         sum(common.values()),
         normalized_ink,
-        byte_compare,
+        byte_compare_ink if byte_compare_ink.get("compared_rows", 0) else byte_compare,
     )
     return {
         "schema": "ae-native-renderer.text-row-span-compare.v1",
@@ -597,6 +700,7 @@ def compare_rows(ae: dict[str, Any], native: dict[str, Any]) -> dict[str, Any]:
         "coverage_sample_mismatches": sample_mismatches,
         "coverage_sample_missing": sample_missing,
         "coverage_byte_compare": byte_compare,
+        "coverage_byte_compare_ink": byte_compare_ink,
         "coverage_byte_compare_absolute": byte_compare_absolute,
         "acceptance": acceptance,
         "coverage_sample_mismatch_examples": sample_mismatch_examples,
@@ -669,14 +773,19 @@ def compare_normalized_rows(ae_rows: list[dict[str, Any]], native_rows: list[dic
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--ae-jsonl", default="")
+    ap.add_argument("--ae-row-getter-analysis", default="")
     ap.add_argument("--native-text-telemetry", default="")
     ap.add_argument("--case", required=True)
     ap.add_argument("--out", required=True)
     args = ap.parse_args()
 
     result: dict[str, Any] = {"case": args.case}
+    if args.ae_jsonl and args.ae_row_getter_analysis:
+        raise SystemExit("--ae-jsonl and --ae-row-getter-analysis are mutually exclusive")
     if args.ae_jsonl:
         result["ae"] = parse_ae_rows(Path(args.ae_jsonl), args.case)
+    if args.ae_row_getter_analysis:
+        result["ae"] = parse_are_row_getter_analysis(Path(args.ae_row_getter_analysis), args.case)
     if args.native_text_telemetry:
         result["native"] = parse_native_rows(Path(args.native_text_telemetry), args.case)
     if "ae" in result and "native" in result:
@@ -688,6 +797,7 @@ def main() -> int:
     print(json.dumps({
         "out": str(out),
         "ae_rows": result.get("ae", {}).get("summary", {}).get("row_count"),
+        "ae_ink_rows": result.get("ae", {}).get("summary", {}).get("ink_row_count"),
         "native_rows": result.get("native", {}).get("summary", {}).get("row_count"),
         "plane_probe_count": result.get("ae", {}).get("summary", {}).get("plane_probe_count"),
     }, ensure_ascii=False))

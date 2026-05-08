@@ -375,5 +375,86 @@ Remaining open:
   produces `02`; this third byte is from the older dense span route and still
   needs an authoritative `3ba5b`/`3ba80` dense capture before changing formula.
 
-Status: P2 text coverage is now in narrow formula-tuning territory, not
-producer-substrate discovery, for the `Montserrat W` coverage case.
+## Authoritative ARE Row Getter Dense Follow-up
+
+The older dense writer trace was still ambiguous after row 0 because the
+legacy plane-snapshot heuristic could read stale/pointer-like bytes. The safer
+route is `ARE_row_getter_8230`, which returns the row span buffer plus the
+scratch coverage bytes after lazy row evaluation.
+
+New dense row-getter artifacts:
+
+```text
+target/dynamic_tools_85/p2_cov_w_are_row_getter_dense_20260508_001/COV_W.jsonl
+target/ae_agents/p2_cov_w_are_row_getter_dense_20260508/analysis.json
+target/ae_agents/p2_row_compare_covw_projected_stable_20260508/row_compare.json
+```
+
+`scripts/compare_text_row_spans.py` now accepts:
+
+```text
+--ae-row-getter-analysis target/ae_agents/p2_cov_w_are_row_getter_dense_20260508/analysis.json
+```
+
+and reconstructs merged ink-row bytes from `span_type=1` solid runs plus
+`span_type=2` coverage-byte runs. This is now the preferred P2 row coverage
+metric source.
+
+Static formula correction from Ghidra:
+
+- `ARE+0x76dc` seeds 16 fixed subrow buckets per pixel row.
+- `ARE+0x78e4` projects each active edge over the whole `1/16`-pixel vertical
+  strip, producing `projected_min/projected_max`.
+- `ARE+0x430c` emits `floor(projected_min)` and closes with
+  `floor(projected_max) + 1`.
+- `ARE+0x75d0` integrates those fixed x-event streams into coverage bytes.
+
+Native change:
+
+- Replaced the old single scanline-intersection approximation with the
+  recovered projected-edge-strip event model.
+- Preserved stable ordering for equal projected starts; adding an `x_max`
+  secondary sort changes a vertex-tie byte.
+
+Validation:
+
+```text
+python3 scripts/compare_text_row_spans.py \
+  --case COV_W \
+  --ae-row-getter-analysis target/ae_agents/p2_cov_w_are_row_getter_dense_20260508/analysis.json \
+  --native-text-telemetry target/ae_agents/p2_cov_w_projected_stable_native_20260508/rendered/text_telemetry.jsonl \
+  --out target/ae_agents/p2_row_compare_covw_projected_stable_20260508/row_compare.json
+cargo test -p text-engine -- --nocapture
+cargo test -p render-core text -- --nocapture
+cargo test -p render-cli all_manifest_cases_have_native_recipes -- --nocapture
+cargo run -q -p render-cli -- conformance-pack \
+  --case TXT_010 --case TXT_020 --case TXT_030 --case TXT_040 --case GPH_010 \
+  --out target/ae_agents/p2_text_projected_stable_gate_20260508
+```
+
+`COV_W` row coverage status:
+
+```text
+before origin/phase: 199 / 202 ink rows,  24 / 199 merged bytes exact
+after projected ARE: 202 / 202 ink rows, 201 / 202 merged bytes exact
+type-2 edge rows:     3 / 3 exact
+status: accepted
+```
+
+Remaining one-byte residual:
+
+```text
+norm y=48, x=53..84
+AE:     b4fffffffffffffffffffffffffff7ffffffffffffffffffffffffffffe006
+native: b4fffffffffffffffffffffffffff9ffffffffffffffffffffffffffffe006
+```
+
+Direct `TXT_ARE_PathBuilder` evidence shows the traced `W` contour order can
+make this exact too, but applying a global contour reversal regressed multi-glyph
+text conformance (`TXT_030` especially). So the production path keeps the
+non-reversed TTF contour order until we have multi-glyph path-order evidence.
+
+Status: P2 coverage for the recovered `COV_W` row-getter fixture is accepted
+and no longer blocked on the ARE integrator. The remaining raster work is
+multi-glyph path-order/CoolType path handoff evidence plus broader text-case
+visual parity.

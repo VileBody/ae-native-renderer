@@ -445,8 +445,9 @@ fn build_outline_coverage_mask(
 }
 
 #[derive(Debug, Copy, Clone)]
-struct ScanlineEvent {
-    x: f32,
+struct ProjectedScanlineEvent {
+    x_min_fixed: i32,
+    x_max_fixed: i32,
     winding_delta: i32,
 }
 
@@ -463,12 +464,18 @@ fn build_are_scanline_coverage(
     for by in 0..height {
         let mut row_fixed = vec![0u16; width];
         for sy in 0..ss {
-            // ARE.dll+0x76dc seeds 16 row buckets at y*16+subrow; +0x75d0 sums fixed16 spans.
-            // TXT traces show the coverage plane samples the lower edge of each fixed subrow.
-            let py = y_max - by as f32 - (sy as f32 + 1.0) / ss as f32;
-            for (start_x, end_x) in filled_scanline_intervals(outline, py / scale, scale) {
-                let start_fixed = ((start_x - x_min) * ss as f32).floor() as i32;
-                let end_fixed = ((end_x - x_min) * ss as f32).floor() as i32 + 1;
+            // ARE.dll+0x76dc seeds 16 row buckets at y*16+subrow. The active
+            // edge projector at +0x78e4 computes min/max x over each fixed
+            // subrow strip, and +0x430c emits floor(min)..floor(max)+1 events.
+            let strip_y_fixed = by as i32 * ss + sy;
+            for (start_fixed, end_fixed) in projected_are_scanline_intervals(
+                outline,
+                scale,
+                x_min,
+                y_max,
+                strip_y_fixed,
+                ss,
+            ) {
                 if end_fixed <= start_fixed {
                     continue;
                 }
@@ -497,11 +504,16 @@ fn build_are_scanline_coverage(
     }
 }
 
-fn filled_scanline_intervals(
+fn projected_are_scanline_intervals(
     outline: &FlattenedOutline,
-    y_design: f32,
     scale: f32,
-) -> Vec<(f32, f32)> {
+    x_min: f32,
+    y_max: f32,
+    strip_y_fixed: i32,
+    ss: i32,
+) -> Vec<(i32, i32)> {
+    let strip_start = strip_y_fixed as f32;
+    let strip_end = (strip_y_fixed + 1) as f32;
     let mut events = Vec::new();
     for contour in &outline.contours {
         if contour.len() < 2 {
@@ -510,36 +522,48 @@ fn filled_scanline_intervals(
         for index in 0..contour.len() {
             let a = contour[index];
             let b = contour[(index + 1) % contour.len()];
-            if (a.y <= y_design && b.y > y_design) || (b.y <= y_design && a.y > y_design) {
-                let t = (y_design - a.y) / (b.y - a.y);
-                events.push(ScanlineEvent {
-                    x: (a.x + (b.x - a.x) * t) * scale,
-                    winding_delta: if b.y > a.y { 1 } else { -1 },
-                });
+            let ax = (a.x * scale - x_min) * ss as f32;
+            let bx = (b.x * scale - x_min) * ss as f32;
+            let ay = (y_max - a.y * scale) * ss as f32;
+            let by = (y_max - b.y * scale) * ss as f32;
+            let min_y = ay.min(by);
+            let max_y = ay.max(by);
+            if max_y <= strip_start || min_y >= strip_end || ay == by {
+                continue;
             }
+            let y0 = strip_start.clamp(min_y, max_y);
+            let y1 = strip_end.clamp(min_y, max_y);
+            let t0 = ((y0 - ay) / (by - ay)).clamp(0.0, 1.0);
+            let t1 = ((y1 - ay) / (by - ay)).clamp(0.0, 1.0);
+            let x0 = ax + (bx - ax) * t0;
+            let x1 = ax + (bx - ax) * t1;
+            events.push(ProjectedScanlineEvent {
+                x_min_fixed: x0.min(x1).floor() as i32,
+                x_max_fixed: x0.max(x1).floor() as i32,
+                winding_delta: if b.y > a.y { 1 } else { -1 },
+            });
         }
     }
-    events.sort_by(|a, b| a.x.total_cmp(&b.x));
+    // ARE's event list preserves insertion order for equal projected starts;
+    // adding a secondary x_max sort changes vertex-tie coverage by a byte.
+    events.sort_by_key(|event| event.x_min_fixed);
 
     let mut intervals = Vec::new();
     let mut winding = 0i32;
-    let mut start_x: Option<f32> = None;
-    let mut index = 0usize;
-    while index < events.len() {
-        let x = events[index].x;
-        if winding != 0 {
-            if let Some(start) = start_x.take() {
-                if x > start {
-                    intervals.push((start, x));
-                }
+    let mut start: Option<i32> = None;
+    let mut max_end = i32::MIN;
+    for event in events {
+        if start.is_none() && winding == 0 {
+            start = Some(event.x_min_fixed);
+            max_end = event.x_max_fixed;
+        } else if start.is_some() {
+            max_end = max_end.max(event.x_max_fixed);
+        }
+        winding += event.winding_delta;
+        if winding == 0 {
+            if let Some(start_fixed) = start.take() {
+                intervals.push((start_fixed, max_end + 1));
             }
-        }
-        while index < events.len() && events[index].x == x {
-            winding += events[index].winding_delta;
-            index += 1;
-        }
-        if winding != 0 {
-            start_x = Some(x);
         }
     }
     intervals
@@ -1037,9 +1061,7 @@ mod tests {
         let spans = row_nonzero_spans(first_row);
         assert_eq!(spans[0], (0, 16, "2440404040404040404040404040403c".to_string()));
         assert_eq!(spans[1], (46, 62, "013e4040404040404040404040404024".to_string()));
-        assert_eq!(spans[2].0, 92);
-        assert_eq!(spans[2].1, 109);
-        assert!(spans[2].2.starts_with("1e404040404040404040404040404040"));
+        assert_eq!(spans[2], (92, 109, "1e40404040404040404040404040404004".to_string()));
     }
 
     #[test]
