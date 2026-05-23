@@ -118,6 +118,18 @@ enum Command {
         #[arg(long)]
         fail_on_diff: bool,
     },
+    P2TextJournal {
+        #[arg(long, default_value = "fixtures/ae_conformance_pack")]
+        pack: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+        #[arg(long = "case")]
+        cases: Vec<String>,
+        #[arg(long)]
+        full_events: bool,
+        #[arg(long)]
+        ae_ref_root: Option<PathBuf>,
+    },
     HypothesisPack {
         #[arg(long)]
         module: String,
@@ -335,6 +347,23 @@ fn run() -> Result<(), CliExit> {
             } else {
                 Ok(())
             }
+        }
+        Command::P2TextJournal {
+            pack,
+            out,
+            cases,
+            full_events,
+            ae_ref_root,
+        } => {
+            conformance_pack::run_p2_text_journal(conformance_pack::P2TextJournalOptions {
+                pack,
+                out,
+                cases,
+                full_events,
+                ae_ref_root,
+            })
+            .map_err(CliExit::render)?;
+            Ok(())
         }
         Command::HypothesisPack {
             module,

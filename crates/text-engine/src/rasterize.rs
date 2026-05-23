@@ -1,13 +1,219 @@
 use raster_cpu::Canvas;
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex, OnceLock};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, Tag};
 
-use crate::{layout_text, load_font_with_telemetry, TextLayoutRequest, TextLayoutResult};
+use crate::{
+    layout_text, load_font_with_telemetry, p6_ad68_flag_trace_payload, p6_ad68_opt_in_flag_state,
+    try_rasterize_text_with_p6_ad68, P6Ad68OptInFlagState, P6Ad68PathPoint, P6Ad68PathSegment,
+    P6Ad68RawPathSegment, P6Ad68TextPathInput, P6Ad68TextRouteReport, TextLayoutRequest,
+    TextLayoutResult,
+};
 
 const OUTLINE_COVERAGE_SUPERSAMPLE: u32 = 16;
+const TEXT_RASTER_JOURNAL_ENV_VAR: &str = "AE_NATIVE_RENDERER_TEXT_RASTER_JOURNAL";
+
+fn text_raster_journal_enabled() -> bool {
+    std::env::var(TEXT_RASTER_JOURNAL_ENV_VAR)
+        .map(|value| {
+            matches!(
+                value.to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+fn push_text_raster_event(
+    events: &mut Vec<TextRasterEvent>,
+    seq: &mut u64,
+    stage: &'static str,
+    glyph_run_index: Option<usize>,
+    glyph_id: Option<u32>,
+    payload: Value,
+) {
+    let input = json!({
+        "stage": stage,
+        "seq": *seq,
+        "glyph_run_index": glyph_run_index,
+        "glyph_id": glyph_id
+    });
+    let output_hash = sha256_json(&payload);
+    events.push(TextRasterEvent {
+        schema: "ae-native-renderer.text-raster-event.v1".to_string(),
+        seq: *seq,
+        case_id: None,
+        frame: None,
+        layer_id: None,
+        glyph_run_index,
+        glyph_id,
+        stage: stage.to_string(),
+        payload,
+        input_hash: sha256_json(&input),
+        output_hash,
+    });
+    *seq += 1;
+}
+
+fn push_p6_ad68_opt_in_flag_event(
+    events: &mut Vec<TextRasterEvent>,
+    seq: &mut u64,
+    flag_state: P6Ad68OptInFlagState,
+) {
+    push_text_raster_event(
+        events,
+        seq,
+        "p6_ad68_opt_in_flag",
+        None,
+        None,
+        p6_ad68_flag_trace_payload(flag_state),
+    );
+}
+
+fn push_p6_ad68_route_event(
+    events: &mut Vec<TextRasterEvent>,
+    seq: &mut u64,
+    report: &P6Ad68TextRouteReport,
+) {
+    push_text_raster_event(
+        events,
+        seq,
+        "p6_ad68_opt_in_route",
+        Some(report.glyph_run_index),
+        Some(report.glyph_id),
+        report.trace_payload(),
+    );
+}
+
+fn sha256_json(value: &Value) -> String {
+    let bytes = serde_json::to_vec(value).unwrap_or_else(|_| b"null".to_vec());
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    bytes_hex(&hasher.finalize())
+}
+
+fn f32_trace(value: f32) -> Value {
+    json!({
+        "value": value,
+        "f32_bits_hex": format!("{:08x}", value.to_bits())
+    })
+}
+
+fn point_trace(point: Point) -> Value {
+    json!({
+        "x": f32_trace(point.x),
+        "y": f32_trace(point.y)
+    })
+}
+
+fn scaled_point_trace(point: Point, scale: f32) -> Value {
+    point_trace(Point {
+        x: point.x * scale,
+        y: -point.y * scale,
+    })
+}
+
+fn p6_ad68_path_segments_for_text(
+    path_segments: &[RawPathSegment],
+    scale: f32,
+    x_min: f32,
+    y_max: f32,
+    supersample: u32,
+) -> Vec<P6Ad68RawPathSegment> {
+    let ss = supersample.max(1) as i32;
+    path_segments
+        .iter()
+        .copied()
+        .map(|raw| {
+            let segment = match raw.segment {
+                AePathSegment::Line { start, end } => P6Ad68PathSegment::Line {
+                    start: p6_ad68_path_point(device_point(start, scale, x_min, y_max, ss)),
+                    end: p6_ad68_path_point(device_point(end, scale, x_min, y_max, ss)),
+                },
+                AePathSegment::Cubic {
+                    start,
+                    control1,
+                    control2,
+                    end,
+                } => P6Ad68PathSegment::Cubic {
+                    start: p6_ad68_path_point(device_point(start, scale, x_min, y_max, ss)),
+                    control1: p6_ad68_path_point(device_point(control1, scale, x_min, y_max, ss)),
+                    control2: p6_ad68_path_point(device_point(control2, scale, x_min, y_max, ss)),
+                    end: p6_ad68_path_point(device_point(end, scale, x_min, y_max, ss)),
+                },
+            };
+            P6Ad68RawPathSegment {
+                contour_index: raw.contour_index,
+                segment_index: raw.segment_index,
+                segment,
+            }
+        })
+        .collect()
+}
+
+fn p6_ad68_path_point(point: Point) -> P6Ad68PathPoint {
+    P6Ad68PathPoint::new(point.x, point.y)
+}
+
+fn path_segment_trace(
+    segment: RawPathSegment,
+    scale: f32,
+    x_min: f32,
+    y_max: f32,
+    ss: i32,
+) -> Value {
+    match segment.segment {
+        AePathSegment::Line { start, end } => json!({
+            "segment_index": segment.segment_index,
+            "contour_index": segment.contour_index,
+            "kind": "line",
+            "design": {
+                "start": point_trace(start),
+                "end": point_trace(end)
+            },
+            "are_local": {
+                "start": scaled_point_trace(start, scale),
+                "end": scaled_point_trace(end, scale)
+            },
+            "device": {
+                "start": point_trace(device_point(start, scale, x_min, y_max, ss)),
+                "end": point_trace(device_point(end, scale, x_min, y_max, ss))
+            }
+        }),
+        AePathSegment::Cubic {
+            start,
+            control1,
+            control2,
+            end,
+        } => json!({
+            "segment_index": segment.segment_index,
+            "contour_index": segment.contour_index,
+            "kind": "cubic",
+            "design": {
+                "p0_start": point_trace(start),
+                "p1_control": point_trace(control1),
+                "p2_control": point_trace(control2),
+                "p3_end": point_trace(end)
+            },
+            "are_local": {
+                "p0_start": scaled_point_trace(start, scale),
+                "p1_control": scaled_point_trace(control1, scale),
+                "p2_control": scaled_point_trace(control2, scale),
+                "p3_end": scaled_point_trace(end, scale)
+            },
+            "device": {
+                "p0_start": point_trace(device_point(start, scale, x_min, y_max, ss)),
+                "p1_control": point_trace(device_point(control1, scale, x_min, y_max, ss)),
+                "p2_control": point_trace(device_point(control2, scale, x_min, y_max, ss)),
+                "p3_end": point_trace(device_point(end, scale, x_min, y_max, ss))
+            }
+        }),
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextRasterTrace {
@@ -19,6 +225,28 @@ pub struct TextRasterTrace {
     pub coverage_backend: String,
     pub pf_world_semantics: String,
     pub draw_chars: Vec<DrawCharPlan>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub events: Vec<TextRasterEvent>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TextRasterEvent {
+    pub schema: String,
+    pub seq: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub case_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub frame: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub layer_id: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glyph_run_index: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub glyph_id: Option<u32>,
+    pub stage: String,
+    pub payload: Value,
+    pub input_hash: String,
+    pub output_hash: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -103,11 +331,57 @@ pub fn rasterize_text_with_layout(
     let fill_rgba = rgba_u8_to_f32(color);
     let stroke_rgba = [0.0, 0.0, 0.0, 0.0];
     let mut used_outline_backend = false;
+    let journal_enabled = text_raster_journal_enabled();
+    let mut events = Vec::new();
+    let mut event_seq = 0_u64;
     let outline_font_key = font_resolution
         .resolved_path
         .as_ref()
         .map(|path| path.display().to_string())
         .unwrap_or_else(|| req.font_id.clone());
+    if journal_enabled {
+        push_text_raster_event(
+            &mut events,
+            &mut event_seq,
+            "layout_input",
+            None,
+            None,
+            json!({
+                "text": &req.text,
+                "font_id": &req.font_id,
+                "font_size": f32_trace(req.font_size),
+                "box_rect": req.box_rect,
+                "canvas_size": [width, height],
+                "glyph_count": layout.glyphs.len()
+            }),
+        );
+        push_text_raster_event(
+            &mut events,
+            &mut event_seq,
+            "layout_output",
+            None,
+            None,
+            json!({
+                "font_resolution": &layout.telemetry.font_resolution,
+                "source_rect_union": layout.telemetry.source_rect_union,
+                "line_count": layout.telemetry.line_boxes.len(),
+                "glyphs": layout.glyphs.iter().map(|glyph| json!({
+                    "glyph_id": glyph.glyph_id,
+                    "char_index": glyph.char_index,
+                    "word_index": glyph.word_index,
+                    "line_index": glyph.line_index,
+                    "x": f32_trace(glyph.x),
+                    "y": f32_trace(glyph.y),
+                    "advance": f32_trace(glyph.advance),
+                    "bbox": glyph.bbox.iter().map(|value| f32_trace(*value)).collect::<Vec<_>>()
+                })).collect::<Vec<_>>()
+            }),
+        );
+    }
+    let p6_ad68_flag_state = p6_ad68_opt_in_flag_state();
+    if journal_enabled && p6_ad68_flag_state != P6Ad68OptInFlagState::DisabledDefault {
+        push_p6_ad68_opt_in_flag_event(&mut events, &mut event_seq, p6_ad68_flag_state);
+    }
 
     for (run_index, glyph) in layout.glyphs.iter().enumerate() {
         let ch = chars.get(glyph.char_index).copied();
@@ -148,6 +422,128 @@ pub fn rasterize_text_with_layout(
             coverage.bitmap.as_ref(),
             clipped_bounds,
         );
+        if p6_ad68_flag_state.enabled() {
+            let p6_path_segments = p6_ad68_path_segments_for_text(
+                coverage.path_segments.as_ref(),
+                coverage.scale,
+                coverage.x_min,
+                coverage.y_max,
+                coverage.supersample,
+            );
+            let report = try_rasterize_text_with_p6_ad68(&P6Ad68TextPathInput {
+                glyph_run_index: run_index,
+                glyph_id: glyph.glyph_id,
+                path_segments: &p6_path_segments,
+                expected_advance_only_space: ch.is_some_and(char::is_whitespace)
+                    && glyph.advance.is_finite()
+                    && glyph.advance > 0.0,
+            });
+            if journal_enabled {
+                push_p6_ad68_route_event(&mut events, &mut event_seq, &report);
+            }
+        }
+        if journal_enabled {
+            let traced_segments = coverage
+                .path_segments
+                .iter()
+                .copied()
+                .map(|segment| {
+                    path_segment_trace(
+                        segment,
+                        coverage.scale,
+                        coverage.x_min,
+                        coverage.y_max,
+                        coverage.supersample.max(1) as i32,
+                    )
+                })
+                .collect::<Vec<_>>();
+            let cubic_calls = traced_segments
+                .iter()
+                .filter(|segment| segment.get("kind").and_then(Value::as_str) == Some("cubic"))
+                .cloned()
+                .collect::<Vec<_>>();
+            let line_call_count = traced_segments
+                .iter()
+                .filter(|segment| segment.get("kind").and_then(Value::as_str) == Some("line"))
+                .count();
+            push_text_raster_event(
+                &mut events,
+                &mut event_seq,
+                "raw_ttf_contour",
+                Some(run_index),
+                Some(glyph.glyph_id),
+                json!({
+                    "backend": coverage.backend,
+                    "origin_source": coverage.origin_source,
+                    "raster_origin": [f32_trace(coverage.raster_x), f32_trace(coverage.raster_y)],
+                    "bitmap_size": [coverage.width, coverage.height],
+                    "nonzero_pixels": coverage.nonzero_pixels,
+                    "glyph_origin": [f32_trace(glyph.x), f32_trace(glyph.y)],
+                    "baseline": f32_trace(baseline)
+                }),
+            );
+            push_text_raster_event(
+                &mut events,
+                &mut event_seq,
+                "quadratic_to_cubic_stream",
+                Some(run_index),
+                Some(glyph.glyph_id),
+                json!({
+                    "policy": "ttf_outline_source_path_capture_v1",
+                    "segment_count": traced_segments.len(),
+                    "cubic_call_count": cubic_calls.len(),
+                    "line_call_count": line_call_count,
+                    "scale": f32_trace(coverage.scale),
+                    "x_min": f32_trace(coverage.x_min),
+                    "y_max": f32_trace(coverage.y_max),
+                    "supersample": coverage.supersample,
+                    "cubic_calls": cubic_calls
+                }),
+            );
+            push_text_raster_event(
+                &mut events,
+                &mut event_seq,
+                "path_segment_emit",
+                Some(run_index),
+                Some(glyph.glyph_id),
+                json!({
+                    "segment_count": traced_segments.len(),
+                    "segments": traced_segments,
+                    "segment_policy": "ttf_outline_source_path_capture_v1",
+                    "coverage_backend": coverage.backend
+                }),
+            );
+            push_text_raster_event(
+                &mut events,
+                &mut event_seq,
+                "scanline_event",
+                Some(run_index),
+                Some(glyph.glyph_id),
+                json!({
+                    "row_count": coverage_rows.len(),
+                    "span_policy": "are_scanline_16x_negative_winding_merged_projected_ranges_v1",
+                    "supersample": coverage.supersample
+                }),
+            );
+            for row in &coverage_rows {
+                push_text_raster_event(
+                    &mut events,
+                    &mut event_seq,
+                    "row_span_emit",
+                    Some(run_index),
+                    Some(glyph.glyph_id),
+                    json!({
+                        "y": row.y,
+                        "start_x": row.start_x,
+                        "end_x": row.end_x,
+                        "coverage_len": row.coverage_len,
+                        "coverage_hash_fnv1a64": &row.coverage_hash_fnv1a64,
+                        "coverage_sample_hex": &row.coverage_sample_hex,
+                        "has_full_coverage_hex": row.coverage_hex.is_some()
+                    }),
+                );
+            }
+        }
         let draw_fill = color[3] > 0;
         let draw_stroke = false;
         let skip_reason =
@@ -208,6 +604,29 @@ pub fn rasterize_text_with_layout(
             coverage_rows,
             output_semantics: "recovered_txt_are_pf_pixel8_integer_source_over_v1".to_string(),
         };
+        if journal_enabled {
+            push_text_raster_event(
+                &mut events,
+                &mut event_seq,
+                "draw_char_boundary",
+                Some(run_index),
+                Some(glyph.glyph_id),
+                json!({
+                    "char_index": plan.char_index,
+                    "character": &plan.character,
+                    "renderable": plan.renderable,
+                    "will_draw": plan.will_draw,
+                    "draw_fill": plan.draw_fill,
+                    "draw_stroke": plan.draw_stroke,
+                    "skip_reason": &plan.skip_reason,
+                    "glyph_matrix": plan.glyph_matrix.iter().map(|value| f32_trace(*value)).collect::<Vec<_>>(),
+                    "text_matrix": plan.text_matrix.iter().map(|value| f32_trace(*value)).collect::<Vec<_>>(),
+                    "clipped_bounds_i32": plan.clipped_bounds_i32,
+                    "coverage_backend": &plan.coverage_backend,
+                    "coverage_rows": plan.coverage_rows.len()
+                }),
+            );
+        }
         if will_draw {
             blend_bitmap(
                 &mut canvas,
@@ -241,6 +660,7 @@ pub fn rasterize_text_with_layout(
                 "TXT_DrawChar ARE PF_Pixel8 direct source-over; fill opacity is source pixel alpha"
                     .to_string(),
             draw_chars,
+            events,
         },
     ))
 }
@@ -251,6 +671,10 @@ struct CoverageBitmap {
     raster_x: f32,
     raster_y: f32,
     bitmap: Arc<Vec<u8>>,
+    path_segments: Arc<Vec<RawPathSegment>>,
+    scale: f32,
+    x_min: f32,
+    y_max: f32,
     backend: &'static str,
     supersample: u32,
     origin_source: &'static str,
@@ -274,6 +698,10 @@ fn fontdue_coverage(
         raster_x,
         raster_y,
         bitmap: Arc::new(bitmap),
+        path_segments: Arc::new(Vec::new()),
+        scale: 0.0,
+        x_min: 0.0,
+        y_max: 0.0,
         backend: "fontdue_rasterize_indexed_fallback",
         supersample: 1,
         origin_source: "fontdue_metrics",
@@ -337,8 +765,10 @@ struct CoverageMask {
     x_min: f32,
     y_max: f32,
     bitmap: Arc<Vec<u8>>,
+    path_segments: Arc<Vec<RawPathSegment>>,
     nonzero_pixels: u32,
     supersample: u32,
+    scale: f32,
 }
 
 impl CoverageMask {
@@ -349,6 +779,10 @@ impl CoverageMask {
             raster_x: glyph_x + self.x_min,
             raster_y: baseline - self.y_max,
             bitmap: self.bitmap.clone(),
+            path_segments: self.path_segments.clone(),
+            scale: self.scale,
+            x_min: self.x_min,
+            y_max: self.y_max,
             backend: "ttf_outline_are_scanline_16x",
             supersample: self.supersample,
             origin_source: "txt_are_integer_world_bbox_origin",
@@ -404,6 +838,7 @@ fn build_outline_coverage_mask(
     }
 
     let ss = supersample.max(1);
+    let path_segments = collect_path_segments(&outline);
     let mut bitmap = vec![0u8; width * height];
     let mut nonzero_pixels = 0u32;
     if ss == 16 {
@@ -443,8 +878,10 @@ fn build_outline_coverage_mask(
         x_min,
         y_max,
         bitmap: Arc::new(bitmap),
+        path_segments: Arc::new(path_segments),
         nonzero_pixels,
         supersample: ss,
+        scale,
     })
 }
 
@@ -462,6 +899,13 @@ struct RawOutlinePoint {
 }
 
 #[derive(Debug, Copy, Clone)]
+struct RawPathSegment {
+    contour_index: usize,
+    segment_index: usize,
+    segment: AePathSegment,
+}
+
+#[derive(Debug, Copy, Clone)]
 enum AePathSegment {
     Line {
         start: Point,
@@ -473,6 +917,20 @@ enum AePathSegment {
         control2: Point,
         end: Point,
     },
+}
+
+fn collect_path_segments(outline: &FlattenedOutline) -> Vec<RawPathSegment> {
+    let mut out = Vec::new();
+    for (contour_index, contour) in outline.path_contours.iter().enumerate() {
+        for (segment_index, segment) in contour.iter().copied().enumerate() {
+            out.push(RawPathSegment {
+                contour_index,
+                segment_index,
+                segment,
+            });
+        }
+    }
+    out
 }
 
 fn ae_outline_from_simple_glyf(face: &Face<'_>, glyph_id: GlyphId) -> Option<FlattenedOutline> {
