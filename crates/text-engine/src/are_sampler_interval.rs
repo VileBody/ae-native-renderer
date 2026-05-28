@@ -178,26 +178,44 @@ fn build_interval_list(
             runs: Vec::new(),
             is_empty_sentinel: false,
         };
+        let mut row_runs = Vec::new();
 
         for (record_index, record) in working_set.records.iter().enumerate() {
             let Some(classified) = classify_record_for_row(record_index, record, row_y)? else {
                 continue;
             };
-            let mut run = match classified {
+            let run = match classified {
                 RowRecordClassification::Run(run) => run,
                 RowRecordClassification::ZeroWidth(record) => {
                     zero_width_records.push(record);
                     continue;
                 }
             };
+            row_runs.push(run);
+        }
+
+        row_runs.sort_by_key(|run| {
+            (
+                run.current_x,
+                run.next_x,
+                interval_tag_sort_key(run.tag),
+                run.materialize_candidate,
+            )
+        });
+        for mut run in row_runs {
             if let Some(last) = row.runs.last_mut() {
                 if can_merge(last, &run) {
+                    last.current_x = last.current_x.min(run.current_x);
                     last.next_x = last.next_x.max(run.next_x);
                     last.source_record_indices
                         .append(&mut run.source_record_indices);
                     continue;
                 }
             }
+            row.runs.push(run);
+        }
+
+        for run in &row.runs {
             row.boundaries.push(AreSamplerIntervalBoundary {
                 x: run.current_x,
                 kind: AreSamplerIntervalBoundaryKind::Start,
@@ -210,7 +228,6 @@ fn build_interval_list(
                 tag: run.tag,
                 source_record_index: run.source_record_indices.first().copied(),
             });
-            row.runs.push(run);
         }
 
         if row.runs.is_empty() {
@@ -305,6 +322,14 @@ fn can_merge(left: &AreSamplerIntervalRun, right: &AreSamplerIntervalRun) -> boo
     left.tag == right.tag
         && left.materialize_candidate == right.materialize_candidate
         && left.next_x >= right.current_x
+}
+
+fn interval_tag_sort_key(tag: AreSamplerIntervalTag) -> u8 {
+    match tag {
+        AreSamplerIntervalTag::SourceSpan => 0,
+        AreSamplerIntervalTag::Sentinel => 1,
+        AreSamplerIntervalTag::Empty => 2,
+    }
 }
 
 #[cfg(test)]
@@ -442,6 +467,26 @@ mod interval_95cc_tests {
         assert_eq!(row.runs[0].current_x, 2);
         assert_eq!(row.runs[0].next_x, 8);
         assert_eq!(row.runs[0].source_record_indices, vec![0, 1]);
+    }
+
+    #[test]
+    fn interval_helper_sorts_record_runs_before_merging() {
+        let working_set = working_set(
+            bounds(0, 0, 120, 1),
+            vec![
+                record(72, 0, 109, 1, AreSourceRecord32::NORMAL_FLAG, 0),
+                record(0, 0, 16, 1, AreSourceRecord32::NORMAL_FLAG, 1),
+            ],
+        );
+
+        let list = build_95cc_interval_list(&working_set).unwrap();
+        let row = list.row(0).unwrap();
+
+        assert_eq!(row.runs.len(), 2);
+        assert_eq!((row.runs[0].current_x, row.runs[0].next_x), (0, 16));
+        assert_eq!((row.runs[1].current_x, row.runs[1].next_x), (72, 109));
+        assert_eq!(row.runs[0].source_record_indices, vec![1]);
+        assert_eq!(row.runs[1].source_record_indices, vec![0]);
     }
 
     #[test]

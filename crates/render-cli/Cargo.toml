@@ -3,10 +3,20 @@ name = "render-cli"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
+default-run = "render-cli"
 
 [[bin]]
 name = "render-cli"
 path = "src/main.rs"
+required-features = ["media"]
+
+[[bin]]
+name = "p2-text-journal"
+path = "src/bin/p2_text_journal.rs"
+
+[features]
+default = ["media"]
+media = ["dep:media-gst"]
 
 [dependencies]
 anyhow.workspace = true
@@ -17,7 +27,7 @@ tracing.workspace = true
 tracing-subscriber.workspace = true
 render-ir = { path = "../render-ir" }
 render-core = { path = "../render-core" }
-media-gst = { path = "../media-gst" }
+media-gst = { path = "../media-gst", optional = true }
 effects = { path = "../effects" }
 ae-bridge = { path = "../ae-bridge" }
 raster-cpu = { path = "../raster-cpu" }

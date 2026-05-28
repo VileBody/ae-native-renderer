@@ -124,12 +124,13 @@ fn real_glyph_source_path_to_95cc_intervals() {
     assert_eq!(row0.runs[0].current_x, 3);
     assert_eq!(row0.runs[0].next_x, 4);
     assert_eq!(row0.runs[0].tag, AreSamplerIntervalTag::SourceSpan);
-    assert_eq!(row0.runs[1].current_x, 5);
-    assert_eq!(row0.runs[1].next_x, 6);
-    assert_eq!(row0.runs[1].tag, AreSamplerIntervalTag::SourceSpan);
+    assert_eq!(row0.runs[1].current_x, 3);
+    assert_eq!(row0.runs[1].next_x, 4);
+    assert_eq!(row0.runs[1].tag, AreSamplerIntervalTag::Sentinel);
     assert_eq!(row0.runs[2].current_x, 3);
-    assert_eq!(row0.runs[2].next_x, 4);
-    assert_eq!(row0.runs[2].tag, AreSamplerIntervalTag::Sentinel);
+    assert_eq!(row0.runs[2].next_x, 6);
+    assert_eq!(row0.runs[2].tag, AreSamplerIntervalTag::SourceSpan);
+    assert_eq!(row0.runs[2].source_record_indices, vec![3, 2]);
 
     assert_eq!(row21.runs.len(), 1);
     assert_eq!(row21.runs[0].current_x, 3);
@@ -158,14 +159,14 @@ fn real_glyph_source_path_fixture_backed_payload_to_ad68_rows() {
     assert_eq!(row0[0].len, 1);
     let expected_row0_run0 = fixture_payload(0, 0, &interval_list.row(0).unwrap().runs[0]);
     assert_eq!(row0[0].bytes(), Some(expected_row0_run0.as_slice()));
-    assert_eq!(row0[1].x, 5);
-    assert_eq!(row0[1].len, 1);
-    let expected_row0_run1 = fixture_payload(0, 1, &interval_list.row(0).unwrap().runs[1]);
-    assert_eq!(row0[1].bytes(), Some(expected_row0_run1.as_slice()));
+    assert_eq!(row0[1].x, 3);
+    assert_eq!(row0[1].len, 0);
+    assert_eq!(row0[1].state, 0x44);
+    assert_eq!(row0[1].bytes, None);
     assert_eq!(row0[2].x, 3);
-    assert_eq!(row0[2].len, 0);
-    assert_eq!(row0[2].state, 0x44);
-    assert_eq!(row0[2].bytes, None);
+    assert_eq!(row0[2].len, 3);
+    let expected_row0_run2 = fixture_payload(0, 2, &interval_list.row(0).unwrap().runs[2]);
+    assert_eq!(row0[2].bytes(), Some(expected_row0_run2.as_slice()));
 
     assert_eq!(row21[0].x, 3);
     assert_eq!(row21[0].len, 3);

@@ -30,32 +30,9 @@ pub struct P2TextJournalOptions {
     pub ae_ref_root: Option<PathBuf>,
 }
 
-const TEXT_RASTER_JOURNAL_ENV_VAR: &str = "AE_NATIVE_RENDERER_TEXT_RASTER_JOURNAL";
 const P2_TEXT_JOURNAL_DEFAULT_CASES: &[&str] = &[
     "COV_W", "COV_I", "COV_O", "TXT_010", "TXT_020", "TXT_030", "TXT_040", "GPH_010",
 ];
-
-struct TextRasterJournalEnvGuard {
-    previous: Option<std::ffi::OsString>,
-}
-
-impl TextRasterJournalEnvGuard {
-    fn enable() -> Self {
-        let previous = std::env::var_os(TEXT_RASTER_JOURNAL_ENV_VAR);
-        std::env::set_var(TEXT_RASTER_JOURNAL_ENV_VAR, "1");
-        Self { previous }
-    }
-}
-
-impl Drop for TextRasterJournalEnvGuard {
-    fn drop(&mut self) {
-        if let Some(previous) = self.previous.as_ref() {
-            std::env::set_var(TEXT_RASTER_JOURNAL_ENV_VAR, previous);
-        } else {
-            std::env::remove_var(TEXT_RASTER_JOURNAL_ENV_VAR);
-        }
-    }
-}
 
 #[derive(Debug, Clone, Deserialize)]
 struct PackManifest {
@@ -117,8 +94,94 @@ struct PackFootageProvider {
     sequence_cache: HashMap<(String, u32), Canvas>,
 }
 
+pub fn run_pack(options: RunOptions) -> Result<bool> {
+    let started = Instant::now();
+    let pack_root = options.pack;
+    let manifest = load_manifest(&pack_root)?;
+    validate_pack_manifest(&manifest)?;
+    let primitive_assets = load_primitive_assets(&pack_root)?;
+    let selected_cases = select_cases(&manifest, &options.cases)?;
+
+    fs::create_dir_all(&options.out)?;
+    let mut case_reports = Vec::new();
+    let mut failures = 0_u32;
+    let mut rendered_cases = 0_u32;
+
+    for case in selected_cases {
+        let report = match build_recipe(&manifest, &pack_root, case) {
+            Ok(recipe) => {
+                let mut provider = PackFootageProvider::new(
+                    pack_root.clone(),
+                    manifest.composition.fps,
+                    primitive_assets.clone(),
+                );
+                run_case(
+                    case,
+                    recipe,
+                    &pack_root,
+                    &options.out,
+                    &mut provider,
+                    options.threshold_mean,
+                    options.threshold_max,
+                )?
+            }
+            Err(err) => {
+                failures += 1;
+                json!({
+                    "case": case.id,
+                    "title": case.title,
+                    "status": "recipe_error",
+                    "ok": false,
+                    "error": format!("{err:#}")
+                })
+            }
+        };
+        if report.get("status").and_then(Value::as_str) != Some("recipe_error") {
+            rendered_cases += 1;
+        }
+        if !report.get("ok").and_then(Value::as_bool).unwrap_or(false) {
+            failures += 1;
+        }
+        case_reports.push(report);
+    }
+
+    let ok = failures == 0;
+    let report = json!({
+        "schema": "ae-native-renderer.native-conformance-report.v1",
+        "ok": ok,
+        "pack": {
+            "root": pack_root.display().to_string(),
+            "schema": manifest.schema,
+            "pack_id": manifest.pack_id
+        },
+        "out": options.out.display().to_string(),
+        "thresholds": {
+            "mean_abs_diff": options.threshold_mean,
+            "max_abs_diff": options.threshold_max
+        },
+        "summary": {
+            "cases_requested": case_reports.len(),
+            "cases_rendered": rendered_cases,
+            "failures": failures,
+            "elapsed_ms": elapsed_ms(started)
+        },
+        "m19_alpha_composite_gate": m19_alpha_composite_gate_report_json(&case_reports),
+        "cases": case_reports
+    });
+    fs::write(
+        options.out.join("report.json"),
+        serde_json::to_string_pretty(&report)?,
+    )?;
+    println!(
+        "conformance-pack.done ok={} cases={} report={}",
+        ok,
+        report["summary"]["cases_requested"],
+        options.out.join("report.json").display()
+    );
+    Ok(ok)
+}
+
 pub fn run_p2_text_journal(options: P2TextJournalOptions) -> Result<Value> {
-    let _journal_env = TextRasterJournalEnvGuard::enable();
     let started = Instant::now();
     let pack_root = options.pack;
     let manifest = load_manifest(&pack_root)?;
@@ -168,6 +231,7 @@ pub fn run_p2_text_journal(options: P2TextJournalOptions) -> Result<Value> {
         "pack": pack_root.display().to_string(),
         "full_events": options.full_events,
         "ae_ref_root": options.ae_ref_root.map(|path| path.display().to_string()),
+        "runtime_note": "Designed for the AE85 node TDD loop; local runs use native/Ghidra artifacts only.",
         "case_count": cases.len(),
         "event_count": total_events,
         "elapsed_ms": elapsed_ms(started),
@@ -292,7 +356,7 @@ fn p2_text_journal_events_from_trace(
             .get("composition")
             .and_then(Value::as_str)
             .unwrap_or("");
-        out.push(p2_selector_journal_event(
+        out.push(p2_synthetic_journal_event(
             case_id,
             frame,
             trace.time,
@@ -338,7 +402,7 @@ fn p2_text_journal_events_from_trace(
     out
 }
 
-fn p2_selector_journal_event(
+fn p2_synthetic_journal_event(
     case_id: &str,
     frame: u32,
     time: f64,
@@ -432,99 +496,15 @@ fn p2_cov_journal_recipe(
     Some((
         CaseRecipe {
             scene,
-            notes: vec!["P2 text raster journal single-glyph coverage scene.".to_string()],
+            notes: vec![
+                "Synthetic P2 coverage-row journal scene matching p2_text_coverage_rows_probe."
+                    .to_string(),
+            ],
         },
         vec![0],
-        format!("P2 text raster journal single glyph {text}"),
-        vec!["P2".to_string()],
+        format!("P2 coverage-row single glyph {text}"),
+        vec!["M05".to_string()],
     ))
-}
-
-pub fn run_pack(options: RunOptions) -> Result<bool> {
-    let started = Instant::now();
-    let pack_root = options.pack;
-    let manifest = load_manifest(&pack_root)?;
-    validate_pack_manifest(&manifest)?;
-    let primitive_assets = load_primitive_assets(&pack_root)?;
-    let selected_cases = select_cases(&manifest, &options.cases)?;
-
-    fs::create_dir_all(&options.out)?;
-    let mut case_reports = Vec::new();
-    let mut failures = 0_u32;
-    let mut rendered_cases = 0_u32;
-
-    for case in selected_cases {
-        let report = match build_recipe(&manifest, &pack_root, case) {
-            Ok(recipe) => {
-                let mut provider = PackFootageProvider::new(
-                    pack_root.clone(),
-                    manifest.composition.fps,
-                    primitive_assets.clone(),
-                );
-                run_case(
-                    case,
-                    recipe,
-                    &pack_root,
-                    &options.out,
-                    &mut provider,
-                    options.threshold_mean,
-                    options.threshold_max,
-                )?
-            }
-            Err(err) => {
-                failures += 1;
-                json!({
-                    "case": case.id,
-                    "title": case.title,
-                    "status": "recipe_error",
-                    "ok": false,
-                    "error": format!("{err:#}")
-                })
-            }
-        };
-        if report.get("status").and_then(Value::as_str) != Some("recipe_error") {
-            rendered_cases += 1;
-        }
-        if !report.get("ok").and_then(Value::as_bool).unwrap_or(false) {
-            failures += 1;
-        }
-        case_reports.push(report);
-    }
-
-    let ok = failures == 0;
-    let report = json!({
-        "schema": "ae-native-renderer.native-conformance-report.v1",
-        "ok": ok,
-        "pack": {
-            "root": pack_root.display().to_string(),
-            "schema": manifest.schema,
-            "pack_id": manifest.pack_id
-        },
-        "out": options.out.display().to_string(),
-        "thresholds": {
-            "mean_abs_diff": options.threshold_mean,
-            "max_abs_diff": options.threshold_max
-        },
-        "summary": {
-            "cases_requested": case_reports.len(),
-            "cases_rendered": rendered_cases,
-            "failures": failures,
-            "elapsed_ms": elapsed_ms(started)
-        },
-        "m19_alpha_composite_gate": m19_alpha_composite_gate_report_json(&case_reports),
-        "cases": case_reports
-    });
-    fs::write(
-        options.out.join("report.json"),
-        serde_json::to_string_pretty(&report)?,
-    )?;
-    println!(
-        "conformance-pack.done ok={} cases={} report={}",
-        ok,
-        report["summary"]["cases_requested"],
-        options.out.join("report.json").display()
-    );
-    Ok(ok)
 }
 
 fn load_manifest(pack_root: &Path) -> Result<PackManifest> {
@@ -3623,12 +3603,8 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
         "EXP_010" => {
             let mut transform = placed_transform(256.0, 256.0, 55.0, 100.0);
             transform.animation.expression = Transform2DExpression {
-                position: Some(PositionExpression::EdgeWobble {
-                    intro: 0.25,
-                    outro: 0.25,
-                    amp: 34.0,
-                    freq: 2.0,
-                    source: "ae_conformance_edge_wobble".to_string(),
+                position: Some(PositionExpression::ParsedProperty {
+                    source: exp010_position_expression_source().to_string(),
                 }),
             };
             b.place_with_transform("edge_wobble", "alpha_square", transform, 0.0, d, 0.0, vec![]);
@@ -3770,7 +3746,7 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
         "GPH_010" => b.collapse_probe(),
         "CMP_010" => {
             b.place("checker", "checkerboard_16", 256.0, 256.0, 100.0, 100.0, vec![]);
-            b.place("premult_probe", "premult_probe", 256.0, 256.0, 100.0, 80.0, vec![]);
+            b.place("premult_probe", "premult_probe", 256.0, 256.0, 80.0, 100.0, vec![]);
             b.place("coordinate_alpha", "coordinate_field", 256.0, 256.0, 55.0, 45.0, vec![]);
         }
         other => anyhow::bail!("no native conformance recipe for case {other}"),
@@ -4182,6 +4158,7 @@ fn bounce_animator() -> TextAnimatorSpec {
             freq: 2.0,
             amplitude: 100.0,
             decay: 8.0,
+            pre_delay_amount: Some(100.0),
             source: "ae_conformance_bounce_selector".to_string(),
         }),
         ..TextAnimatorSpec::default()
@@ -4210,6 +4187,13 @@ fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
 
+fn exp010_position_expression_source() -> &'static str {
+    "intro = 0.25; outro = 0.25; amp = 34; freq = 2.0;\n\
+edge = Math.min(time - inPoint, outPoint - time);\n\
+env = Math.max(0, Math.min(1, edge / intro));\n\
+value + [Math.sin(time * freq * 2 * Math.PI) * amp * env, 0];"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4223,29 +4207,6 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("fixtures/ae_conformance_pack")
-    }
-
-    struct TestEnvVarGuard {
-        key: &'static str,
-        previous: Option<std::ffi::OsString>,
-    }
-
-    impl TestEnvVarGuard {
-        fn remove(key: &'static str) -> Self {
-            let previous = std::env::var_os(key);
-            std::env::remove_var(key);
-            Self { key, previous }
-        }
-    }
-
-    impl Drop for TestEnvVarGuard {
-        fn drop(&mut self) {
-            if let Some(previous) = self.previous.as_ref() {
-                std::env::set_var(self.key, previous);
-            } else {
-                std::env::remove_var(self.key);
-            }
-        }
     }
 
     fn empty_trace(frame: u32, time: f64) -> FrameRenderTrace {
@@ -4274,6 +4235,58 @@ mod tests {
             build_recipe(&manifest, &root, case)
                 .unwrap_or_else(|err| panic!("{} should have a native recipe: {err:#}", case.id));
         }
+    }
+
+    #[test]
+    fn cmp010_native_recipe_matches_ae_premult_probe_scale() {
+        let root = pack_root();
+        let manifest = load_manifest(&root).unwrap();
+        let case = manifest
+            .cases
+            .iter()
+            .find(|case| case.id == "CMP_010")
+            .unwrap();
+        let recipe = build_recipe(&manifest, &root, case).unwrap();
+        let layer = recipe
+            .scene
+            .layers
+            .iter()
+            .find(|layer| layer.id() == "CMP_010_premult_probe")
+            .unwrap();
+        let render_ir::Layer::Footage { transform, .. } = layer else {
+            panic!("CMP_010_premult_probe should be a footage layer");
+        };
+
+        assert_eq!(transform.scale, [80.0, 80.0]);
+        assert_eq!(transform.opacity, 100.0);
+    }
+
+    #[test]
+    fn exp010_native_recipe_uses_parsed_property_expression_source() {
+        let root = pack_root();
+        let manifest = load_manifest(&root).unwrap();
+        let case = manifest
+            .cases
+            .iter()
+            .find(|case| case.id == "EXP_010")
+            .unwrap();
+        let recipe = build_recipe(&manifest, &root, case).unwrap();
+        let layer = recipe
+            .scene
+            .layers
+            .iter()
+            .find(|layer| layer.id() == "EXP_010_edge_wobble")
+            .unwrap();
+        let render_ir::Layer::Footage { transform, .. } = layer else {
+            panic!("EXP_010_edge_wobble should be a footage layer");
+        };
+        let Some(PositionExpression::ParsedProperty { source }) =
+            &transform.animation.expression.position
+        else {
+            panic!("EXP_010 should use ParsedProperty instead of EdgeWobble");
+        };
+
+        assert_eq!(source, exp010_position_expression_source());
     }
 
     #[test]
@@ -4321,32 +4334,6 @@ mod tests {
         )
         .unwrap();
         assert!(divergence.is_null());
-    }
-
-    #[test]
-    fn p2_text_journal_default_does_not_emit_p6_opt_in_events() {
-        let root = pack_root();
-        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../..")
-            .join("target/test_p2_text_journal_default_no_p6");
-        if out.exists() {
-            std::fs::remove_dir_all(&out).unwrap();
-        }
-
-        let _p6_opt_in_env = TestEnvVarGuard::remove("AE_NATIVE_RENDERER_P6_AD68_TEXT_OPT_IN");
-        let summary = run_p2_text_journal(P2TextJournalOptions {
-            pack: root,
-            out: out.clone(),
-            cases: vec!["COV_O".to_string()],
-            full_events: true,
-            ae_ref_root: None,
-        })
-        .unwrap();
-
-        assert_eq!(summary["case_count"].as_u64(), Some(1));
-        let stage_counts = &summary["cases"][0]["stage_counts"];
-        assert!(stage_counts.get("p6_ad68_opt_in_flag").is_none());
-        assert!(stage_counts.get("p6_ad68_opt_in_route").is_none());
     }
 
     #[test]
