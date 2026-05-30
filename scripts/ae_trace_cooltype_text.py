@@ -191,18 +191,37 @@ const TXT_RESOLVED_POINTER_HOOKS = [
 ];
 
 const ARE_HOOKS = [
+  {module: "ARE.dll", name: "ARE_curve_to_8454", offset: 0x008454, surface: "are_boundary"},
+  {module: "ARE.dll", name: "ARE_cubic_classify_7a24", offset: 0x007a24, surface: "are_boundary"},
+  {module: "ARE.dll", name: "ARE_curve_cull_or_split_d868", offset: 0x00d868, surface: "are_boundary"},
+  {module: "ARE.dll", name: "ARE_add_cubic_e0b8", offset: 0x00e0b8, surface: "are_boundary"},
+  {module: "ARE.dll", name: "ARE_cubic_edge_builder_db98", offset: 0x00db98, surface: "are_boundary"},
+  {module: "ARE.dll", name: "ARE_emit_edge_df14", offset: 0x00df14, surface: "are_boundary"},
+  {module: "ARE.dll", name: "ARE_contour_sibling_merge_7348", offset: 0x007348, surface: "are_command_queue"},
+  {module: "ARE.dll", name: "ARE_close_finalize_7d20", offset: 0x007d20, surface: "are_command_queue"},
+  {module: "ARE.dll", name: "ARE_edge_vector_append_4afc", offset: 0x004afc, surface: "are_command_queue"},
+  {module: "ARE.dll", name: "ARE_row_bucket_add_71f4", offset: 0x0071f4, surface: "are_command_queue"},
   {module: "ARE.dll", name: "ARE_row_getter_8230", offset: 0x008230, surface: "are_row_getter"},
   {module: "ARE.dll", name: "ARE_event_start_4a04", offset: 0x004a04, surface: "are_event_writer"},
   {module: "ARE.dll", name: "ARE_event_end_4a80", offset: 0x004a80, surface: "are_event_writer"},
   {module: "ARE.dll", name: "ARE_event_cursor_advance_6920", offset: 0x006920, surface: "are_event_writer"},
   {module: "ARE.dll", name: "ARE_event_cursor_insert_6998", offset: 0x006998, surface: "are_event_writer"},
   {module: "ARE.dll", name: "ARE_event_chunk_merge_84e8", offset: 0x0084e8, surface: "are_event_writer"},
+  {module: "ARE.dll", name: "ARE_bucket_insert_or_update_430c", offset: 0x00430c, surface: "are_sampler_event_builder"},
+  {module: "ARE.dll", name: "ARE_active_edge_bucket_insert_726c", offset: 0x00726c, surface: "are_active_edge"},
   {module: "ARE.dll", name: "ARE_sampler_eval_row_75d0", offset: 0x0075d0, surface: "are_sampler"},
   {module: "ARE.dll", name: "ARE_sampler_prepare_76dc", offset: 0x0076dc, surface: "are_sampler"},
   {module: "ARE.dll", name: "ARE_edge_project_78e4", offset: 0x0078e4, surface: "are_sampler"},
   {module: "ARE.dll", name: "ARE_edge_insert_sorted_a850", offset: 0x00a850, surface: "are_sampler"},
   {module: "ARE.dll", name: "ARE_edge_bounds_accumulate_b6c0", offset: 0x00b6c0, surface: "are_sampler"},
-  {module: "ARE.dll", name: "ARE_raster_lazy_row_b7e0", offset: 0x00b7e0, surface: "are_sampler"}
+  {module: "ARE.dll", name: "ARE_raster_lazy_row_b7e0", offset: 0x00b7e0, surface: "are_sampler"},
+  {module: "ARE.dll", name: "ARE_active_edge_drain_b944", offset: 0x00b944, surface: "are_active_edge"},
+  {module: "ARE.dll", name: "ARE_curve_row_step_fc04", offset: 0x00fc04, surface: "are_curve_scanline"},
+  {module: "ARE.dll", name: "ARE_curve_10380", offset: 0x010380, surface: "are_curve_scanline"},
+  {module: "ARE.dll", name: "ARE_curve_to_rows_10560", offset: 0x010560, surface: "are_curve_scanline"},
+  {module: "ARE.dll", name: "ARE_line_emit_10a98", offset: 0x010a98, surface: "are_curve_scanline"},
+  {module: "ARE.dll", name: "ARE_curve_split_times_11e28", offset: 0x011e28, surface: "are_curve_scanline"},
+  {module: "ARE.dll", name: "ARE_build_row_x_table_1268c", offset: 0x01268c, surface: "are_curve_scanline"}
 ];
 
 function hookEnabled(hook) {
@@ -327,14 +346,68 @@ function hookEnabled(hook) {
       "TXT_ARE_PixelWriter8_span_3b8c0"
     ].indexOf(hook.name) !== -1;
   }
+  if (hookProfile === "p6-row-linked-lite") {
+    return [
+      "TXTp_DrawChar3_ARE_42110",
+      "TXT_DrawChar_outline_core_42b80",
+      "TXT_ARE_Render_8bpc_3c360",
+      "TXT_ARE_Render_8bpc_fill_3d200",
+      "TXT_ARE_Render_8bpc_stroke_3d960",
+      "TXT_ARE_FillCoverageCtor_after_3d35f",
+      "TXT_ARE_StrokeCoverageCtor_after_3daee",
+      "TXT_ARE_RowGetter_after_3deaa",
+      "TXT_ARE_OutputComposite_8bpc_3de50",
+      "ARE_row_getter_8230",
+      "ARE_event_start_4a04",
+      "ARE_event_end_4a80",
+      "ARE_event_chunk_merge_84e8",
+      "ARE_bucket_insert_or_update_430c",
+      "ARE_active_edge_bucket_insert_726c",
+      "ARE_sampler_eval_row_75d0",
+      "ARE_sampler_prepare_76dc",
+      "ARE_edge_project_78e4",
+      "ARE_raster_lazy_row_b7e0",
+      "ARE_active_edge_drain_b944"
+    ].indexOf(hook.name) !== -1;
+  }
+  if (hookProfile === "p6-command-queue-lite") {
+    return hook.surface === "are_command_queue" || [
+      "ARE_emit_edge_df14",
+      "ARE_active_edge_bucket_insert_726c",
+      "ARE_active_edge_drain_b944",
+      "ARE_edge_project_78e4",
+      "ARE_bucket_insert_or_update_430c",
+      "ARE_event_chunk_merge_84e8",
+      "ARE_sampler_eval_row_75d0"
+    ].indexOf(hook.name) !== -1;
+  }
   if (hookProfile === "are-event-writer") {
     return hook.surface === "are_event_writer";
   }
   if (hookProfile === "are-sampler") {
     return hook.surface === "are_sampler" || hook.surface === "are_row_getter";
   }
+  if (hookProfile === "are-sampler-lite") {
+    return hook.surface === "are_sampler" || hook.surface === "are_row_getter";
+  }
+  if (hookProfile === "are-sampler-events") {
+    return hook.surface === "are_sampler" || hook.surface === "are_row_getter" ||
+      hook.surface === "are_event_writer" || hook.surface === "are_sampler_event_builder";
+  }
+  if (hookProfile === "are-sampler-events-lite") {
+    return hook.surface === "are_sampler" || hook.surface === "are_row_getter" ||
+      hook.surface === "are_event_writer" || hook.surface === "are_sampler_event_builder";
+  }
+  if (hookProfile === "are-sampler-events-active-edge-lite") {
+    return hook.surface === "are_sampler" || hook.surface === "are_row_getter" ||
+      hook.surface === "are_event_writer" || hook.surface === "are_sampler_event_builder" ||
+      hook.surface === "are_active_edge";
+  }
   if (hookProfile === "are-row-getter") {
     return hook.surface === "are_row_getter";
+  }
+  if (hookProfile === "are-boundary") {
+    return hook.surface === "are_boundary" || hook.surface === "are_row_getter";
   }
   if (hookProfile === "are-sampler-core") {
     return [
@@ -342,6 +415,9 @@ function hookEnabled(hook) {
       "ARE_sampler_prepare_76dc",
       "ARE_raster_lazy_row_b7e0"
     ].indexOf(hook.name) !== -1;
+  }
+  if (hookProfile === "are-curve-scanline") {
+    return hook.surface === "are_curve_scanline" || hook.surface === "are_row_getter";
   }
   if (hookProfile === "bee-text-raster") {
     return hook.module === "BEE.dll" || [
@@ -410,6 +486,13 @@ function hookEnabled(hook) {
   return true;
 }
 
+function isAreSamplerLiteProfile() {
+  return hookProfile === "are-sampler-lite" || hookProfile === "are-sampler-events-lite" ||
+    hookProfile === "are-sampler-events-active-edge-lite" ||
+    hookProfile === "p6-row-linked-lite" ||
+    hookProfile === "p6-command-queue-lite";
+}
+
 function allHooks() {
   return COOLTYPE_HOOKS.concat(TXT_HOOKS).concat(BEE_HOOKS).concat(ARE_HOOKS);
 }
@@ -436,6 +519,10 @@ function isNullPtr(p) {
 
 function safeReadU8(p) {
   try { return ptr(p).readU8(); } catch (e) { return null; }
+}
+
+function safeReadS8(p) {
+  try { return ptr(p).readS8(); } catch (e) { return null; }
 }
 
 function safeReadU16(p) {
@@ -563,6 +650,41 @@ function readF32Array(p, maxCount) {
   for (let i = 0; i < n; i++) {
     out.push(safeReadFloat(q.add(i * 4)));
   }
+  return out;
+}
+
+function decodeXmmValue(value) {
+  if (value === undefined || value === null) {
+    return null;
+  }
+  const out = {raw: String(value)};
+  try {
+    if (value instanceof ArrayBuffer) {
+      const view = new DataView(value);
+      const bytes = new Uint8Array(value);
+      out.hex = Array.prototype.map.call(bytes, function (b) {
+        return ("0" + b.toString(16)).slice(-2);
+      }).join("");
+      out.f32_0_le = view.getFloat32(0, true);
+      out.f32_1_le = view.getFloat32(4, true);
+      out.f64_0_le = view.getFloat64(0, true);
+    }
+  } catch (e) {
+    out.error = String(e);
+  }
+  return out;
+}
+
+function xmmSnapshot(ctx) {
+  const names = ["xmm0", "xmm1", "xmm2", "xmm3", "xmm4", "xmm5", "xmm6", "xmm7"];
+  const out = {};
+  names.forEach(function (name) {
+    try {
+      out[name] = decodeXmmValue(ctx[name]);
+    } catch (e) {
+      out[name] = {error: String(e)};
+    }
+  });
   return out;
 }
 
@@ -785,8 +907,218 @@ function dumpAreEdgeState(p) {
     projected_min_0x28_f32: safeReadFloat(q.add(0x28)),
     projected_max_0x2c_f32: safeReadFloat(q.add(0x2c)),
     dirty_0x30_u8: safeReadU8(q.add(0x30)),
+    winding_flag_0x33_s8: safeReadS8(q.add(0x33)),
     slope_or_sentinel_0x34_f32: safeReadFloat(q.add(0x34)),
     words: memoryWords(q, 8)
+  };
+}
+
+function dumpAreEdgeStateCompact(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const next = safeReadPointer(q);
+  const prev = safeReadPointer(q.add(0x08));
+  const peer = safeReadPointer(q.add(0x10));
+  return {
+    ptr: q.toString(),
+    next_0x00: next === null ? null : next.toString(),
+    prev_0x08: prev === null ? null : prev.toString(),
+    peer_0x10: peer === null ? null : peer.toString(),
+    x0_0x18_f32: safeReadFloat(q.add(0x18)),
+    y0_0x1c_f32: safeReadFloat(q.add(0x1c)),
+    x1_0x20_f32: safeReadFloat(q.add(0x20)),
+    y1_0x24_f32: safeReadFloat(q.add(0x24)),
+    projected_min_0x28_f32: safeReadFloat(q.add(0x28)),
+    projected_max_0x2c_f32: safeReadFloat(q.add(0x2c)),
+    dirty_0x30_u8: safeReadU8(q.add(0x30)),
+    winding_flag_0x33_s8: safeReadS8(q.add(0x33)),
+    slope_or_sentinel_0x34_f32: safeReadFloat(q.add(0x34))
+  };
+}
+
+function dumpAreActiveEdgeList(head, limit) {
+  const out = [];
+  const seen = {};
+  let cur = safeReadPointer(head);
+  for (let i = 0; i < limit && !isNullPtr(cur); i++) {
+    const key = cur.toString();
+    if (seen[key]) {
+      out.push({ptr: key, cycle: true});
+      break;
+    }
+    seen[key] = true;
+    const edge = dumpAreEdgeStateCompact(cur);
+    out.push(edge);
+    cur = safeReadPointer(ptr(cur));
+  }
+  return out;
+}
+
+function dumpAreEventListLite(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const chunk18 = safeReadPointer(q.add(0x18));
+  const cursor20 = safeReadPointer(q.add(0x20));
+  const chunk28 = safeReadPointer(q.add(0x28));
+  return {
+    ptr: q.toString(),
+    chunk_0x18: chunk18 === null ? null : chunk18.toString(),
+    cursor_0x20: cursor20 === null ? null : cursor20.toString(),
+    chunk_0x28: chunk28 === null ? null : chunk28.toString(),
+    event_count_0x30_s64: safeReadS64Number(q.add(0x30)),
+    cursor20_value_s32: cursor20 === null ? null : safeReadS32(cursor20)
+  };
+}
+
+function dumpAreSamplerEventBuilder(ctx, phase) {
+  const builder = ptr(ctx.rcx);
+  const eventList = ptr(ctx.rdx);
+  const bounds = ptr(ctx.r8);
+  return {
+    phase: phase || null,
+    builder_ptr: builder.toString(),
+    event_list_arg2: dumpAreEventListLite(eventList),
+    bounds_arg3: {
+      ptr: bounds.toString(),
+      words: memoryWords(bounds, 4)
+    },
+    fill_rule_flag_0x08_u8: safeReadU8(builder.add(0x08)),
+    active_head_0x60: safeReadPointerString(builder.add(0x60)),
+    active_edges_0x60: dumpAreActiveEdgeList(builder.add(0x60), 40),
+    bucket_table_0x58: safeReadPointerString(builder.add(0x58)),
+    row_base_0x48_s32: safeReadS32(builder.add(0x48)),
+    row_count_0x50_s32: safeReadS32(builder.add(0x50)),
+    current_fixed_y_0x98_s32: safeReadS32(builder.add(0x98)),
+    event_bias_0xa8_s32: safeReadS32(builder.add(0xa8)),
+    requested_fixed_y_0xac_s32: safeReadS32(builder.add(0xac))
+  };
+}
+
+function dumpAreActiveEdgeHook(ctx, hook, phase) {
+  const rcx = ptr(ctx.rcx);
+  const rdx = ptr(ctx.rdx);
+  const r8 = ptr(ctx.r8);
+  const r9 = ptr(ctx.r9);
+  return {
+    phase: phase || null,
+    hook: hook.name,
+    regs: regSnapshot(ctx),
+    xmm: xmmSnapshot(ctx),
+    rcx_words: memoryWords(rcx, 10),
+    rdx_words: memoryWords(rdx, 10),
+    r8_words: memoryWords(r8, 10),
+    r9_words: memoryWords(r9, 10),
+    rcx_edge_candidate: dumpAreEdgeStateCompact(rcx),
+    rdx_edge_candidate: dumpAreEdgeStateCompact(rdx),
+    r8_edge_candidate: dumpAreEdgeStateCompact(r8),
+    r9_edge_candidate: dumpAreEdgeStateCompact(r9),
+    rcx_active_list_candidates: dumpAreActiveEdgeList(rcx, 24),
+    rdx_active_list_candidates: dumpAreActiveEdgeList(rdx, 24),
+    r8_active_list_candidates: dumpAreActiveEdgeList(r8, 24),
+    r9_active_list_candidates: dumpAreActiveEdgeList(r9, 24)
+  };
+}
+
+function dumpAreQueueVector(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const cursor20 = safeReadPointer(q.add(0x20));
+  const chunk28 = safeReadPointer(q.add(0x28));
+  return {
+    ptr: q.toString(),
+    cursor_0x20: cursor20 === null ? null : cursor20.toString(),
+    chunk_0x28: chunk28 === null ? null : chunk28.toString(),
+    count_0x30_s64: safeReadS64Number(q.add(0x30)),
+    words_0x00_0x38: memoryWords(q, 7),
+    cursor_words: cursor20 === null ? [] : memoryWords(cursor20, 4)
+  };
+}
+
+function dumpAreCommandPathContext(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const first = safeReadPointer(q.add(0xe0));
+  const last = safeReadPointer(q.add(0xe8));
+  return {
+    ptr: q.toString(),
+    first_0xe0: first === null ? null : first.toString(),
+    last_0xe8: last === null ? null : last.toString(),
+    first_edge: dumpAreEdgeStateCompact(first),
+    last_edge: dumpAreEdgeStateCompact(last),
+    queue_0x90: dumpAreQueueVector(q.add(0x90)),
+    current_point_0xd4: readPointF32(q.add(0xd4)),
+    previous_point_0x10c: readPointF32(q.add(0x10c)),
+    flags: {
+      started_0x100_u8: safeReadU8(q.add(0x100)),
+      has_previous_0x101_u8: safeReadU8(q.add(0x101)),
+      pending_move_0x102_u8: safeReadU8(q.add(0x102))
+    }
+  };
+}
+
+function dumpAreRowAddContext(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    row_base_0x48_s32: safeReadS32(q.add(0x48)),
+    row_count_0x50_s32: safeReadS32(q.add(0x50)),
+    bucket_table_0x58: safeReadPointerString(q.add(0x58)),
+    active_head_0x60: safeReadPointerString(q.add(0x60)),
+    current_fixed_y_0x98_s32: safeReadS32(q.add(0x98)),
+    event_bias_0xa8_s32: safeReadS32(q.add(0xa8)),
+    requested_fixed_y_0xac_s32: safeReadS32(q.add(0xac))
+  };
+}
+
+function dumpAreCommandQueueHook(ctx, hook, phase) {
+  const rcx = ptr(ctx.rcx);
+  const rdx = ptr(ctx.rdx);
+  const r8 = ptr(ctx.r8);
+  const r9 = ptr(ctx.r9);
+  const edgeSlot = hook.name === "ARE_edge_vector_append_4afc" ? rdx : null;
+  const queuedEdge = edgeSlot === null ? null : safeReadPointer(edgeSlot);
+  const primaryEdge =
+    hook.name === "ARE_edge_vector_append_4afc" ? queuedEdge :
+    hook.name === "ARE_row_bucket_add_71f4" ? rdx :
+    hook.name === "ARE_contour_sibling_merge_7348" ? rdx :
+    null;
+  return {
+    phase: phase || null,
+    hook: hook.name,
+    regs: regSnapshot(ctx),
+    command_ctx_arg1: hook.name === "ARE_row_bucket_add_71f4" ? null : dumpAreCommandPathContext(rcx),
+    row_add_ctx_arg1: hook.name === "ARE_row_bucket_add_71f4" ? dumpAreRowAddContext(rcx) : null,
+    edge_arg2: dumpAreEdgeStateCompact(primaryEdge),
+    edge_arg2_peer_0x10: primaryEdge === null ? null : dumpAreEdgeStateCompact(safeReadPointer(ptr(primaryEdge).add(0x10))),
+    vector_arg1: hook.name === "ARE_edge_vector_append_4afc" ? dumpAreQueueVector(rcx) : null,
+    edge_slot_arg2: edgeSlot === null ? null : {
+      ptr: edgeSlot.toString(),
+      edge_ptr: queuedEdge === null ? null : queuedEdge.toString(),
+      words: memoryWords(edgeSlot, 2)
+    },
+    edge_candidates: {
+      rcx: dumpAreEdgeStateCompact(rcx),
+      rdx: dumpAreEdgeStateCompact(rdx),
+      r8: dumpAreEdgeStateCompact(r8),
+      r9: dumpAreEdgeStateCompact(r9)
+    },
+    active_list_candidates: hook.name === "ARE_row_bucket_add_71f4" ? {
+      rcx: dumpAreActiveEdgeList(rcx, 8),
+      rdx: dumpAreActiveEdgeList(rdx, 8),
+      r8: dumpAreActiveEdgeList(r8, 8),
+      r9: dumpAreActiveEdgeList(r9, 8)
+    } : null
   };
 }
 
@@ -842,6 +1174,260 @@ function dumpAreSamplerObject(p) {
     words_0x150_0x1b0: memoryWords(q.add(0x150), 12),
     words_0x250_0x2a0: memoryWords(q.add(0x250), 10)
   };
+}
+
+function dumpAreSamplerObjectLite(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  const planeBase = safeReadPointer(q.add(0x48));
+  const buckets = safeReadPointer(q.add(0x280));
+  return {
+    ptr: q.toString(),
+    plane_base_0x48: planeBase === null ? null : planeBase.toString(),
+    row_origin_or_bias_0x88_s32: safeReadS32(q.add(0x88)),
+    row_min_0x158_s32: safeReadS32(q.add(0x158)),
+    row_max_0x160_s32: safeReadS32(q.add(0x160)),
+    current_row_0x188_s32: safeReadS32(q.add(0x188)),
+    in_range_0x18c_u8: safeReadU8(q.add(0x18c)),
+    row_state_0x190_s64: safeReadS64Number(q.add(0x190)),
+    next_eval_row_0x198_s32: safeReadS32(q.add(0x198)),
+    eval_valid_0x260_u8: safeReadU8(q.add(0x260)),
+    coverage_accum_0x264_s32: safeReadS32(q.add(0x264)),
+    next_event_fixed_0x268_s32: safeReadS32(q.add(0x268)),
+    prepared_0x26c_u8: safeReadU8(q.add(0x26c)),
+    buckets_0x280: buckets === null ? null : buckets.toString(),
+    plane_prefix_64: memoryBytes(planeBase, 64)
+  };
+}
+
+function readPointF32(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    x: safeReadFloat(q),
+    y: safeReadFloat(q.add(4)),
+    words: memoryWords(q, 1)
+  };
+}
+
+function dumpAreCurveState(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    flags_0x600_0x602: {
+      f600: safeReadU8(q.add(0x600)),
+      antialias_0x601: safeReadU8(q.add(0x601)),
+      aa_curve_split_0x602: safeReadU8(q.add(0x602))
+    },
+    cache_start_y_0x1f0_s32: safeReadS32(q.add(0x1f0)),
+    cache_end_y_0x1f4_s32: safeReadS32(q.add(0x1f4)),
+    current_curve_sentinel_0x5f8: safeReadPointerString(q.add(0x5f8)),
+    x_samples_0x004: readF32Array(q.add(0x004), 42),
+    y_samples_0x0a8: readF32Array(q.add(0x0a8), 42),
+    row_x_table_0x14c: readF32Array(q.add(0x14c), 48),
+    row_emit_words_0x608_0x660: memoryWords(q.add(0x608), 12)
+  };
+}
+
+function dumpAreBoundaryCtx(p) {
+  if (isNullPtr(p)) {
+    return null;
+  }
+  const q = ptr(p);
+  return {
+    ptr: q.toString(),
+    flatness_0x14_f32: safeReadFloat(q.add(0x14)),
+    mode_0x30_s32: safeReadS32(q.add(0x30)),
+    clip_0x34_i32x4: readI32Array(q.add(0x34), 4),
+    disable_clip_0x54_u8: safeReadU8(q.add(0x54)),
+    transform_0x68_0x7c_f32x6: [
+      safeReadFloat(q.add(0x68)),
+      safeReadFloat(q.add(0x6c)),
+      safeReadFloat(q.add(0x70)),
+      safeReadFloat(q.add(0x74)),
+      safeReadFloat(q.add(0x78)),
+      safeReadFloat(q.add(0x7c))
+    ],
+    bounds_0x80_0x8c_f32x4: [
+      safeReadFloat(q.add(0x80)),
+      safeReadFloat(q.add(0x84)),
+      safeReadFloat(q.add(0x88)),
+      safeReadFloat(q.add(0x8c))
+    ],
+    current_point_0xd4_0xd8: {
+      x: safeReadFloat(q.add(0xd4)),
+      y: safeReadFloat(q.add(0xd8))
+    },
+    row_or_edge_list_0xe8: safeReadPointerString(q.add(0xe8)),
+    origin_0xf0_0xf4: {
+      x: safeReadFloat(q.add(0xf0)),
+      y: safeReadFloat(q.add(0xf4))
+    },
+    started_0x100_u8: safeReadU8(q.add(0x100)),
+    has_previous_0x101_u8: safeReadU8(q.add(0x101)),
+    pending_move_0x102_u8: safeReadU8(q.add(0x102)),
+    previous_point_0x10c: readPointF32(q.add(0x10c)),
+    words_0x00_0x120: memoryWords(q, 36)
+  };
+}
+
+function dumpAreBoundaryHookLite(ctx, hook, phase) {
+  const base = {
+    phase: phase || null,
+    hook: hook.name,
+    regs: regSnapshot(ctx),
+    ctx_arg1: dumpAreCommandPathContext(ptr(ctx.rcx))
+  };
+  if (hook.name === "ARE_emit_edge_df14") {
+    base.emit_edge_df14 = {
+      start_arg2: readPointF32(ptr(ctx.rdx)),
+      end_arg3: readPointF32(ptr(ctx.r8))
+    };
+  } else if (hook.name === "ARE_cubic_edge_builder_db98") {
+    base.cubic_edge_builder_db98 = {
+      p0_x_xmm0: decodeXmmValue(ctx.xmm0),
+      p0_y_xmm1: decodeXmmValue(ctx.xmm1),
+      p1_x_xmm2: decodeXmmValue(ctx.xmm2),
+      p1_y_xmm3: decodeXmmValue(ctx.xmm3),
+      p2_x_stack_0x28_f32: safeReadFloat(ptr(ctx.rsp).add(0x28)),
+      p2_y_stack_0x30_f32: safeReadFloat(ptr(ctx.rsp).add(0x30)),
+      p3_x_stack_0x38_f32: safeReadFloat(ptr(ctx.rsp).add(0x38)),
+      p3_y_stack_0x40_f32: safeReadFloat(ptr(ctx.rsp).add(0x40)),
+      depth_stack_0x48_f32: safeReadFloat(ptr(ctx.rsp).add(0x48)),
+      depth_stack_0x48_s32: safeReadS32(ptr(ctx.rsp).add(0x48))
+    };
+  }
+  return base;
+}
+
+function dumpAreBoundaryHook(ctx, hook, phase) {
+  const stack = stackArgs(ctx);
+  const base = {
+    hook: hook.name,
+    phase: phase || "enter",
+    surface: hook.surface,
+    regs: regSnapshotWide(ctx),
+    xmm: xmmSnapshot(ctx),
+    stack: stack,
+    stack_words: memoryWords(ptr(ctx.rsp), 16),
+    ctx_arg1: dumpAreBoundaryCtx(ptr(ctx.rcx)),
+    backtrace: backtrace(ctx)
+  };
+  if (hook.name === "ARE_curve_to_8454") {
+    base.curve_to_8454 = {
+      ctx_arg1: dumpAreBoundaryCtx(ptr(ctx.rcx)),
+      current_ctx_point_0xd4: readPointF32(ptr(ctx.rcx).add(0xd4)),
+      p2_arg2: readPointF32(ptr(ctx.rdx)),
+      p3_arg3: readPointF32(ptr(ctx.r8)),
+      p4_arg4: readPointF32(ptr(ctx.r9))
+    };
+  } else if (hook.name === "ARE_cubic_classify_7a24") {
+    base.cubic_classify_7a24 = {
+      ctx_arg1: dumpAreBoundaryCtx(ptr(ctx.rcx)),
+      p1_arg2: readPointF32(ptr(ctx.rdx)),
+      p2_arg3: readPointF32(ptr(ctx.r8)),
+      p3_arg4: readPointF32(ptr(ctx.r9)),
+      p4_arg5: readPointF32(stack.p5_0x28)
+    };
+  } else if (hook.name === "ARE_curve_cull_or_split_d868") {
+    base.curve_cull_or_split_d868 = {
+      ctx_arg1: dumpAreBoundaryCtx(ptr(ctx.rcx)),
+      packed_p2_arg2_raw: ptr(ctx.rdx).toString(),
+      packed_p3_arg3_raw: ptr(ctx.r8).toString(),
+      packed_p4_arg4_raw: ptr(ctx.r9).toString(),
+      depth_arg5_s32: safeReadS32(stack.p5_0x28),
+      depth_arg5_u32: safeReadU32(stack.p5_0x28)
+    };
+  } else if (hook.name === "ARE_add_cubic_e0b8") {
+    base.add_cubic_e0b8 = {
+      ctx_arg1: dumpAreBoundaryCtx(ptr(ctx.rcx)),
+      p2_arg2: readPointF32(ptr(ctx.rdx)),
+      p3_arg3: readPointF32(ptr(ctx.r8)),
+      p4_arg4: readPointF32(ptr(ctx.r9)),
+      depth_arg5_f32: safeReadFloat(stack.p5_0x28),
+      depth_arg5_s32: safeReadS32(stack.p5_0x28)
+    };
+  } else if (hook.name === "ARE_cubic_edge_builder_db98") {
+    base.cubic_edge_builder_db98 = {
+      ctx_arg1: dumpAreBoundaryCtx(ptr(ctx.rcx)),
+      p0_x_xmm0: base.xmm.xmm0,
+      p0_y_xmm1: base.xmm.xmm1,
+      p1_x_xmm2: base.xmm.xmm2,
+      p1_y_xmm3: base.xmm.xmm3,
+      p2_x_stack_0x28_f32: safeReadFloat(ptr(ctx.rsp).add(0x28)),
+      p2_y_stack_0x30_f32: safeReadFloat(ptr(ctx.rsp).add(0x30)),
+      p3_x_stack_0x38_f32: safeReadFloat(ptr(ctx.rsp).add(0x38)),
+      p3_y_stack_0x40_f32: safeReadFloat(ptr(ctx.rsp).add(0x40)),
+      depth_stack_0x48_f32: safeReadFloat(ptr(ctx.rsp).add(0x48)),
+      depth_stack_0x48_s32: safeReadS32(ptr(ctx.rsp).add(0x48))
+    };
+  } else if (hook.name === "ARE_emit_edge_df14") {
+    base.emit_edge_df14 = {
+      ctx_arg1: dumpAreBoundaryCtx(ptr(ctx.rcx)),
+      start_arg2: readPointF32(ptr(ctx.rdx)),
+      end_arg3: readPointF32(ptr(ctx.r8))
+    };
+  }
+  return base;
+}
+
+function dumpAreCurveScanlineHook(ctx, hook, phase) {
+  const stack = stackArgs(ctx);
+  const base = {
+    hook: hook.name,
+    phase: phase || "enter",
+    surface: hook.surface,
+    regs: regSnapshotWide(ctx),
+    stack: stack,
+    stack_words: memoryWords(ptr(ctx.rsp), 14),
+    backtrace: backtrace(ctx)
+  };
+
+  if (
+    hook.name === "ARE_curve_10380" ||
+    hook.name === "ARE_curve_to_rows_10560" ||
+    hook.name === "ARE_line_emit_10a98"
+  ) {
+    base.curve_emit = {
+      state_arg1: dumpAreCurveState(ptr(ctx.rcx)),
+      p0_arg2: readPointF32(ptr(ctx.rdx)),
+      p1_arg3: readPointF32(ptr(ctx.r8)),
+      p2_arg4: readPointF32(ptr(ctx.r9)),
+      p3_arg5: readPointF32(stack.p5_0x28),
+      bounds_arg6_i32x4: readI32Array(stack.p6_0x30, 4),
+      flag_arg7_u8: safeReadU8(ptr(ctx.rsp).add(0x38)),
+      flag_arg7_s32: safeReadS32(ptr(ctx.rsp).add(0x38))
+    };
+  } else if (hook.name === "ARE_curve_row_step_fc04") {
+    base.curve_row_step = {
+      state_arg1: dumpAreCurveState(ptr(ctx.rcx)),
+      segment_arg2_f32x16: readF32Array(ptr(ctx.rdx), 16),
+      bounds_arg3_i32x4: readI32Array(ptr(ctx.r8), 4)
+    };
+  } else if (hook.name === "ARE_curve_split_times_11e28") {
+    base.curve_split_times = {
+      out_times_arg1: readF32Array(ptr(ctx.rcx), 8),
+      out_words_arg1: memoryWords(ptr(ctx.rcx), 4)
+    };
+  } else if (hook.name === "ARE_build_row_x_table_1268c") {
+    const count = Math.max(0, Math.min(nativeArgS32(ctx.r9), 48));
+    base.row_x_table_builder = {
+      out_arg1: ptr(ctx.rcx).toString(),
+      x_samples_arg2: readF32Array(ptr(ctx.rdx), count + 1),
+      y_samples_arg3: readF32Array(ptr(ctx.r8), count + 1),
+      sample_count_arg4_s32: nativeArgS32(ctx.r9),
+      out_values: readF32Array(ptr(ctx.rcx), count + 1)
+    };
+  }
+  return base;
 }
 
 function dumpAreEventList(p) {
@@ -919,7 +1505,40 @@ function dumpAreEventWriterHook(ctx, hook) {
   return base;
 }
 
-function dumpAreSamplerHook(ctx, hook) {
+function dumpAreEventWriterHookLite(ctx, hook) {
+  const base = {
+    arg1: ptr(ctx.rcx).toString(),
+    arg2: ptr(ctx.rdx).toString(),
+    arg3: ptr(ctx.r8).toString()
+  };
+  if (hook.name === "ARE_event_start_4a04" || hook.name === "ARE_event_end_4a80") {
+    const eventPtr = ptr(ctx.rdx);
+    base.boundary_event = {
+      event_kind: hook.name === "ARE_event_start_4a04" ? "start" : "end",
+      event_list_arg1: dumpAreEventListLite(ptr(ctx.rcx)),
+      event_value_arg2_ptr: eventPtr.toString(),
+      event_value_arg2_s32: safeReadS32(eventPtr)
+    };
+  } else if (hook.name === "ARE_event_cursor_advance_6920") {
+    base.cursor_advance = {
+      cursor_arg1: dumpAreEventCursor(ptr(ctx.rcx))
+    };
+  } else if (hook.name === "ARE_event_cursor_insert_6998") {
+    base.cursor_insert = {
+      cursor_arg1: dumpAreEventCursor(ptr(ctx.rcx)),
+      delta_arg2_s32: nativeArgS32(ctx.rdx)
+    };
+  } else if (hook.name === "ARE_event_chunk_merge_84e8") {
+    base.chunk_merge = {
+      event_list_arg1: dumpAreEventListLite(ptr(ctx.rcx)),
+      from_cursor_arg2: dumpAreEventCursor(ptr(ctx.rdx)),
+      to_cursor_arg3: dumpAreEventCursor(ptr(ctx.r8))
+    };
+  }
+  return base;
+}
+
+function dumpAreSamplerHook(ctx, hook, phase) {
   const stack = stackArgs(ctx);
   const base = {
     hook: hook.name,
@@ -942,8 +1561,11 @@ function dumpAreSamplerHook(ctx, hook) {
     };
   } else if (hook.name === "ARE_edge_project_78e4") {
     base.edge_project = {
+      project_y_xmm1: decodeXmmValue(ctx.xmm1),
       edge_arg1_before: dumpAreEdgeState(ptr(ctx.rcx))
     };
+  } else if (hook.name === "ARE_bucket_insert_or_update_430c") {
+    base.event_builder = dumpAreSamplerEventBuilder(ctx, phase);
   } else if (hook.name === "ARE_edge_bounds_accumulate_b6c0") {
     base.edge_bounds_accumulate = {
       edge_arg2_before: dumpAreEdgeState(ptr(ctx.rdx)),
@@ -955,6 +1577,12 @@ function dumpAreSamplerHook(ctx, hook) {
       node_arg3_before: dumpAreEdgeState(ptr(ctx.r8)),
       node_arg3_words: memoryWords(ptr(ctx.r8), 8)
     };
+  } else if (hook.surface === "are_active_edge") {
+    base.active_edge = dumpAreActiveEdgeHook(ctx, hook, phase);
+  } else if (hook.surface === "are_command_queue") {
+    base.command_queue = dumpAreCommandQueueHook(ctx, hook, phase);
+  } else if (hook.surface === "are_boundary") {
+    base.boundary_lite = dumpAreBoundaryHookLite(ctx, hook, phase);
   } else if (hook.name === "ARE_raster_lazy_row_b7e0") {
     base.lazy_row = {
       row_arg2_s32: nativeArgS32(ctx.rdx),
@@ -962,6 +1590,61 @@ function dumpAreSamplerHook(ctx, hook) {
     };
   } else if (hook.surface === "are_event_writer") {
     base.event_writer = dumpAreEventWriterHook(ctx, hook);
+  } else if (hook.surface === "are_curve_scanline") {
+    base.curve_scanline = dumpAreCurveScanlineHook(ctx, hook, phase || "enter");
+  }
+  return base;
+}
+
+function dumpAreSamplerHookLite(ctx, hook, phase) {
+  const base = {
+    hook: hook.name,
+    surface: hook.surface,
+    regs: regSnapshot(ctx),
+    arg1: ptr(ctx.rdx).toString(),
+    arg2: ptr(ctx.r8).toString(),
+    arg3: ptr(ctx.r9).toString()
+  };
+  if (hook.name === "ARE_row_getter_8230") {
+    base.row_getter = dumpAreRowGetterContext(ptr(ctx.rcx), nativeArgS32(ctx.rdx));
+  } else if (hook.name === "ARE_sampler_eval_row_75d0") {
+    base.eval_row = {
+      row_arg2_s32: nativeArgS32(ctx.rdx),
+      sampler: dumpAreSamplerObjectLite(ptr(ctx.rcx))
+    };
+  } else if (hook.name === "ARE_sampler_prepare_76dc") {
+    base.prepare = {
+      sampler: dumpAreSamplerObjectLite(ptr(ctx.rcx))
+    };
+  } else if (hook.name === "ARE_edge_project_78e4") {
+    base.edge_project = {
+      project_y_xmm1: decodeXmmValue(ctx.xmm1),
+      edge_arg1_before: dumpAreEdgeState(ptr(ctx.rcx))
+    };
+  } else if (hook.name === "ARE_bucket_insert_or_update_430c") {
+    base.event_builder = dumpAreSamplerEventBuilder(ctx, phase);
+  } else if (hook.name === "ARE_edge_bounds_accumulate_b6c0") {
+    base.edge_bounds_accumulate = {
+      edge_arg2_before: dumpAreEdgeState(ptr(ctx.rdx)),
+      edge_arg4_before: dumpAreEdgeState(ptr(ctx.r9))
+    };
+  } else if (hook.name === "ARE_edge_insert_sorted_a850") {
+    base.edge_insert = {
+      node_arg3_before: dumpAreEdgeState(ptr(ctx.r8))
+    };
+  } else if (hook.surface === "are_active_edge") {
+    base.active_edge = dumpAreActiveEdgeHook(ctx, hook, phase);
+  } else if (hook.surface === "are_command_queue") {
+    base.command_queue = dumpAreCommandQueueHook(ctx, hook, phase);
+  } else if (hook.surface === "are_boundary") {
+    base.boundary_lite = dumpAreBoundaryHookLite(ctx, hook, phase);
+  } else if (hook.name === "ARE_raster_lazy_row_b7e0") {
+    base.lazy_row = {
+      row_arg2_s32: nativeArgS32(ctx.rdx),
+      sampler: dumpAreSamplerObjectLite(ptr(ctx.rcx))
+    };
+  } else if (hook.surface === "are_event_writer") {
+    base.event_writer = dumpAreEventWriterHookLite(ctx, hook);
   }
   return base;
 }
@@ -2072,6 +2755,19 @@ function moduleSnapshot(module) {
 }
 
 function dumpEnterCommon(ctx, hook) {
+  if (hook.module === "ARE.dll" && isAreSamplerLiteProfile()) {
+    const lite = dumpAreSamplerHookLite(ctx, hook, "enter");
+    return {
+      hook: hook.name,
+      surface: hook.surface,
+      regs: regSnapshot(ctx),
+      arg0_text_or_font: ptr(ctx.rcx).toString(),
+      arg1: ptr(ctx.rdx).toString(),
+      arg2: ptr(ctx.r8).toString(),
+      arg3: ptr(ctx.r9).toString(),
+      are_sampler: lite
+    };
+  }
   const stack = stackArgs(ctx);
   const payload = {
     hook: hook.name,
@@ -2129,7 +2825,10 @@ function dumpEnterCommon(ctx, hook) {
     payload.bee_signature = dumpBeeSignature(ctx, hook);
   }
   if (hook.module === "ARE.dll") {
-    payload.are_sampler = dumpAreSamplerHook(ctx, hook);
+    payload.are_sampler = dumpAreSamplerHook(ctx, hook, "enter");
+    if (hook.surface === "are_boundary") {
+      payload.are_boundary = dumpAreBoundaryHook(ctx, hook, "enter");
+    }
   }
   if (hook.surface.indexOf("core_text_") === 0 || hook.surface.indexOf("txt_play_char_outlines") === 0) {
     payload.text_raster_signature = dumpTextRasterSignature(ctx, hook);
@@ -2223,6 +2922,19 @@ function installHook(module, hook) {
         if (hook.name.indexOf("TXT_ARE_PixelWriter8_type2_") === 0) {
           return;
         }
+        if (hook.module === "ARE.dll" && isAreSamplerLiteProfile()) {
+          emit("cooltype_hook_leave", {
+            hook: hook.name,
+            surface: hook.surface,
+            retval: ptr(retval).toString(),
+            arg0_text_or_font: this.ctx.rcx.toString(),
+            arg1: this.ctx.rdx.toString(),
+            arg2: this.ctx.r8.toString(),
+            arg3: this.ctx.r9.toString(),
+            are_sampler_after: dumpAreSamplerHookLite(this.ctx, hook, "leave")
+          });
+          return;
+        }
         const stack = this.stack || {};
         const payload = {
           hook: hook.name,
@@ -2295,7 +3007,10 @@ function installHook(module, hook) {
           payload.bee_signature_after = dumpBeeSignature(this.ctx, hook);
         }
         if (hook.module === "ARE.dll") {
-          payload.are_sampler_after = dumpAreSamplerHook(this.ctx, hook);
+          payload.are_sampler_after = dumpAreSamplerHook(this.ctx, hook, "leave");
+          if (hook.surface === "are_boundary") {
+            payload.are_boundary_after = dumpAreBoundaryHook(this.ctx, hook, "leave");
+          }
         }
         if (hook.surface.indexOf("core_text_") === 0 || hook.surface.indexOf("txt_play_char_outlines") === 0) {
           payload.text_raster_signature_after = dumpTextRasterSignature(this.ctx, hook);
@@ -2554,7 +3269,7 @@ def main() -> int:
     ap.add_argument("--duration", type=float, default=180.0)
     ap.add_argument("--attach-delay", type=float, default=0.0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-spans-basic", "txt-are-byte-rows", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "are-event-writer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-spans-basic", "txt-are-byte-rows", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "p6-row-linked-lite", "p6-command-queue-lite", "are-event-writer", "are-sampler", "are-sampler-lite", "are-sampler-events", "are-sampler-events-lite", "are-sampler-events-active-edge-lite", "are-row-getter", "are-boundary", "are-sampler-core", "are-curve-scanline", "all"], default="source-rect")
     # Accepted for compatibility with ae_trace_drop_shadow_softness helpers.
     ap.add_argument("--generic-hook-limit", type=int, default=0)
     ap.add_argument("--max-stalk-render-calls", type=int, default=0)
@@ -2682,6 +3397,11 @@ def summarize_events(case_id: str, events: list[dict[str, Any]]) -> dict[str, An
             "width_candidates_sample": event.get("core_width_out_candidates_after"),
             "txt_are_spans": event.get("txt_are_spans") or event.get("txt_are_spans_after"),
             "txt_are_producer": event.get("txt_are_producer") or event.get("txt_are_producer_after"),
+            "are_curve_scanline": (
+                (event.get("are_sampler") or {}).get("curve_scanline")
+                or (event.get("are_sampler_after") or {}).get("curve_scanline")
+            ),
+            "are_boundary": event.get("are_boundary") or event.get("are_boundary_after"),
             "pf_transfer_rect": event.get("pf_transfer_rect"),
             "backtrace": backtrace[:10] if isinstance(backtrace, list) else [],
         }
@@ -2810,7 +3530,7 @@ def main() -> int:
     ap.add_argument("--duration", type=int, default=240)
     ap.add_argument("--attach-delay", type=int, default=0)
     ap.add_argument("--max-events", type=int, default=1200)
-    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-spans-basic", "txt-are-byte-rows", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "are-event-writer", "are-sampler", "are-row-getter", "are-sampler-core", "all"], default="source-rect")
+    ap.add_argument("--hook-profile", choices=["source-rect", "font-metrics", "txt-source-rect", "txt-gridchar", "text-raster", "text-raster-render-only", "bee-text-raster", "bee-text-render", "txt-drawchar", "txt-are-spans", "txt-are-spans-basic", "txt-are-byte-rows", "txt-are-byte-samples", "txt-are-producer", "txt-are-producer-deep", "txt-are-producer-direct", "p6-row-linked-lite", "p6-command-queue-lite", "are-event-writer", "are-sampler", "are-sampler-lite", "are-sampler-events", "are-sampler-events-lite", "are-sampler-events-active-edge-lite", "are-row-getter", "are-boundary", "are-sampler-core", "are-curve-scanline", "all"], default="source-rect")
     ap.add_argument("--allow-render-failure", action="store_true")
     ap.add_argument("--out-dir", default="")
     ap.add_argument("--live-tail", action="store_true")

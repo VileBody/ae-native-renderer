@@ -648,6 +648,49 @@ Suggested implementation order:
 5. Drive Bezier/ease, collapse, and effects parity from failing conformance thresholds.
 6. Run color/compositing/sampling audit as a cross-cutting parity pass.
 
+### P05 Status Update — 2026-05-30
+
+Detailed status report: `docs/phase_reports/P05_STATUS_ROADMAP_UPDATE_20260530.md`.
+
+Current decision:
+
+```text
+p05_staged_candidate_green_pr_opened_pending_review_merge
+```
+
+What changed:
+
+- P6 current-text AD68 pixel route is now part of the P05 candidate, with
+  production default enabled by the prior `e86ab6e` branch commit and explicit
+  disable still available through `AE_NATIVE_RENDERER_P6_AD68_TEXT_PIXELS_OPT_IN=0`.
+- The P05 candidate package was committed as `77cc0b6` on
+  `codex-p6-opt-in-ad68-text-route`.
+- Draft PR opened: <https://github.com/VileBody/ae-native-renderer/pull/1>.
+- The candidate was validated in a temporary clean worktree containing only
+  `HEAD + staged patch`; local unstaged dirty context was excluded.
+
+Validation summary:
+
+```text
+git diff --cached --check
+git diff --check
+cargo fmt --check -p text-engine/render-core/render-cli/ae-bridge/render-ir
+python3 -m py_compile scripts/ae_trace_cooltype_text.py scripts/analyze_are_sampler_trace.py scripts/run_master_conformance_gate.py
+env CARGO_BUILD_JOBS=2 cargo test --offline -p text-engine -- --test-threads=1
+env CARGO_BUILD_JOBS=2 cargo test --offline -p render-core -- --test-threads=1
+env CARGO_BUILD_JOBS=2 cargo test --offline -p render-cli -- --test-threads=1
+env CARGO_BUILD_JOBS=2 cargo test --offline -p ae-bridge -- --test-threads=1
+env CARGO_BUILD_JOBS=2 cargo test --offline -p render-ir -- --test-threads=1
+```
+
+Remaining before calling P05 fully closed:
+
+- PR #1 review/merge and any remote CI decision.
+- Decide separately what to do with unstaged `layer_eval.rs` M17 alpha-fit and
+  P2 journal experiment hunks.
+- Keep untracked static/TDD/probe helper files out of the P05 package unless
+  they are deliberately reviewed in a later tooling package.
+
 ### V2.3 — Remaining Gaps From V1 + V2 Roadmaps
 
 This section tracks roadmap items that are not simply "make math more AE-like"

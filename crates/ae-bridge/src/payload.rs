@@ -718,6 +718,12 @@ fn property_expression_status(
             "recognized generated edge_wobble position expression",
         );
     }
+    if prop_name == "tf_position" && is_supported_position_property_expression(expression) {
+        return (
+            CapabilityStatus::Approximate,
+            "recognized parsed transform.position expression subset",
+        );
+    }
 
     (
         CapabilityStatus::Unsupported,
@@ -1077,6 +1083,7 @@ fn text_expression_selector_from_expression(
         freq: extract_js_assignment(expression, "freq").unwrap_or(2.0),
         amplitude: extract_js_assignment(expression, "amplitude").unwrap_or(100.0),
         decay: extract_js_assignment(expression, "decay").unwrap_or(8.0),
+        pre_delay_amount: expression.contains("value").then_some(100.0),
         source: expression.to_string(),
     })
 }
@@ -1125,17 +1132,22 @@ fn text_wiggly_selector(advanced: &Value) -> Option<render_ir::TextWigglySelecto
 
 fn position_expression(layer: &PayloadLayer) -> Option<render_ir::PositionExpression> {
     let expression = layer.props.get("tf_position")?.expression.as_deref()?;
-    if !is_edge_wobble_position_expression(expression) {
-        return None;
+    if is_edge_wobble_position_expression(expression) {
+        return Some(render_ir::PositionExpression::EdgeWobble {
+            intro: extract_js_var(expression, "intro").unwrap_or(0.63),
+            outro: extract_js_var(expression, "outro").unwrap_or(0.63),
+            amp: extract_js_var(expression, "amp").unwrap_or(22.0),
+            freq: extract_js_var(expression, "freq").unwrap_or(3.6),
+            source: expression.to_string(),
+        });
+    }
+    if is_supported_position_property_expression(expression) {
+        return Some(render_ir::PositionExpression::ParsedProperty {
+            source: expression.to_string(),
+        });
     }
 
-    Some(render_ir::PositionExpression::EdgeWobble {
-        intro: extract_js_var(expression, "intro").unwrap_or(0.63),
-        outro: extract_js_var(expression, "outro").unwrap_or(0.63),
-        amp: extract_js_var(expression, "amp").unwrap_or(22.0),
-        freq: extract_js_var(expression, "freq").unwrap_or(3.6),
-        source: expression.to_string(),
-    })
+    None
 }
 
 fn is_edge_wobble_position_expression(expression: &str) -> bool {
@@ -1144,6 +1156,17 @@ fn is_edge_wobble_position_expression(expression: &str) -> bool {
         && expression.contains("var amp=")
         && expression.contains("var freq=")
         && expression.contains("Math.exp(-2.4")
+}
+
+fn is_supported_position_property_expression(expression: &str) -> bool {
+    let compact = expression.replace(char::is_whitespace, "");
+    compact.contains("intro=")
+        && compact.contains("outro=")
+        && compact.contains("amp=")
+        && compact.contains("freq=")
+        && compact.contains("edge=Math.min(time-inPoint,outPoint-time)")
+        && compact.contains("env=Math.max(0,Math.min(1,edge/intro))")
+        && compact.contains("value+[Math.sin(time*freq*2*Math.PI)*amp*env,0]")
 }
 
 fn extract_js_var(expression: &str, name: &str) -> Option<f32> {

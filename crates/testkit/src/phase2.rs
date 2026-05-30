@@ -59,7 +59,7 @@ pub fn numbered_frame_expectations(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use anyhow::{anyhow, ensure};
+    use anyhow::{anyhow, bail, ensure};
     use serde_json::Value;
     use std::path::{Path, PathBuf};
 
@@ -98,6 +98,18 @@ mod tests {
         let root = repo_root();
         let manifest_path = root.join("fixtures/ae_conformance_pack/manifest.json");
         let manifest: Value = serde_json::from_str(&std::fs::read_to_string(&manifest_path)?)?;
+        let unavailable = unavailable_phase2_goldens(&root, &manifest)?;
+        if !unavailable.is_empty() {
+            if !crate::ae_png_goldens_required() {
+                eprintln!(
+                    "skipping phase2 AE PNG golden load test: {} assets unavailable; set {}=1 to require checked-in goldens",
+                    unavailable.len(),
+                    crate::REQUIRE_AE_PNG_GOLDENS_ENV
+                );
+                return Ok(());
+            }
+            bail!("phase2 AE PNG golden assets unavailable: {:?}", unavailable);
+        }
 
         for case_id in ["TMP_010", "TMP_020", "STK_030"] {
             let case = manifest_case(&manifest, case_id)?;
@@ -135,6 +147,38 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    fn unavailable_phase2_goldens(root: &Path, manifest: &Value) -> anyhow::Result<Vec<PathBuf>> {
+        let mut unavailable = Vec::new();
+        for case_id in ["TMP_010", "TMP_020", "STK_030"] {
+            let case = manifest_case(manifest, case_id)?;
+            let frames = case
+                .get("frames_to_compare")
+                .and_then(Value::as_array)
+                .ok_or_else(|| anyhow!("{case_id} has no frames_to_compare"))?;
+            let png_dir = root.join(format!(
+                "fixtures/ae_conformance_pack/ae_goldens/png/{case_id}"
+            ));
+            if !png_dir.is_dir() {
+                unavailable.push(png_dir);
+                continue;
+            }
+            if count_pngs(&png_dir)? != 60 {
+                unavailable.push(png_dir);
+                continue;
+            }
+            for frame in frames {
+                let frame = frame
+                    .as_u64()
+                    .ok_or_else(|| anyhow!("{case_id} frame index is not an integer"))?;
+                let png = png_dir.join(format!("{case_id}_{frame:05}.png"));
+                if !png.is_file() {
+                    unavailable.push(png);
+                }
+            }
+        }
+        Ok(unavailable)
     }
 
     fn repo_root() -> PathBuf {

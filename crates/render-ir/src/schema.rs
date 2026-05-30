@@ -159,6 +159,8 @@ pub enum PositionExpression {
         #[serde(default)]
         source: String,
     },
+    #[serde(rename = "parsed_property")]
+    ParsedProperty { source: String },
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -303,6 +305,8 @@ pub enum TextExpressionSelector {
         freq: f32,
         amplitude: f32,
         decay: f32,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        pre_delay_amount: Option<f32>,
         #[serde(default)]
         source: String,
     },

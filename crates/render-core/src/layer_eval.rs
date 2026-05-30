@@ -1,6 +1,16 @@
+use crate::bee_text_carrier::{
+    classify_bee_text_carrier_routes, BeeTextCarrierRouteRecord, BeeTextCarrierRouteStatus,
+};
 use crate::motion_blur;
+use crate::precomp::PrecompGraph;
 use effects::{posterize_time::PosterizeTimeParams, EffectContext, EffectRegistry};
-use raster_cpu::{composite_normal, BilinearSampler, Canvas, Sampler};
+use expression_engine::{
+    BoundaryPropertyExpressionEvaluator, CompExpressionContext, ExprValue, LayerExpressionContext,
+    NamedPatternExpressionEvaluator, NoopPropertyExpressionHost, PropertyExpressionContext,
+    PropertyExpressionEvaluator, PropertyExpressionMode, PropertyExpressionRequest,
+    PropertyValueType,
+};
+use raster_cpu::{composite_normal, composite_normal_pixel, BilinearSampler, Canvas, Sampler};
 use render_ir::{
     Composition, EffectSpec, Layer, PositionExpression, Rect, ScalarKeyframe, Scene,
     TextAnimatorSpec, TextExpressionSelector, TextSelectorBasedOn, TextSelectorShape, Vec2Keyframe,
@@ -9,8 +19,10 @@ use serde_json::{json, Value};
 use std::collections::BTreeMap;
 use std::time::Instant;
 use text_engine::{
-    layout_text, rasterize_text, rasterize_text_with_layout, GlyphLayoutTelemetry,
-    TextLayoutRequest, TextLayoutResult, TextRasterTrace,
+    layout_text, rasterize_text, rasterize_text_with_layout,
+    rasterize_text_with_layout_p6_pixels_disabled, rasterize_text_with_layout_vector_transform,
+    GlyphLayoutTelemetry, TextLayoutRequest, TextLayoutResult, TextRasterTrace,
+    TextVectorTransform,
 };
 use transform_math::{Mat3, Transform2D, Vec2};
 
@@ -33,6 +45,14 @@ pub struct FrameRenderTrace {
     pub text_selector_weights: Vec<Value>,
     pub position_expressions: Vec<Value>,
     pub collapse: Vec<Value>,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct BeeTextCarrierRenderContext<'a> {
+    parent_composition: &'a str,
+    precomp_layer_id: &'a str,
+    target_composition: &'a str,
+    source_time: f64,
 }
 
 #[derive(Debug, Clone)]
@@ -218,6 +238,7 @@ pub fn render_frame_with_footage(
         time,
         footage,
         &mut Vec::new(),
+        TextP6PixelPolicy::Default,
         None,
     )
 }
@@ -251,6 +272,7 @@ pub fn render_frame_with_footage_traced(
         time,
         footage,
         &mut Vec::new(),
+        TextP6PixelPolicy::Default,
         Some(&mut trace),
     )?;
     Ok((canvas, trace))
@@ -263,6 +285,7 @@ fn render_composition_frame(
     time: f64,
     footage: &mut dyn FootageProvider,
     stack: &mut Vec<String>,
+    text_p6_pixel_policy: TextP6PixelPolicy,
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
     let mut canvas = Canvas::new(comp.width, comp.height, comp.background);
@@ -299,6 +322,7 @@ fn render_composition_frame(
                     lower_stack_time,
                     footage,
                     stack,
+                    text_p6_pixel_policy,
                     None,
                 )?
             } else {
@@ -344,6 +368,7 @@ fn render_composition_frame(
                 time,
                 footage,
                 stack,
+                text_p6_pixel_policy,
                 trace.as_deref_mut(),
             )?;
             composite_normal(&mut canvas, &layer_canvas, 100.0);
@@ -355,6 +380,7 @@ fn render_composition_frame(
                 time,
                 footage,
                 stack,
+                text_p6_pixel_policy,
                 trace.as_deref_mut(),
             )?;
             composite_normal(&mut canvas, &layer_canvas, layer_opacity);
@@ -388,6 +414,7 @@ fn render_motion_blurred_layer(
     frame_time: f64,
     footage: &mut dyn FootageProvider,
     stack: &mut Vec<String>,
+    text_p6_pixel_policy: TextP6PixelPolicy,
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
     let frame_duration = if comp.fps > 0.0 {
@@ -455,6 +482,7 @@ fn render_motion_blurred_layer(
             sample_time,
             footage,
             stack,
+            text_p6_pixel_policy,
             trace.as_deref_mut(),
         )?;
         accumulate_motion_sample(&mut accum, &sample, sample_weight);
@@ -708,6 +736,39 @@ fn source_frame_quantization(source_time: f64, fps: f64) -> Option<SourceFrameQu
     })
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextP6PixelPolicy {
+    Default,
+    DisabledForPrecompRasterInput,
+}
+
+impl TextP6PixelPolicy {
+    fn layer_text_render_path(self) -> &'static str {
+        match self {
+            Self::Default => "layer_text",
+            Self::DisabledForPrecompRasterInput => "layer_text_precomp_raster_input_p6_disabled",
+        }
+    }
+}
+
+fn rasterize_text_with_layout_for_policy(
+    request: &TextLayoutRequest,
+    layout: &TextLayoutResult,
+    width: u32,
+    height: u32,
+    fill: [u8; 4],
+    policy: TextP6PixelPolicy,
+) -> anyhow::Result<(Canvas, TextRasterTrace)> {
+    match policy {
+        TextP6PixelPolicy::Default => {
+            rasterize_text_with_layout(request, layout, width, height, fill)
+        }
+        TextP6PixelPolicy::DisabledForPrecompRasterInput => {
+            rasterize_text_with_layout_p6_pixels_disabled(request, layout, width, height, fill)
+        }
+    }
+}
+
 fn render_layer_stub(
     scene: &Scene,
     comp: &Composition,
@@ -715,6 +776,7 @@ fn render_layer_stub(
     time: f64,
     footage: &mut dyn FootageProvider,
     stack: &mut Vec<String>,
+    text_p6_pixel_policy: TextP6PixelPolicy,
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
     let layer_started = Instant::now();
@@ -791,8 +853,14 @@ fn render_layer_stub(
             };
             let layout = layout_text(&request).ok();
             let (mut text_canvas, raster_trace) = if let Some(layout) = layout.as_ref() {
-                let (canvas, raster_trace) =
-                    rasterize_text_with_layout(&request, layout, local_width, local_height, *fill)?;
+                let (canvas, raster_trace) = rasterize_text_with_layout_for_policy(
+                    &request,
+                    layout,
+                    local_width,
+                    local_height,
+                    *fill,
+                    text_p6_pixel_policy,
+                )?;
                 (canvas, Some(raster_trace))
             } else {
                 (
@@ -813,7 +881,7 @@ fn render_layer_stub(
                 [rect.x, rect.y],
                 layout.as_ref(),
                 raster_trace.as_ref(),
-                "layer_text",
+                text_p6_pixel_policy.layer_text_render_path(),
             );
             let reveal = evaluate_scalar_keyframes(&transform.animation.reveal, layer_time, 100.0);
             if text_animators.is_empty() {
@@ -926,6 +994,7 @@ fn render_layer_stub(
                     source_time,
                     footage,
                     stack,
+                    TextP6PixelPolicy::DisabledForPrecompRasterInput,
                     trace.as_deref_mut(),
                 )?;
                 stack.pop();
@@ -1048,6 +1117,8 @@ fn render_collapsed_precomp(
             .map(|layer| layer.id().to_string())
             .collect(),
     );
+    let bee_text_carrier_routes = bee_text_carrier_routes_for_precomp(scene, &parent_comp.id, id);
+    record_bee_text_carrier_route_trace(trace.as_deref_mut(), bee_text_carrier_routes);
     let mut canvas = Canvas::transparent(parent_comp.width, parent_comp.height);
 
     stack.push(composition.clone());
@@ -1063,6 +1134,12 @@ fn render_collapsed_precomp(
             footage,
             stack,
             parent_matrix,
+            Some(BeeTextCarrierRenderContext {
+                parent_composition: &parent_comp.id,
+                precomp_layer_id: id,
+                target_composition: composition,
+                source_time,
+            }),
             trace.as_deref_mut(),
         )?;
         composite_normal(&mut canvas, &child_canvas, opacity_of(child, source_time));
@@ -1080,6 +1157,7 @@ fn render_layer_with_parent_matrix(
     footage: &mut dyn FootageProvider,
     stack: &mut Vec<String>,
     parent_matrix: Mat3,
+    bee_text_carrier_context: Option<BeeTextCarrierRenderContext<'_>>,
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
     match layer {
@@ -1150,7 +1228,114 @@ fn render_layer_with_parent_matrix(
             });
             let child_matrix = transform_to_matrix(&evaluated).matrix();
             let matrix = parent_matrix.mul(child_matrix);
-            let raster_scale = matrix_scale_hint(matrix).clamp(1.0, 4.0);
+            let reveal = evaluate_scalar_keyframes(&transform.animation.reveal, time, 100.0);
+            if collapsed_text_vector_deferred_enabled()
+                && text_animators.is_empty()
+                && reveal >= 99.999
+            {
+                let raster_scale = collapsed_text_raster_scale(matrix);
+                let local_width = canvas_dim(rect.w * raster_scale);
+                let local_height = canvas_dim(rect.h * raster_scale);
+                let request = TextLayoutRequest {
+                    text: text.clone(),
+                    font_id: font.clone(),
+                    font_size: *fontSize * raster_scale,
+                    box_rect: Some([0.0, 0.0, local_width as f32, local_height as f32]),
+                };
+                if let Ok(layout) = layout_text(&request) {
+                    let render_matrix = if raster_scale > 1.0001 {
+                        matrix.mul(Mat3::scale(Vec2::new(
+                            1.0 / raster_scale,
+                            1.0 / raster_scale,
+                        )))
+                    } else {
+                        matrix
+                    };
+                    match rasterize_text_with_layout_vector_transform(
+                        &request,
+                        &layout,
+                        local_width,
+                        local_height,
+                        *fill,
+                        TextVectorTransform {
+                            matrix: Mat3::identity(),
+                            local_origin: [0.0, 0.0],
+                            scale_carrier: "scale_baked_bee_text_carrier_local_canvas",
+                            font_size_baked_scale: raster_scale > 1.0001,
+                        },
+                    ) {
+                        Ok((text_canvas, raster_trace)) => {
+                            let rendered = transform_canvas_with_matrix(
+                                &text_canvas,
+                                parent_comp.width,
+                                parent_comp.height,
+                                render_matrix,
+                                [rect.x * raster_scale, rect.y * raster_scale],
+                            );
+                            record_text_layout_trace(
+                                trace.as_deref_mut(),
+                                &parent_comp.id,
+                                id,
+                                time,
+                                time,
+                                &request,
+                                [local_width, local_height],
+                                raster_scale,
+                                render_matrix,
+                                [rect.x * raster_scale, rect.y * raster_scale],
+                                Some(&layout),
+                                Some(&raster_trace),
+                                "collapsed_text_vector_deferred",
+                            );
+                            record_collapsed_text_vector_trace(
+                                trace.as_deref_mut(),
+                                &parent_comp.id,
+                                id,
+                                time,
+                                parent_matrix,
+                                child_matrix,
+                                matrix,
+                                raster_scale,
+                                [local_width, local_height],
+                                Some(&text_canvas),
+                                "deferred_text_vector_matrix_carrier",
+                                None,
+                            );
+                            record_bee_text_carrier_routed_trace(
+                                trace.as_deref_mut(),
+                                bee_text_carrier_context,
+                                &parent_comp.id,
+                                id,
+                                time,
+                                parent_matrix,
+                                child_matrix,
+                                matrix,
+                                [local_width, local_height],
+                                &raster_trace,
+                                &rendered,
+                            );
+                            return Ok(rendered);
+                        }
+                        Err(err) => {
+                            record_collapsed_text_vector_trace(
+                                trace.as_deref_mut(),
+                                &parent_comp.id,
+                                id,
+                                time,
+                                parent_matrix,
+                                child_matrix,
+                                matrix,
+                                raster_scale,
+                                [local_width, local_height],
+                                None,
+                                "fallback_to_intermediate_text_raster",
+                                Some(&err.to_string()),
+                            );
+                        }
+                    }
+                }
+            }
+            let raster_scale = collapsed_text_raster_scale(matrix);
             let local_width = canvas_dim(rect.w * raster_scale);
             let local_height = canvas_dim(rect.h * raster_scale);
             let request = TextLayoutRequest {
@@ -1161,8 +1346,13 @@ fn render_layer_with_parent_matrix(
             };
             let layout = layout_text(&request).ok();
             let (mut text_canvas, raster_trace) = if let Some(layout) = layout.as_ref() {
-                let (canvas, raster_trace) =
-                    rasterize_text_with_layout(&request, layout, local_width, local_height, *fill)?;
+                let (canvas, raster_trace) = rasterize_text_with_layout_p6_pixels_disabled(
+                    &request,
+                    layout,
+                    local_width,
+                    local_height,
+                    *fill,
+                )?;
                 (canvas, Some(raster_trace))
             } else {
                 (
@@ -1192,7 +1382,6 @@ fn render_layer_with_parent_matrix(
                 raster_trace.as_ref(),
                 "collapsed_text",
             );
-            let reveal = evaluate_scalar_keyframes(&transform.animation.reveal, time, 100.0);
             if text_animators.is_empty() {
                 apply_horizontal_reveal(&mut text_canvas, reveal);
             } else {
@@ -1283,6 +1472,9 @@ fn render_layer_with_parent_matrix(
                     .map(|layer| layer.id().to_string())
                     .collect(),
             );
+            let bee_text_carrier_routes =
+                bee_text_carrier_routes_for_precomp(scene, &parent_comp.id, id);
+            record_bee_text_carrier_route_trace(trace.as_deref_mut(), bee_text_carrier_routes);
             let mut canvas = Canvas::transparent(parent_comp.width, parent_comp.height);
             stack.push(composition.clone());
             for child in node.layers.iter().rev() {
@@ -1297,6 +1489,7 @@ fn render_layer_with_parent_matrix(
                     footage,
                     stack,
                     matrix,
+                    bee_text_carrier_context,
                     trace.as_deref_mut(),
                 )?;
                 composite_normal(&mut canvas, &child_canvas, opacity_of(child, source_time));
@@ -1311,6 +1504,7 @@ fn render_layer_with_parent_matrix(
             time,
             footage,
             stack,
+            TextP6PixelPolicy::DisabledForPrecompRasterInput,
             trace.as_deref_mut(),
         ),
     }
@@ -2090,6 +2284,24 @@ fn matrix_scale_hint(matrix: Mat3) -> f32 {
     sx.max(sy).max(1.0)
 }
 
+const COLLAPSED_TEXT_VECTOR_DEFERRED_ENV_VAR: &str =
+    "AE_NATIVE_RENDERER_P5_COLLAPSED_TEXT_VECTOR_DEFERRED";
+
+fn collapsed_text_vector_deferred_enabled() -> bool {
+    std::env::var(COLLAPSED_TEXT_VECTOR_DEFERRED_ENV_VAR)
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "on" | "yes" | "enabled" | "vector" | "vector_deferred"
+            )
+        })
+}
+
+fn collapsed_text_raster_scale(matrix: Mat3) -> f32 {
+    matrix_scale_hint(matrix).clamp(1.0, 4.0)
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct MatrixReport {
     translation: [f32; 2],
@@ -2196,9 +2408,11 @@ struct PositionExpressionSample {
     local_time: f32,
     frame_duration: f32,
     layer_duration: f32,
-    envelope: f32,
-    offset: [f32; 2],
+    envelope: Option<f32>,
+    offset: Option<[f32; 2]>,
     source: String,
+    mode: &'static str,
+    error: Option<String>,
 }
 
 fn evaluate_position_expression_sample(
@@ -2239,9 +2453,77 @@ fn evaluate_position_expression_sample(
                 local_time: t,
                 frame_duration,
                 layer_duration: dur,
-                envelope: k,
-                offset: [x, y],
+                envelope: Some(k),
+                offset: Some([x, y]),
                 source: source.clone(),
+                mode: "edge_wobble",
+                error: None,
+            }
+        }
+        PositionExpression::ParsedProperty { source } => {
+            let t = (time - layer_start).max(0.0) as f32;
+            let frame_duration = if fps > 0.0 {
+                (1.0 / fps) as f32
+            } else {
+                1.0 / 30.0
+            };
+            let dur = (layer_duration as f32).max(frame_duration);
+            let evaluator =
+                BoundaryPropertyExpressionEvaluator::new(NamedPatternExpressionEvaluator);
+            let request = PropertyExpressionRequest {
+                source,
+                property_path: "transform.position",
+                target_type: PropertyValueType::Vector2,
+                fingerprint: None,
+                context: PropertyExpressionContext {
+                    time,
+                    value: ExprValue::Vec2([base[0] as f64, base[1] as f64]),
+                    comp: CompExpressionContext {
+                        frame_duration: frame_duration as f64,
+                        duration: layer_duration,
+                        ..CompExpressionContext::default()
+                    },
+                    layer: LayerExpressionContext {
+                        in_point: layer_start,
+                        out_point: layer_start + layer_duration,
+                        start_time: layer_start,
+                        ..LayerExpressionContext::default()
+                    },
+                    vars: std::collections::HashMap::new(),
+                },
+            };
+            let result = evaluator.eval_property(&request, &NoopPropertyExpressionHost);
+            let (position, error) = match result {
+                Ok(result) if result.mode == PropertyExpressionMode::ParsedSubset => {
+                    match result.value {
+                        ExprValue::Vec2(value) => ([value[0] as f32, value[1] as f32], None),
+                        other => (
+                            base,
+                            Some(format!(
+                                "parsed transform.position returned non-Vec2 value {other:?}"
+                            )),
+                        ),
+                    }
+                }
+                Ok(result) => (
+                    base,
+                    Some(format!(
+                        "parsed transform.position used unexpected mode {:?}",
+                        result.mode
+                    )),
+                ),
+                Err(err) => (base, Some(err.to_string())),
+            };
+            PositionExpressionSample {
+                position,
+                local_time: t,
+                frame_duration,
+                layer_duration: dur,
+                envelope: None,
+                offset: Some([position[0] - base[0], position[1] - base[1]]),
+                source: source.clone(),
+                mode: "parsed_property_subset",
+                error,
             }
         }
     }
@@ -2440,8 +2722,11 @@ fn record_transform_expression_trace(
         "base_position": base_position,
         "sampled_position": sample.position,
         "evaluator": {
-            "subset": "generated_named_position_expression",
-            "mode": "edge_wobble",
+            "subset": match expression {
+                PositionExpression::EdgeWobble { .. } => "generated_named_position_expression",
+                PositionExpression::ParsedProperty { .. } => "parsed_property_expression",
+            },
+            "mode": sample.mode,
             "target_type": "vector2",
             "fingerprint": sample.source.as_str()
         },
@@ -2469,6 +2754,12 @@ fn record_transform_expression_trace(
                 "freq": freq,
                 "envelope": sample.envelope,
                 "offset": sample.offset
+            }),
+            PositionExpression::ParsedProperty { .. } => json!({
+                "type": "parsed_property",
+                "source": sample.source.as_str(),
+                "offset": sample.offset,
+                "error": sample.error
             }),
         }
     }));
@@ -2982,6 +3273,37 @@ fn record_rasterized_precomp_trace(
         "layer_matrix_report": matrix_report_json(layer_matrix),
         "raster_size": raster_size
     }));
+    let reason = if collapse_requested {
+        "collapse_requested_but_rasterize_first"
+    } else {
+        "collapse_not_requested"
+    };
+    trace.collapse.push(json!({
+        "composition": composition_id,
+        "layer_id": layer_id,
+        "source_composition": source_composition,
+        "collapse_requested": collapse_requested,
+        "mode": "bee_text_carrier_route",
+        "time": time,
+        "source_time": source_time,
+        "bee_text_carrier_route": {
+            "parent_composition": composition_id,
+            "precomp_layer_id": layer_id,
+            "target_composition": source_composition,
+            "source_composition": null,
+            "source_layer_id": null,
+            "status": BeeTextCarrierRouteStatus::PrecompRasterizeFirst.as_str(),
+            "reason": reason,
+            "transform_step_count": 0,
+            "source_time_step_count": 0,
+            "counts_as_direct_p6_success": BeeTextCarrierRouteStatus::PrecompRasterizeFirst.counts_as_direct_p6_success(),
+            "counts_as_p5_green": BeeTextCarrierRouteStatus::PrecompRasterizeFirst.counts_as_p5_green()
+        },
+        "deferred_raster_checkpoint": {
+            "status": BeeTextCarrierRouteStatus::PrecompRasterizeFirst.as_str(),
+            "blocker": reason
+        }
+    }));
 }
 
 fn record_collapsed_precomp_trace(
@@ -3012,6 +3334,226 @@ fn record_collapsed_precomp_trace(
             "blocker": "true text/vector deferred rasterization is not parity-locked by this trace"
         },
         "flattened_layers": flattened_layers
+    }));
+}
+
+fn bee_text_carrier_routes_for_precomp(
+    scene: &Scene,
+    parent_composition: &str,
+    precomp_layer_id: &str,
+) -> Vec<Value> {
+    let graph = match PrecompGraph::from_scene(scene) {
+        Ok(graph) => graph,
+        Err(err) => {
+            return vec![json!({
+                "parent_composition": parent_composition,
+                "precomp_layer_id": precomp_layer_id,
+                "target_composition": null,
+                "source_composition": null,
+                "source_layer_id": null,
+                "status": BeeTextCarrierRouteStatus::BeeTextCarrierUnsupported.as_str(),
+                "reason": "precomp_graph_error",
+                "error": err.to_string(),
+                "transform_step_count": 0,
+                "source_time_step_count": 0,
+                "counts_as_direct_p6_success": false,
+                "counts_as_p5_green": false
+            })];
+        }
+    };
+    let plan =
+        match graph.deferred_raster_plan_for_precomp_layer(parent_composition, precomp_layer_id) {
+            Ok(plan) => plan,
+            Err(err) => {
+                return vec![json!({
+                    "parent_composition": parent_composition,
+                    "precomp_layer_id": precomp_layer_id,
+                    "target_composition": null,
+                    "source_composition": null,
+                    "source_layer_id": null,
+                    "status": BeeTextCarrierRouteStatus::BeeTextCarrierUnsupported.as_str(),
+                    "reason": "deferred_raster_plan_error",
+                    "error": err.to_string(),
+                    "transform_step_count": 0,
+                    "source_time_step_count": 0,
+                    "counts_as_direct_p6_success": false,
+                    "counts_as_p5_green": false
+                })];
+            }
+        };
+
+    classify_bee_text_carrier_routes(&plan)
+        .iter()
+        .map(bee_text_carrier_route_json)
+        .collect()
+}
+
+fn bee_text_carrier_route_json(record: &BeeTextCarrierRouteRecord<'_>) -> Value {
+    json!({
+        "parent_composition": record.parent_composition,
+        "precomp_layer_id": record.precomp_layer_id,
+        "target_composition": record.target_composition,
+        "source_composition": record.source_composition,
+        "source_layer_id": record.source_layer_id,
+        "status": record.status.as_str(),
+        "reason": record.reason,
+        "transform_step_count": record.transform_step_count,
+        "source_time_step_count": record.source_time_step_count,
+        "counts_as_direct_p6_success": record.status.counts_as_direct_p6_success(),
+        "counts_as_p5_green": record.status.counts_as_p5_green()
+    })
+}
+
+fn record_bee_text_carrier_route_trace(trace: Option<&mut FrameRenderTrace>, routes: Vec<Value>) {
+    let Some(trace) = trace else {
+        return;
+    };
+    for route in routes {
+        let status = route
+            .get("status")
+            .and_then(Value::as_str)
+            .unwrap_or("bee_text_carrier_unsupported");
+        let reason = route
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or("missing_reason");
+        trace.collapse.push(json!({
+            "composition": route
+                .get("parent_composition")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            "layer_id": route
+                .get("precomp_layer_id")
+                .and_then(Value::as_str)
+                .unwrap_or(""),
+            "source_composition": route.get("target_composition").cloned().unwrap_or(Value::Null),
+            "source_layer_id": route.get("source_layer_id").cloned().unwrap_or(Value::Null),
+            "collapse_requested": true,
+            "mode": "bee_text_carrier_route",
+            "bee_text_carrier_route": route,
+            "deferred_raster_checkpoint": {
+                "status": status,
+                "blocker": reason
+            }
+        }));
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_bee_text_carrier_routed_trace(
+    trace: Option<&mut FrameRenderTrace>,
+    context: Option<BeeTextCarrierRenderContext<'_>>,
+    parent_composition: &str,
+    source_layer_id: &str,
+    time: f64,
+    parent_matrix: Mat3,
+    child_matrix: Mat3,
+    effective_matrix: Mat3,
+    source_size: [u32; 2],
+    raster_trace: &TextRasterTrace,
+    rendered_canvas: &Canvas,
+) {
+    let Some(trace) = trace else {
+        return;
+    };
+    let status = BeeTextCarrierRouteStatus::BeeTextCarrierRouted;
+    let routed_pixel_events = raster_trace
+        .events
+        .iter()
+        .filter(|event| {
+            event.stage == "p6_ad68_pixel_write"
+                && event.payload.get("status").and_then(Value::as_str) == Some("routed_pixels")
+        })
+        .count();
+    let expected_advance_only_events = raster_trace
+        .events
+        .iter()
+        .filter(|event| {
+            event.stage == "p6_ad68_pixel_write"
+                && event.payload.get("status").and_then(Value::as_str)
+                    == Some("expected_advance_only_space")
+        })
+        .count();
+    let unsupported_events = raster_trace
+        .events
+        .iter()
+        .filter(|event| {
+            event.stage == "p6_ad68_pixel_write"
+                && event.payload.get("status").and_then(Value::as_str)
+                    == Some("unsupported_source_path")
+        })
+        .count();
+    let pixel_write_count = raster_trace
+        .events
+        .iter()
+        .filter(|event| event.stage == "p6_ad68_pixel_write")
+        .filter_map(|event| {
+            event
+                .payload
+                .get("pixel_write_count")
+                .and_then(Value::as_u64)
+        })
+        .sum::<u64>();
+    let target_composition = context
+        .map(|context| Value::String(context.target_composition.to_string()))
+        .unwrap_or(Value::Null);
+    let precomp_layer_id = context
+        .map(|context| Value::String(context.precomp_layer_id.to_string()))
+        .unwrap_or(Value::Null);
+    let route = json!({
+        "parent_composition": context
+            .map(|context| context.parent_composition)
+            .unwrap_or(parent_composition),
+        "precomp_layer_id": precomp_layer_id,
+        "target_composition": target_composition,
+        "source_composition": context
+            .map(|context| Value::String(context.target_composition.to_string()))
+            .unwrap_or(Value::Null),
+        "source_layer_id": source_layer_id,
+        "status": status.as_str(),
+        "reason": "source_glyph_payload_routed_to_p6_ad68_vector_pixels",
+        "producer": "p6_source_owned_ad68_event_stream_to_canvas_pixels_vector_transform_v1",
+        "payload_bridge": "layer_text_source_outline_to_p6_ad68_vector_transform",
+        "source_trace": raster_trace.source,
+        "source_time": context.map(|context| context.source_time),
+        "glyph_count": raster_trace.draw_chars.len(),
+        "routed_pixel_event_count": routed_pixel_events,
+        "expected_advance_only_event_count": expected_advance_only_events,
+        "unsupported_event_count": unsupported_events,
+        "pixel_write_count": pixel_write_count,
+        "transform_step_count": if context.is_some() { 2 } else { 0 },
+        "source_time_step_count": usize::from(context.is_some()),
+        "counts_as_direct_p6_success": status.counts_as_direct_p6_success(),
+        "counts_as_p5_green": status.counts_as_p5_green(),
+        "text_are_matrix_carrier": {
+            "font_size_baked_scale": true,
+            "scale_carrier": "scale_baked_bee_text_carrier_local_canvas",
+            "path": "scale-baked BEE carrier glyph paths -> P6 AD68 rows -> local carrier pixels -> destination canvas pixels"
+        }
+    });
+    trace.collapse.push(json!({
+        "composition": parent_composition,
+        "layer_id": context
+            .map(|context| context.precomp_layer_id)
+            .unwrap_or(source_layer_id),
+        "source_composition": route.get("source_composition").cloned().unwrap_or(Value::Null),
+        "source_layer_id": source_layer_id,
+        "collapse_requested": true,
+        "mode": "bee_text_carrier_route",
+        "time": time,
+        "parent_matrix": parent_matrix.m,
+        "child_matrix": child_matrix.m,
+        "effective_matrix": effective_matrix.m,
+        "parent_matrix_report": matrix_report_json(parent_matrix),
+        "child_matrix_report": matrix_report_json(child_matrix),
+        "effective_matrix_report": matrix_report_json(effective_matrix),
+        "source_canvas_size": source_size,
+        "bee_text_carrier_route": route,
+        "deferred_raster_checkpoint": {
+            "status": status.as_str(),
+            "blocker": "none_for_bounded_gph010_vector_payload_bridge"
+        },
+        "sharpness_probe": alpha_sharpness_probe(rendered_canvas)
     }));
 }
 
@@ -3048,6 +3590,52 @@ fn record_collapsed_text_raster_trace(
             "blocker": "text is rasterized to a scale-hint canvas before final sampling"
         },
         "sharpness_probe": alpha_sharpness_probe(text_canvas)
+    }));
+}
+
+#[allow(clippy::too_many_arguments)]
+fn record_collapsed_text_vector_trace(
+    trace: Option<&mut FrameRenderTrace>,
+    composition_id: &str,
+    layer_id: &str,
+    time: f64,
+    parent_matrix: Mat3,
+    child_matrix: Mat3,
+    effective_matrix: Mat3,
+    raster_scale: f32,
+    source_size: [u32; 2],
+    rendered_canvas: Option<&Canvas>,
+    status: &str,
+    blocker: Option<&str>,
+) {
+    let Some(trace) = trace else {
+        return;
+    };
+    trace.collapse.push(json!({
+        "composition": composition_id,
+        "layer_id": layer_id,
+        "mode": "collapsed_text_vector_deferred",
+        "time": time,
+        "parent_matrix": parent_matrix.m,
+        "child_matrix": child_matrix.m,
+        "effective_matrix": effective_matrix.m,
+        "parent_matrix_report": matrix_report_json(parent_matrix),
+        "child_matrix_report": matrix_report_json(child_matrix),
+        "effective_matrix_report": matrix_report_json(effective_matrix),
+        "effective_raster_scale": raster_scale,
+        "source_canvas_size": source_size,
+        "deferred_raster_checkpoint": {
+            "status": status,
+            "blocker": blocker.unwrap_or("none_for_p6_source_path_to_destination_pixels")
+        },
+        "text_are_matrix_carrier": {
+            "font_size_baked_scale": raster_scale > 1.0001,
+            "scale_carrier": "scale_baked_bee_text_carrier_local_canvas",
+            "path": "scale-baked BEE carrier glyph paths -> P6 AD68 rows -> local carrier pixels -> destination canvas pixels"
+        },
+        "sharpness_probe": rendered_canvas
+            .map(alpha_sharpness_probe)
+            .unwrap_or_else(|| json!(null))
     }));
 }
 
@@ -3246,6 +3834,16 @@ fn selector_weight(
     let pos = unit_center_percent(ordered_index, total);
     let start = start_percent.min(end_percent);
     let end = start_percent.max(end_percent);
+    if matches!(selector.shape, TextSelectorShape::Square) {
+        let unit_start = ordered_index as f32 * 100.0 / total as f32;
+        let unit_end = (ordered_index + 1) as f32 * 100.0 / total as f32;
+        let overlap = unit_end.min(end) - unit_start.max(start);
+        if overlap <= 0.0 {
+            return 0.0;
+        }
+        let unit_span = (unit_end - unit_start).max(0.0001);
+        return (overlap / unit_span).clamp(0.0, 1.0);
+    }
     if pos < start || pos > end {
         return 0.0;
     }
@@ -3320,6 +3918,10 @@ struct UnitRect {
     y1: u32,
     index: usize,
     total: usize,
+    layout_center: Option<[f32; 2]>,
+    layout_bottom_center: Option<[f32; 2]>,
+    telemetry_center: Option<[f32; 2]>,
+    telemetry_bottom_center: Option<[f32; 2]>,
 }
 
 fn apply_unit_animator_transform(
@@ -3407,15 +4009,18 @@ fn text_expression_weight_detail(
             freq,
             amplitude,
             decay,
+            pre_delay_amount,
             ..
         }) => {
             let text_index = index as f32 + 1.0;
             let t = (time - layer_start) as f32 - *delay * text_index;
             if t < 0.0 {
+                let amount = pre_delay_amount.unwrap_or(0.0);
+                let weight = (amount / 100.0).clamp(-2.0, 2.0);
                 return TextExpressionWeightDetail {
-                    weight: 0.0,
-                    raw_amount: Some(0.0),
-                    clamped_amount: Some(0.0),
+                    weight,
+                    raw_amount: Some(amount),
+                    clamped_amount: Some(weight * 100.0),
                     local_time_after_delay: Some(t),
                     text_index: Some(index + 1),
                     text_total: total,
@@ -3451,11 +4056,81 @@ struct AnimatorUnitTransform {
     scale: [f32; 2],
     rotation: f32,
     alpha_scale: f32,
-    blur_radius: i32,
+    blur_radii: [i32; 2],
+    blur_sigmas: [f32; 2],
     matrix: Mat3,
 }
 
 const TEXT_ANIMATOR_BLUR_RADIUS_LIMIT: i32 = 128;
+const TEXT_ANIMATOR_BLUR_RADIUS_AE85_GAIN: f32 = 0.8;
+const TEXT_ANIMATOR_BLUR_SIGMA_AE85_GAIN: f32 = 0.45;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextAnimatorBlurKernel {
+    RectSplat,
+    Gaussian,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum TextAnimatorUnitPivotMode {
+    BottomCenter,
+    RectCenter,
+    LayoutCenter,
+    LayoutBottomCenter,
+    TelemetryCenter,
+    TelemetryBottomCenter,
+}
+
+fn text_animator_unit_pivot_mode() -> TextAnimatorUnitPivotMode {
+    #[cfg(debug_assertions)]
+    {
+        return match std::env::var("AE_NATIVE_M07_UNIT_PIVOT").as_deref() {
+            Ok("bottom_center") | Ok("integer_bottom_center") | Ok("legacy") => {
+                TextAnimatorUnitPivotMode::BottomCenter
+            }
+            Ok("rect_center") | Ok("center") => TextAnimatorUnitPivotMode::RectCenter,
+            Ok("layout_center") | Ok("glyph_center") => TextAnimatorUnitPivotMode::LayoutCenter,
+            Ok("layout_bottom_center") | Ok("glyph_bottom_center") => {
+                TextAnimatorUnitPivotMode::LayoutBottomCenter
+            }
+            Ok("telemetry_center") | Ok("cooltype_center") => {
+                TextAnimatorUnitPivotMode::TelemetryCenter
+            }
+            Ok("telemetry_bottom_center") | Ok("cooltype_bottom_center") => {
+                TextAnimatorUnitPivotMode::TelemetryBottomCenter
+            }
+            _ => TextAnimatorUnitPivotMode::LayoutBottomCenter,
+        };
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        TextAnimatorUnitPivotMode::LayoutBottomCenter
+    }
+}
+
+fn text_animator_unit_pivot(unit: UnitRect) -> [f32; 2] {
+    let rect_center = || {
+        [
+            (unit.x0 + unit.x1) as f32 * 0.5,
+            (unit.y0 + unit.y1) as f32 * 0.5,
+        ]
+    };
+    let rect_bottom_center = || [(unit.x0 + unit.x1) as f32 * 0.5, unit.y1 as f32];
+    match text_animator_unit_pivot_mode() {
+        TextAnimatorUnitPivotMode::BottomCenter => rect_bottom_center(),
+        TextAnimatorUnitPivotMode::RectCenter => rect_center(),
+        TextAnimatorUnitPivotMode::LayoutCenter => unit.layout_center.unwrap_or_else(rect_center),
+        TextAnimatorUnitPivotMode::LayoutBottomCenter => {
+            unit.layout_bottom_center.unwrap_or_else(rect_bottom_center)
+        }
+        TextAnimatorUnitPivotMode::TelemetryCenter => {
+            unit.telemetry_center.unwrap_or_else(rect_center)
+        }
+        TextAnimatorUnitPivotMode::TelemetryBottomCenter => unit
+            .telemetry_bottom_center
+            .unwrap_or_else(rect_bottom_center),
+    }
+}
 
 fn animator_unit_transform(
     unit: UnitRect,
@@ -3463,8 +4138,7 @@ fn animator_unit_transform(
     weight: f32,
     unit_scale: f32,
 ) -> AnimatorUnitTransform {
-    let cx = (unit.x0 + unit.x1) as f32 * 0.5;
-    let cy = (unit.y0 + unit.y1) as f32 * 0.5;
+    let [cx, cy] = text_animator_unit_pivot(unit);
     let position = animator.position.unwrap_or([0.0, 0.0]);
     let scale = animator.scale.unwrap_or([100.0, 100.0]);
     let sx = (100.0 + (scale[0] - 100.0) * weight) / 100.0;
@@ -3473,7 +4147,8 @@ fn animator_unit_transform(
     let tx = position[0] * weight * unit_scale;
     let ty = position[1] * weight * unit_scale;
     let alpha_scale = animator_alpha_scale(animator.opacity, weight);
-    let blur_radius = text_animator_blur_radius(animator, weight, unit_scale);
+    let blur_sigmas = text_animator_blur_sigmas(animator, weight, unit_scale);
+    let blur_radii = text_animator_blur_radii(animator, weight, unit_scale);
     let matrix = Mat3::translate(Vec2::new(cx + tx, cy + ty))
         .mul(Mat3::rotate_degrees(rotation))
         .mul(Mat3::scale(Vec2::new(sx, sy)))
@@ -3485,19 +4160,278 @@ fn animator_unit_transform(
         scale: [sx, sy],
         rotation,
         alpha_scale,
-        blur_radius,
+        blur_radii,
+        blur_sigmas,
         matrix,
     }
 }
 
-fn text_animator_blur_radius(animator: &TextAnimatorSpec, weight: f32, unit_scale: f32) -> i32 {
+fn text_animator_blur_radii(animator: &TextAnimatorSpec, weight: f32, unit_scale: f32) -> [i32; 2] {
+    let blur_sigmas = text_animator_blur_sigmas(animator, weight, unit_scale);
+    text_animator_blur_radii_for_kernel(
+        animator,
+        weight,
+        unit_scale,
+        text_animator_blur_kernel(),
+        blur_sigmas,
+    )
+}
+
+fn text_animator_blur_radii_for_kernel(
+    animator: &TextAnimatorSpec,
+    weight: f32,
+    unit_scale: f32,
+    kernel: TextAnimatorBlurKernel,
+    blur_sigmas: [f32; 2],
+) -> [i32; 2] {
+    if kernel == TextAnimatorBlurKernel::Gaussian {
+        return [
+            gaussian_kernel_radius(blur_sigmas[0]),
+            gaussian_kernel_radius(blur_sigmas[1]),
+        ];
+    }
     animator
         .blur
         .map(|blur| {
-            (blur[0].abs().max(blur[1].abs()) * weight.max(0.0) * unit_scale.abs()).round() as i32
+            [
+                text_animator_blur_axis_radius(blur[0], weight, unit_scale),
+                text_animator_blur_axis_radius(blur[1], weight, unit_scale),
+            ]
         })
-        .unwrap_or(0)
+        .unwrap_or([0, 0])
+}
+
+fn text_animator_blur_sigmas(
+    animator: &TextAnimatorSpec,
+    weight: f32,
+    unit_scale: f32,
+) -> [f32; 2] {
+    animator
+        .blur
+        .map(|blur| {
+            [
+                text_animator_blur_axis_sigma(blur[0], weight, unit_scale),
+                text_animator_blur_axis_sigma(blur[1], weight, unit_scale),
+            ]
+        })
+        .unwrap_or([0.0, 0.0])
+}
+
+fn text_animator_blur_axis_radius(value: f32, weight: f32, unit_scale: f32) -> i32 {
+    ((value.abs() * weight.max(0.0) * unit_scale.abs() * text_animator_blur_radius_gain()).round()
+        as i32)
         .clamp(0, TEXT_ANIMATOR_BLUR_RADIUS_LIMIT)
+}
+
+fn text_animator_blur_axis_sigma(value: f32, weight: f32, unit_scale: f32) -> f32 {
+    value.abs() * weight.max(0.0) * unit_scale.abs() * text_animator_blur_sigma_gain()
+}
+
+fn gaussian_kernel_radius(sigma: f32) -> i32 {
+    if sigma < 0.001 {
+        0
+    } else {
+        (sigma * 3.0).ceil() as i32
+    }
+    .clamp(0, TEXT_ANIMATOR_BLUR_RADIUS_LIMIT)
+}
+
+fn text_animator_blur_kernel() -> TextAnimatorBlurKernel {
+    #[cfg(debug_assertions)]
+    {
+        return match std::env::var("AE_NATIVE_M07_BLUR_KERNEL").as_deref() {
+            Ok("rect") | Ok("rect_splat") | Ok("splat") | Ok("box_splat") => {
+                TextAnimatorBlurKernel::RectSplat
+            }
+            Ok("gaussian") | Ok("separable_gaussian") => TextAnimatorBlurKernel::Gaussian,
+            _ => TextAnimatorBlurKernel::Gaussian,
+        };
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        TextAnimatorBlurKernel::Gaussian
+    }
+}
+
+fn text_animator_blur_radius_gain() -> f32 {
+    #[cfg(debug_assertions)]
+    {
+        return std::env::var("AE_NATIVE_M07_BLUR_GAIN")
+            .ok()
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(TEXT_ANIMATOR_BLUR_RADIUS_AE85_GAIN);
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        TEXT_ANIMATOR_BLUR_RADIUS_AE85_GAIN
+    }
+}
+
+fn text_animator_blur_sigma_gain() -> f32 {
+    #[cfg(debug_assertions)]
+    {
+        return std::env::var("AE_NATIVE_M07_BLUR_SIGMA_GAIN")
+            .ok()
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(TEXT_ANIMATOR_BLUR_SIGMA_AE85_GAIN);
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        TEXT_ANIMATOR_BLUR_SIGMA_AE85_GAIN
+    }
+}
+
+fn text_animator_use_preblur_inverse_stage() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        return std::env::var("AE_NATIVE_M07_BLUR_STAGE")
+            .is_ok_and(|value| value == "preblur_inverse");
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+fn text_animator_use_blur_alpha_area() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        return std::env::var("AE_NATIVE_M07_BLUR_ALPHA_AREA")
+            .is_ok_and(|value| value == "1" || value == "true");
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+fn text_animator_blur_alpha_gain() -> f32 {
+    #[cfg(debug_assertions)]
+    {
+        return std::env::var("AE_NATIVE_M07_BLUR_ALPHA_GAIN")
+            .ok()
+            .and_then(|value| value.parse::<f32>().ok())
+            .filter(|value| value.is_finite() && *value >= 0.0)
+            .unwrap_or(1.0);
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        1.0
+    }
+}
+
+fn text_animator_use_blur_alpha_post_scale() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        return std::env::var("AE_NATIVE_M07_BLUR_ALPHA_POST")
+            .is_ok_and(|value| value == "1" || value == "true");
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+fn text_animator_use_blur_float_accum() -> bool {
+    #[cfg(debug_assertions)]
+    {
+        return std::env::var("AE_NATIVE_M07_BLUR_FLOAT_ACCUM")
+            .is_ok_and(|value| value == "1" || value == "true");
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        false
+    }
+}
+
+fn text_animator_blur_alpha_scale(transform: AnimatorUnitTransform) -> f32 {
+    let area = if text_animator_use_blur_alpha_area() {
+        transform.scale[0].abs() * transform.scale[1].abs()
+    } else {
+        1.0
+    };
+    transform.alpha_scale * area * text_animator_blur_alpha_gain()
+}
+
+fn splat_text_animator_blur_pixel(
+    output: &mut Canvas,
+    x: i32,
+    y: i32,
+    pixel: [u8; 4],
+    radius_x: i32,
+    radius_y: i32,
+    alpha_scale: f32,
+) {
+    if text_animator_use_blur_alpha_post_scale() {
+        splat_blurred_pixel_alpha_scaled(output, x, y, pixel, radius_x, radius_y, alpha_scale);
+        return;
+    }
+    let mut pixel = pixel;
+    pixel[3] = (pixel[3] as f32 * alpha_scale).round().clamp(0.0, 255.0) as u8;
+    splat_blurred_pixel(output, x, y, pixel, radius_x, radius_y);
+}
+
+fn draw_transformed_unit_preblur_inverse(
+    output: &mut Canvas,
+    input: &Canvas,
+    unit: UnitRect,
+    transform: AnimatorUnitTransform,
+) {
+    let mut blurred = Canvas::transparent(input.width, input.height);
+    let alpha_scale = text_animator_blur_alpha_scale(transform);
+    for y in unit.y0..unit.y1 {
+        for x in unit.x0..unit.x1 {
+            let pixel = input.pixel(x, y);
+            if pixel[3] == 0 {
+                continue;
+            }
+            splat_text_animator_blur_pixel(
+                &mut blurred,
+                x as i32,
+                y as i32,
+                pixel,
+                transform.blur_radii[0],
+                transform.blur_radii[1],
+                alpha_scale,
+            );
+        }
+    }
+
+    let Some(inverse) = transform.matrix.inverse() else {
+        return;
+    };
+    let source_unit = expanded_unit_for_blur(input, unit, transform.blur_radii);
+    let Some((x0, y0, x1, y1)) =
+        transformed_unit_bounds(input, source_unit, transform.matrix, [0, 0])
+    else {
+        return;
+    };
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let local = inverse.transform_point(Vec2::new(x as f32, y as f32));
+            let sx = local.x.round() as i32;
+            let sy = local.y.round() as i32;
+            if sx < source_unit.x0 as i32
+                || sy < source_unit.y0 as i32
+                || sx >= source_unit.x1 as i32
+                || sy >= source_unit.y1 as i32
+            {
+                continue;
+            }
+            let pixel = BilinearSampler.sample(&blurred, local.x, local.y);
+            if pixel[3] == 0 {
+                continue;
+            }
+            let existing = output.pixel(x as u32, y as u32);
+            output.set_pixel(
+                x as u32,
+                y as u32,
+                composite_normal_pixel(existing, pixel, 100.0),
+            );
+        }
+    }
 }
 
 fn animator_contribution_json(
@@ -3509,15 +4443,22 @@ fn animator_contribution_json(
     let transform = animator_unit_transform(unit, animator, weight, unit_scale);
     json!({
         "center": transform.center,
+        "center_mode": format!("{:?}", text_animator_unit_pivot_mode()),
+        "unit_layout_center": unit.layout_center,
+        "unit_layout_bottom_center": unit.layout_bottom_center,
+        "unit_telemetry_center": unit.telemetry_center,
+        "unit_telemetry_bottom_center": unit.telemetry_bottom_center,
         "position": transform.position,
         "scale": transform.scale,
         "rotation": transform.rotation,
         "opacity_alpha_scale": transform.alpha_scale,
-        "blur_radius": transform.blur_radius,
+        "blur_radius": transform.blur_radii[0].max(transform.blur_radii[1]),
+        "blur_radii": transform.blur_radii,
         "matrix": transform.matrix.m,
         "final_matrix": transform.matrix.m,
         "final_opacity_alpha_scale": transform.alpha_scale,
-        "blur_radius_px": transform.blur_radius
+        "blur_radius_px": transform.blur_radii[0].max(transform.blur_radii[1]),
+        "blur_radius_px_xy": transform.blur_radii
     })
 }
 
@@ -3644,48 +4585,456 @@ fn draw_transformed_unit(
     unit_scale: f32,
 ) {
     let transform = animator_unit_transform(unit, animator, weight, unit_scale);
+    if transform.blur_radii != [0, 0] {
+        if text_animator_use_preblur_inverse_stage() {
+            draw_transformed_unit_preblur_inverse(output, input, unit, transform);
+            return;
+        }
+        draw_transformed_unit_forward(output, input, unit, transform);
+        return;
+    }
+    let Some(inverse) = transform.matrix.inverse() else {
+        return;
+    };
+    let Some((x0, y0, x1, y1)) =
+        transformed_unit_bounds(input, unit, transform.matrix, transform.blur_radii)
+    else {
+        return;
+    };
 
-    for y in unit.y0..unit.y1 {
-        for x in unit.x0..unit.x1 {
-            let mut pixel = input.pixel(x, y);
+    for y in y0..y1 {
+        for x in x0..x1 {
+            let local = inverse.transform_point(Vec2::new(x as f32, y as f32));
+            let sx = local.x.round() as i32;
+            let sy = local.y.round() as i32;
+            if sx < unit.x0 as i32
+                || sy < unit.y0 as i32
+                || sx >= unit.x1 as i32
+                || sy >= unit.y1 as i32
+            {
+                continue;
+            }
+            let mut pixel = BilinearSampler.sample(input, local.x, local.y);
             if pixel[3] == 0 {
                 continue;
             }
             pixel[3] = (pixel[3] as f32 * transform.alpha_scale)
                 .round()
                 .clamp(0.0, 255.0) as u8;
-            let p = transform
-                .matrix
-                .transform_point(Vec2::new(x as f32, y as f32));
-            let dx = p.x.round() as i32;
-            let dy = p.y.round() as i32;
-            splat_blurred_pixel(output, dx, dy, pixel, transform.blur_radius);
+            splat_blurred_pixel(
+                output,
+                x,
+                y,
+                pixel,
+                transform.blur_radii[0],
+                transform.blur_radii[1],
+            );
         }
     }
 }
 
-fn splat_blurred_pixel(output: &mut Canvas, x: i32, y: i32, pixel: [u8; 4], radius: i32) {
-    if radius <= 0 {
+fn expanded_unit_for_blur(canvas: &Canvas, unit: UnitRect, blur_radii: [i32; 2]) -> UnitRect {
+    let rx = blur_radii[0].max(0) as u32;
+    let ry = blur_radii[1].max(0) as u32;
+    UnitRect {
+        x0: unit.x0.saturating_sub(rx),
+        y0: unit.y0.saturating_sub(ry),
+        x1: unit.x1.saturating_add(rx).min(canvas.width),
+        y1: unit.y1.saturating_add(ry).min(canvas.height),
+        index: unit.index,
+        total: unit.total,
+        layout_center: unit.layout_center,
+        layout_bottom_center: unit.layout_bottom_center,
+        telemetry_center: unit.telemetry_center,
+        telemetry_bottom_center: unit.telemetry_bottom_center,
+    }
+}
+
+fn draw_transformed_unit_forward(
+    output: &mut Canvas,
+    input: &Canvas,
+    unit: UnitRect,
+    transform: AnimatorUnitTransform,
+) {
+    let alpha_scale = text_animator_blur_alpha_scale(transform);
+    if text_animator_blur_kernel() == TextAnimatorBlurKernel::Gaussian {
+        draw_transformed_unit_forward_gaussian(output, input, unit, transform, alpha_scale);
+        return;
+    }
+    if text_animator_use_blur_float_accum() {
+        draw_transformed_unit_forward_float_accum(output, input, unit, transform, alpha_scale);
+        return;
+    }
+    for y in unit.y0..unit.y1 {
+        for x in unit.x0..unit.x1 {
+            let pixel = input.pixel(x, y);
+            if pixel[3] == 0 {
+                continue;
+            }
+            let p = transform
+                .matrix
+                .transform_point(Vec2::new(x as f32, y as f32));
+            splat_text_animator_blur_pixel(
+                output,
+                p.x.round() as i32,
+                p.y.round() as i32,
+                pixel,
+                transform.blur_radii[0],
+                transform.blur_radii[1],
+                alpha_scale,
+            );
+        }
+    }
+}
+
+fn draw_transformed_unit_forward_gaussian(
+    output: &mut Canvas,
+    input: &Canvas,
+    unit: UnitRect,
+    transform: AnimatorUnitTransform,
+    alpha_scale: f32,
+) {
+    let kernel_x = gaussian_kernel_offsets(transform.blur_sigmas[0]);
+    let kernel_y = gaussian_kernel_offsets(transform.blur_sigmas[1]);
+    let len = output.width as usize * output.height as usize;
+    let mut alpha_accum = vec![0.0_f32; len];
+    let mut color_accum = vec![[0.0_f32; 3]; len];
+    for y in unit.y0..unit.y1 {
+        for x in unit.x0..unit.x1 {
+            let pixel = input.pixel(x, y);
+            if pixel[3] == 0 {
+                continue;
+            }
+            let p = transform
+                .matrix
+                .transform_point(Vec2::new(x as f32, y as f32));
+            splat_gaussian_pixel_float_accum(
+                &mut alpha_accum,
+                &mut color_accum,
+                output.width,
+                output.height,
+                p.x.round() as i32,
+                p.y.round() as i32,
+                pixel,
+                &kernel_x,
+                &kernel_y,
+                alpha_scale,
+            );
+        }
+    }
+
+    for (index, alpha) in alpha_accum.into_iter().enumerate() {
+        let alpha = alpha.round().clamp(0.0, 255.0) as u8;
+        if alpha == 0 {
+            continue;
+        }
+        let x = (index % output.width as usize) as u32;
+        let y = (index / output.width as usize) as u32;
+        let existing = output.pixel(x, y);
+        let colors = color_accum[index];
+        let denom = alpha.max(1) as f32;
+        let color = [
+            (colors[0] / denom).round().clamp(0.0, 255.0) as u8,
+            (colors[1] / denom).round().clamp(0.0, 255.0) as u8,
+            (colors[2] / denom).round().clamp(0.0, 255.0) as u8,
+        ];
+        output.set_pixel(
+            x,
+            y,
+            [
+                color[0],
+                color[1],
+                color[2],
+                existing[3].saturating_add(alpha),
+            ],
+        );
+    }
+}
+
+fn draw_transformed_unit_forward_float_accum(
+    output: &mut Canvas,
+    input: &Canvas,
+    unit: UnitRect,
+    transform: AnimatorUnitTransform,
+    alpha_scale: f32,
+) {
+    let len = output.width as usize * output.height as usize;
+    let mut alpha_accum = vec![0.0_f32; len];
+    let mut colors = vec![[0_u8; 3]; len];
+    for y in unit.y0..unit.y1 {
+        for x in unit.x0..unit.x1 {
+            let pixel = input.pixel(x, y);
+            if pixel[3] == 0 {
+                continue;
+            }
+            let p = transform
+                .matrix
+                .transform_point(Vec2::new(x as f32, y as f32));
+            splat_blurred_pixel_float_accum(
+                &mut alpha_accum,
+                &mut colors,
+                output.width,
+                output.height,
+                p.x.round() as i32,
+                p.y.round() as i32,
+                pixel,
+                transform.blur_radii[0],
+                transform.blur_radii[1],
+                alpha_scale,
+            );
+        }
+    }
+
+    for (index, alpha) in alpha_accum.into_iter().enumerate() {
+        let alpha = alpha.round().clamp(0.0, 255.0) as u8;
+        if alpha == 0 {
+            continue;
+        }
+        let x = (index % output.width as usize) as u32;
+        let y = (index / output.width as usize) as u32;
+        let existing = output.pixel(x, y);
+        let color = colors[index];
+        output.set_pixel(
+            x,
+            y,
+            [
+                color[0],
+                color[1],
+                color[2],
+                existing[3].saturating_add(alpha),
+            ],
+        );
+    }
+}
+
+fn transformed_unit_bounds(
+    canvas: &Canvas,
+    unit: UnitRect,
+    matrix: Mat3,
+    blur_radii: [i32; 2],
+) -> Option<(i32, i32, i32, i32)> {
+    if unit.x0 >= unit.x1 || unit.y0 >= unit.y1 {
+        return None;
+    }
+    let left = unit.x0 as f32;
+    let top = unit.y0 as f32;
+    let right = unit.x1 as f32;
+    let bottom = unit.y1 as f32;
+    let points = [
+        matrix.transform_point(Vec2::new(left, top)),
+        matrix.transform_point(Vec2::new(right, top)),
+        matrix.transform_point(Vec2::new(right, bottom)),
+        matrix.transform_point(Vec2::new(left, bottom)),
+    ];
+    let min_x = points
+        .iter()
+        .map(|p| p.x)
+        .fold(f32::INFINITY, f32::min)
+        .floor() as i32
+        - 1;
+    let max_x = points
+        .iter()
+        .map(|p| p.x)
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil() as i32
+        + 1;
+    let min_y = points
+        .iter()
+        .map(|p| p.y)
+        .fold(f32::INFINITY, f32::min)
+        .floor() as i32
+        - 1;
+    let max_y = points
+        .iter()
+        .map(|p| p.y)
+        .fold(f32::NEG_INFINITY, f32::max)
+        .ceil() as i32
+        + 1;
+    let rx = blur_radii[0].max(0) + 1;
+    let ry = blur_radii[1].max(0) + 1;
+    let x0 = min_x.clamp(-rx, canvas.width as i32 + rx);
+    let y0 = min_y.clamp(-ry, canvas.height as i32 + ry);
+    let x1 = max_x.clamp(-rx, canvas.width as i32 + rx);
+    let y1 = max_y.clamp(-ry, canvas.height as i32 + ry);
+    (x0 < x1 && y0 < y1).then_some((x0, y0, x1, y1))
+}
+
+fn splat_blurred_pixel(
+    output: &mut Canvas,
+    x: i32,
+    y: i32,
+    pixel: [u8; 4],
+    radius_x: i32,
+    radius_y: i32,
+) {
+    let radius_x = radius_x.max(0);
+    let radius_y = radius_y.max(0);
+    if radius_x == 0 && radius_y == 0 {
         if x < 0 || y < 0 || x >= output.width as i32 || y >= output.height as i32 {
             return;
         }
-        output.set_pixel(x as u32, y as u32, pixel);
+        let existing = output.pixel(x as u32, y as u32);
+        output.set_pixel(
+            x as u32,
+            y as u32,
+            composite_normal_pixel(existing, pixel, 100.0),
+        );
         return;
     }
-    let divisor = ((radius * 2 + 1) * (radius * 2 + 1)).max(1) as f32;
-    for oy in -radius..=radius {
-        for ox in -radius..=radius {
+    let divisor = ((radius_x * 2 + 1) * (radius_y * 2 + 1)).max(1) as f32;
+    for oy in -radius_y..=radius_y {
+        for ox in -radius_x..=radius_x {
             let dx = x + ox;
             let dy = y + oy;
             if dx < 0 || dy < 0 || dx >= output.width as i32 || dy >= output.height as i32 {
                 continue;
             }
             let mut blurred = pixel;
-            blurred[3] = (blurred[3] as f32 / divisor).round().max(1.0) as u8;
+            let alpha = (blurred[3] as f32 / divisor).round().clamp(0.0, 255.0) as u8;
+            if alpha == 0 {
+                continue;
+            }
+            blurred[3] = alpha;
             let existing = output.pixel(dx as u32, dy as u32);
             let combined_alpha = existing[3].saturating_add(blurred[3]);
             blurred[3] = combined_alpha;
             output.set_pixel(dx as u32, dy as u32, blurred);
+        }
+    }
+}
+
+fn splat_blurred_pixel_alpha_scaled(
+    output: &mut Canvas,
+    x: i32,
+    y: i32,
+    pixel: [u8; 4],
+    radius_x: i32,
+    radius_y: i32,
+    alpha_scale: f32,
+) {
+    let radius_x = radius_x.max(0);
+    let radius_y = radius_y.max(0);
+    if radius_x == 0 && radius_y == 0 {
+        if x < 0 || y < 0 || x >= output.width as i32 || y >= output.height as i32 {
+            return;
+        }
+        let mut scaled = pixel;
+        scaled[3] = (scaled[3] as f32 * alpha_scale).round().clamp(0.0, 255.0) as u8;
+        let existing = output.pixel(x as u32, y as u32);
+        output.set_pixel(
+            x as u32,
+            y as u32,
+            composite_normal_pixel(existing, scaled, 100.0),
+        );
+        return;
+    }
+    let divisor = ((radius_x * 2 + 1) * (radius_y * 2 + 1)).max(1) as f32;
+    for oy in -radius_y..=radius_y {
+        for ox in -radius_x..=radius_x {
+            let dx = x + ox;
+            let dy = y + oy;
+            if dx < 0 || dy < 0 || dx >= output.width as i32 || dy >= output.height as i32 {
+                continue;
+            }
+            let mut blurred = pixel;
+            let alpha = (blurred[3] as f32 * alpha_scale / divisor)
+                .round()
+                .clamp(0.0, 255.0) as u8;
+            if alpha == 0 {
+                continue;
+            }
+            blurred[3] = output.pixel(dx as u32, dy as u32)[3].saturating_add(alpha);
+            output.set_pixel(dx as u32, dy as u32, blurred);
+        }
+    }
+}
+
+fn splat_blurred_pixel_float_accum(
+    alpha_accum: &mut [f32],
+    colors: &mut [[u8; 3]],
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    pixel: [u8; 4],
+    radius_x: i32,
+    radius_y: i32,
+    alpha_scale: f32,
+) {
+    let radius_x = radius_x.max(0);
+    let radius_y = radius_y.max(0);
+    let divisor = ((radius_x * 2 + 1) * (radius_y * 2 + 1)).max(1) as f32;
+    let contribution = pixel[3] as f32 * alpha_scale.max(0.0) / divisor;
+    if contribution <= 0.0 {
+        return;
+    }
+    for oy in -radius_y..=radius_y {
+        for ox in -radius_x..=radius_x {
+            let dx = x + ox;
+            let dy = y + oy;
+            if dx < 0 || dy < 0 || dx >= width as i32 || dy >= height as i32 {
+                continue;
+            }
+            let index = dy as usize * width as usize + dx as usize;
+            alpha_accum[index] += contribution;
+            colors[index] = [pixel[0], pixel[1], pixel[2]];
+        }
+    }
+}
+
+fn gaussian_kernel_offsets(sigma: f32) -> Vec<(i32, f32)> {
+    let radius = gaussian_kernel_radius(sigma);
+    if radius == 0 {
+        return vec![(0, 1.0)];
+    }
+    let sigma = sigma.max(0.001);
+    let mut values = Vec::with_capacity((radius * 2 + 1) as usize);
+    let mut sum = 0.0_f32;
+    for offset in -radius..=radius {
+        let value = (-(offset * offset) as f32 / (2.0 * sigma * sigma)).exp();
+        values.push((offset, value));
+        sum += value;
+    }
+    if sum > 0.0 {
+        for (_, value) in &mut values {
+            *value /= sum;
+        }
+    }
+    values
+}
+
+fn splat_gaussian_pixel_float_accum(
+    alpha_accum: &mut [f32],
+    color_accum: &mut [[f32; 3]],
+    width: u32,
+    height: u32,
+    x: i32,
+    y: i32,
+    pixel: [u8; 4],
+    kernel_x: &[(i32, f32)],
+    kernel_y: &[(i32, f32)],
+    alpha_scale: f32,
+) {
+    let base_alpha = pixel[3] as f32 * alpha_scale.max(0.0);
+    if base_alpha <= 0.0 {
+        return;
+    }
+    for (oy, wy) in kernel_y {
+        for (ox, wx) in kernel_x {
+            let dx = x + *ox;
+            let dy = y + *oy;
+            if dx < 0 || dy < 0 || dx >= width as i32 || dy >= height as i32 {
+                continue;
+            }
+            let contribution = base_alpha * *wx * *wy;
+            if contribution <= 0.0 {
+                continue;
+            }
+            let index = dy as usize * width as usize + dx as usize;
+            alpha_accum[index] += contribution;
+            color_accum[index][0] += pixel[0] as f32 * contribution;
+            color_accum[index][1] += pixel[1] as f32 * contribution;
+            color_accum[index][2] += pixel[2] as f32 * contribution;
         }
     }
 }
@@ -3734,8 +5083,14 @@ fn layout_character_unit_rects(
     let rects = layout
         .glyphs
         .iter()
-        .filter(|glyph| glyph_char(text, glyph.char_index).is_some_and(|ch| !ch.is_whitespace()))
-        .map(|glyph| rect_from_bbox(canvas, glyph.bbox))
+        .enumerate()
+        .filter(|(_, glyph)| {
+            glyph_char(text, glyph.char_index).is_some_and(|ch| !ch.is_whitespace())
+        })
+        .map(|(index, glyph)| {
+            let telemetry_bbox = layout.telemetry.glyphs.get(index).map(|glyph| glyph.bbox);
+            rect_from_bbox_with_pivots(canvas, glyph.bbox, telemetry_bbox)
+        })
         .collect::<Vec<_>>();
     with_unit_totals(rects)
 }
@@ -3752,8 +5107,8 @@ fn layout_grouped_unit_rects(
     layout: &TextLayoutResult,
     group: LayoutGroup,
 ) -> Vec<UnitRect> {
-    let mut groups: Vec<(usize, [f32; 4])> = Vec::new();
-    for glyph in &layout.glyphs {
+    let mut groups: Vec<(usize, [f32; 4], Option<[f32; 4]>)> = Vec::new();
+    for (index, glyph) in layout.glyphs.iter().enumerate() {
         if !glyph_char(text, glyph.char_index).is_some_and(|ch| !ch.is_whitespace()) {
             continue;
         }
@@ -3765,34 +5120,66 @@ fn layout_grouped_unit_rects(
         let y0 = glyph.bbox[1];
         let x1 = glyph.bbox[0] + glyph.bbox[2];
         let y1 = glyph.bbox[1] + glyph.bbox[3];
-        if let Some((_, bounds)) = groups.iter_mut().find(|(group_key, _)| *group_key == key) {
+        let telemetry_bounds = layout.telemetry.glyphs.get(index).map(|glyph| {
+            [
+                glyph.bbox[0],
+                glyph.bbox[1],
+                glyph.bbox[0] + glyph.bbox[2],
+                glyph.bbox[1] + glyph.bbox[3],
+            ]
+        });
+        if let Some((_, bounds, telemetry)) = groups
+            .iter_mut()
+            .find(|(group_key, _, _)| *group_key == key)
+        {
             bounds[0] = bounds[0].min(x0);
             bounds[1] = bounds[1].min(y0);
             bounds[2] = bounds[2].max(x1);
             bounds[3] = bounds[3].max(y1);
+            if let Some(source) = telemetry_bounds {
+                match telemetry {
+                    Some(current) => {
+                        current[0] = current[0].min(source[0]);
+                        current[1] = current[1].min(source[1]);
+                        current[2] = current[2].max(source[2]);
+                        current[3] = current[3].max(source[3]);
+                    }
+                    None => *telemetry = Some(source),
+                }
+            }
         } else {
-            groups.push((key, [x0, y0, x1, y1]));
+            groups.push((key, [x0, y0, x1, y1], telemetry_bounds));
         }
     }
-    groups.sort_by_key(|(key, _)| *key);
+    groups.sort_by_key(|(key, _, _)| *key);
     let rects = groups
         .into_iter()
-        .map(|(_, bounds)| {
-            rect_from_bbox(
-                canvas,
+        .map(|(_, bounds, telemetry_bounds)| {
+            let layout_bbox = [
+                bounds[0],
+                bounds[1],
+                (bounds[2] - bounds[0]).max(0.0),
+                (bounds[3] - bounds[1]).max(0.0),
+            ];
+            let telemetry_bbox = telemetry_bounds.map(|bounds| {
                 [
                     bounds[0],
                     bounds[1],
                     (bounds[2] - bounds[0]).max(0.0),
                     (bounds[3] - bounds[1]).max(0.0),
-                ],
-            )
+                ]
+            });
+            rect_from_bbox_with_pivots(canvas, layout_bbox, telemetry_bbox)
         })
         .collect::<Vec<_>>();
     with_unit_totals(rects)
 }
 
-fn rect_from_bbox(canvas: &Canvas, bbox: [f32; 4]) -> UnitRect {
+fn rect_from_bbox_with_pivots(
+    canvas: &Canvas,
+    bbox: [f32; 4],
+    telemetry_bbox: Option<[f32; 4]>,
+) -> UnitRect {
     let x0 = bbox[0].floor().max(0.0).min(canvas.width as f32) as u32;
     let y0 = bbox[1].floor().max(0.0).min(canvas.height as f32) as u32;
     let x1 = (bbox[0] + bbox[2]).ceil().max(0.0).min(canvas.width as f32) as u32;
@@ -3807,7 +5194,19 @@ fn rect_from_bbox(canvas: &Canvas, bbox: [f32; 4]) -> UnitRect {
         y1,
         index: 0,
         total: 0,
+        layout_center: Some(bbox_center(bbox)),
+        layout_bottom_center: Some(bbox_bottom_center(bbox)),
+        telemetry_center: telemetry_bbox.map(bbox_center),
+        telemetry_bottom_center: telemetry_bbox.map(bbox_bottom_center),
     }
+}
+
+fn bbox_center(bbox: [f32; 4]) -> [f32; 2] {
+    [bbox[0] + bbox[2] * 0.5, bbox[1] + bbox[3] * 0.5]
+}
+
+fn bbox_bottom_center(bbox: [f32; 4]) -> [f32; 2] {
+    [bbox[0] + bbox[2] * 0.5, bbox[1] + bbox[3]]
 }
 
 fn with_unit_totals(mut rects: Vec<UnitRect>) -> Vec<UnitRect> {
@@ -3836,6 +5235,10 @@ fn line_unit_rects(canvas: &Canvas, text: &str) -> Vec<UnitRect> {
             y1: y1.min(canvas.height),
             index,
             total,
+            layout_center: None,
+            layout_bottom_center: None,
+            telemetry_center: None,
+            telemetry_bottom_center: None,
         });
     }
     units
@@ -3872,6 +5275,10 @@ fn inline_unit_rects(canvas: &Canvas, text: &str, mode: UnitMode) -> Vec<UnitRec
                 y1: y1.min(canvas.height),
                 index: global,
                 total,
+                layout_center: None,
+                layout_bottom_center: None,
+                telemetry_center: None,
+                telemetry_bottom_center: None,
             });
             global += 1;
         }
@@ -3886,8 +5293,17 @@ fn canvas_dim(value: f32) -> u32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use render_ir::{Composition, CompositionNode, TextRangeSelector};
+    use render_ir::{
+        Composition, CompositionNode, Layer, MotionBlurSettings, Rect, Scene, TextRangeSelector,
+        Transform2D,
+    };
     use serde_json::json;
+    use std::sync::{Mutex, OnceLock};
+
+    fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(())).lock().unwrap()
+    }
 
     #[test]
     fn scalar_keyframes_interpolate_linearly() {
@@ -4277,6 +5693,106 @@ mod tests {
     }
 
     #[test]
+    fn parsed_position_expression_matches_exp010_expected_rows() {
+        let expression = PositionExpression::ParsedProperty {
+            source: "intro = 0.25; outro = 0.25; amp = 34; freq = 2.0;\n\
+edge = Math.min(time - inPoint, outPoint - time);\n\
+env = Math.max(0, Math.min(1, edge / intro));\n\
+value + [Math.sin(time * freq * 2 * Math.PI) * amp * env, 0];"
+                .to_string(),
+        };
+        let expected = [
+            (0, [256.0, 256.0]),
+            (1, [257.843872782, 256.0]),
+            (2, [262.737846418, 256.0]),
+            (5, [275.629909152, 256.0]),
+            (10, [226.555136271, 256.0]),
+            (15, [256.0, 256.0]),
+            (20, [285.444863729, 256.0]),
+            (30, [256.0, 256.0]),
+            (45, [256.0, 256.0]),
+            (59, [254.156127218, 256.0]),
+        ];
+
+        for (frame, expected_position) in expected {
+            let time = frame as f64 / 30.0;
+            let sample = evaluate_position_expression_sample(
+                &expression,
+                [256.0, 256.0],
+                time,
+                0.0,
+                2.0,
+                30.0,
+            );
+
+            assert_eq!(sample.error, None, "frame {frame}");
+            assert_eq!(sample.mode, "parsed_property_subset");
+            assert_close_f32(sample.position[0], expected_position[0] as f32);
+            assert_close_f32(sample.position[1], expected_position[1] as f32);
+        }
+    }
+
+    #[test]
+    fn parsed_position_expression_trace_reports_parsed_subset_mode() {
+        let mut transform = render_ir::Transform2D {
+            position: [256.0, 256.0],
+            ..render_ir::Transform2D::default()
+        };
+        transform.animation.expression = render_ir::Transform2DExpression {
+            position: Some(PositionExpression::ParsedProperty {
+                source: "intro = 0.25; outro = 0.25; amp = 34; freq = 2.0;\n\
+edge = Math.min(time - inPoint, outPoint - time);\n\
+env = Math.max(0, Math.min(1, edge / intro));\n\
+value + [Math.sin(time * freq * 2 * Math.PI) * amp * env, 0];"
+                    .to_string(),
+            }),
+        };
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 512,
+                height: 512,
+                fps: 30.0,
+                duration: 2.0,
+                background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
+            },
+            compositions: Vec::new(),
+            assets: Vec::new(),
+            layers: vec![Layer::Solid {
+                id: "expr".to_string(),
+                start: 0.0,
+                duration: 2.0,
+                color: [255, 0, 0, 255],
+                rect: Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 1.0,
+                    h: 1.0,
+                },
+                transform,
+                effects: Vec::new(),
+            }],
+        };
+        let mut footage = CheckerboardFootageProvider;
+
+        let (_frame, trace) = render_frame_with_footage_traced(&scene, 5, &mut footage).unwrap();
+
+        assert_eq!(trace.position_expressions.len(), 1);
+        let record = &trace.position_expressions[0];
+        assert_eq!(record["evaluator"]["mode"], json!("parsed_property_subset"));
+        assert_eq!(record["evaluator"]["target_type"], json!("vector2"));
+        assert_eq!(record["expression"]["type"], json!("parsed_property"));
+        assert_eq!(record["expression"]["error"], json!(null));
+        assert_close_f32(
+            record["sampled_position"][0].as_f64().unwrap() as f32,
+            275.6299,
+        );
+        assert_eq!(record["sampled_position"][1], json!(256.0));
+    }
+
+    #[test]
     fn render_frame_renders_nested_precomp_composition() {
         let scene = Scene {
             version: "test".to_string(),
@@ -4358,7 +5874,125 @@ mod tests {
     }
 
     #[test]
-    fn text_animator_blur_uses_weighted_pixel_radius() {
+    fn text_animator_transform_uses_bottom_center_unit_pivot() {
+        let animator = TextAnimatorSpec {
+            name: "scale".to_string(),
+            opacity: 100.0,
+            position: None,
+            scale: Some([125.0, 125.0]),
+            rotation: None,
+            blur: None,
+            selector: TextRangeSelector {
+                start: 0.0,
+                end: 100.0,
+                ..TextRangeSelector::default()
+            },
+            expression_selector: None,
+        };
+        let unit = UnitRect {
+            x0: 10,
+            y0: 20,
+            x1: 20,
+            y1: 50,
+            index: 0,
+            total: 1,
+            layout_center: None,
+            layout_bottom_center: None,
+            telemetry_center: None,
+            telemetry_bottom_center: None,
+        };
+
+        let transform = animator_unit_transform(unit, &animator, 1.0, 1.0);
+        let pivot = transform.matrix.transform_point(Vec2::new(15.0, 50.0));
+        let top = transform.matrix.transform_point(Vec2::new(15.0, 20.0));
+
+        assert_eq!(transform.center, [15.0, 50.0]);
+        assert!((pivot.x - 15.0).abs() < 0.001);
+        assert!((pivot.y - 50.0).abs() < 0.001);
+        assert!((top.y - 12.5).abs() < 0.001);
+    }
+
+    #[test]
+    fn text_animator_transform_prefers_layout_float_bottom_center_pivot() {
+        let animator = TextAnimatorSpec {
+            name: "scale".to_string(),
+            opacity: 100.0,
+            position: None,
+            scale: Some([125.0, 125.0]),
+            rotation: None,
+            blur: None,
+            selector: TextRangeSelector {
+                start: 0.0,
+                end: 100.0,
+                ..TextRangeSelector::default()
+            },
+            expression_selector: None,
+        };
+        let unit = UnitRect {
+            x0: 10,
+            y0: 20,
+            x1: 20,
+            y1: 50,
+            index: 0,
+            total: 1,
+            layout_center: Some([14.25, 32.0]),
+            layout_bottom_center: Some([14.25, 47.5]),
+            telemetry_center: None,
+            telemetry_bottom_center: None,
+        };
+
+        let transform = animator_unit_transform(unit, &animator, 1.0, 1.0);
+
+        assert_eq!(transform.center, [14.25, 47.5]);
+    }
+
+    #[test]
+    fn text_animator_no_blur_scale_inverse_samples_destination_area() {
+        let mut canvas = Canvas::transparent(24, 24);
+        for y in 10..14 {
+            for x in 8..12 {
+                canvas.set_pixel(x, y, [255, 255, 255, 255]);
+            }
+        }
+        let animator = TextAnimatorSpec {
+            name: "scale".to_string(),
+            opacity: 100.0,
+            position: None,
+            scale: Some([200.0, 200.0]),
+            rotation: None,
+            blur: None,
+            selector: TextRangeSelector {
+                start: 0.0,
+                end: 100.0,
+                ..TextRangeSelector::default()
+            },
+            expression_selector: None,
+        };
+        let unit = UnitRect {
+            x0: 8,
+            y0: 10,
+            x1: 12,
+            y1: 14,
+            index: 0,
+            total: 1,
+            layout_center: None,
+            layout_bottom_center: None,
+            telemetry_center: None,
+            telemetry_bottom_center: None,
+        };
+        let mut output = Canvas::transparent(24, 24);
+
+        draw_transformed_unit(&mut output, &canvas, unit, &animator, 1.0, 1.0);
+
+        let covered = (0..output.height)
+            .flat_map(|y| (0..output.width).map(move |x| (x, y)))
+            .filter(|(x, y)| output.pixel(*x, *y)[3] > 0)
+            .count();
+        assert!(covered > 16);
+    }
+
+    #[test]
+    fn text_animator_blur_tracks_rect_and_gaussian_bounds() {
         let animator = TextAnimatorSpec {
             name: "blur".to_string(),
             opacity: 100.0,
@@ -4374,9 +6008,25 @@ mod tests {
             expression_selector: None,
         };
 
-        assert_eq!(text_animator_blur_radius(&animator, 1.0, 1.0), 10);
-        assert_eq!(text_animator_blur_radius(&animator, 0.45, 1.0), 5);
-        assert_eq!(text_animator_blur_radius(&animator, -1.0, 1.0), 0);
+        assert_eq!(
+            text_animator_blur_radii_for_kernel(
+                &animator,
+                1.0,
+                1.0,
+                TextAnimatorBlurKernel::RectSplat,
+                [0.0, 0.0],
+            ),
+            [8, 8]
+        );
+        assert_eq!(text_animator_blur_radii(&animator, 1.0, 1.0), [14, 14]);
+        assert_eq!(text_animator_blur_radii(&animator, 0.45, 1.0), [7, 7]);
+        assert_eq!(text_animator_blur_radii(&animator, -1.0, 1.0), [0, 0]);
+
+        let x_only = TextAnimatorSpec {
+            blur: Some([10.0, 0.0]),
+            ..animator.clone()
+        };
+        assert_eq!(text_animator_blur_radii(&x_only, 1.0, 1.0), [14, 0]);
     }
 
     #[test]
@@ -4402,6 +6052,44 @@ mod tests {
             apply_unit_animator_transform(&canvas, "A", None, &animator, 0.0, 100.0, 0.0, 0.0, 1.0);
 
         assert!(animated.pixel(0, 0)[3] > 0);
+    }
+
+    #[test]
+    fn bounce_expression_selector_honors_pre_delay_value_branch() {
+        let selector = TextExpressionSelector::PerCharacterBounce {
+            delay: 0.05,
+            freq: 2.0,
+            amplitude: 100.0,
+            decay: 8.0,
+            pre_delay_amount: Some(100.0),
+            source: "else { value }".to_string(),
+        };
+
+        let detail = text_expression_weight_detail(Some(&selector), 0, 4, 0.0, 0.0);
+
+        assert_eq!(detail.text_index, Some(1));
+        assert!(detail.local_time_after_delay.unwrap() < 0.0);
+        assert_eq!(detail.raw_amount, Some(100.0));
+        assert_eq!(detail.clamped_amount, Some(100.0));
+        assert_eq!(detail.weight, 1.0);
+    }
+
+    #[test]
+    fn bounce_expression_selector_keeps_zero_pre_delay_fallback() {
+        let selector = TextExpressionSelector::PerCharacterBounce {
+            delay: 0.05,
+            freq: 2.0,
+            amplitude: 100.0,
+            decay: 8.0,
+            pre_delay_amount: None,
+            source: String::new(),
+        };
+
+        let detail = text_expression_weight_detail(Some(&selector), 0, 4, 0.0, 0.0);
+
+        assert_eq!(detail.raw_amount, Some(0.0));
+        assert_eq!(detail.clamped_amount, Some(0.0));
+        assert_eq!(detail.weight, 0.0);
     }
 
     #[test]
@@ -4453,6 +6141,28 @@ mod tests {
     }
 
     #[test]
+    fn layout_character_units_exclude_whitespace_like_ae_selector_units() {
+        let canvas = Canvas::transparent(80, 20);
+        let layout = text_engine::layout_text_stub(&TextLayoutRequest {
+            text: "AB CD".to_string(),
+            font_id: "missing".to_string(),
+            font_size: 10.0,
+            box_rect: Some([0.0, 0.0, 80.0, 20.0]),
+        });
+
+        let units = unit_rects(
+            &canvas,
+            "AB CD",
+            Some(&layout),
+            render_ir::TextSelectorBasedOn::Characters,
+        );
+
+        assert_eq!(units.len(), 4);
+        assert!(units.iter().all(|unit| unit.total == 4));
+        assert_eq!(unit_count("AB CD", UnitMode::Characters), 4);
+    }
+
+    #[test]
     fn text_layout_trace_telemetry_reports_comp_coordinates() {
         let layout = text_engine::layout_text_stub(&TextLayoutRequest {
             text: "A".to_string(),
@@ -4491,6 +6201,10 @@ mod tests {
             y1: 2,
             index: 0,
             total: 1,
+            layout_center: None,
+            layout_bottom_center: None,
+            telemetry_center: None,
+            telemetry_bottom_center: None,
         };
 
         let contribution = animator_contribution_json(unit, &animator, 1.0, 1.0);
@@ -4530,6 +6244,7 @@ mod tests {
 
         assert_eq!(weights, vec![1.0, 1.0, 1.0, 1.0]);
         assert_eq!(selector_weight(0, 4, &selector, 100.0, 100.0, 0.0), 0.0);
+        assert!((selector_weight(3, 4, &selector, 95.0, 100.0, 0.0) - 0.2).abs() < 1.0e-6);
     }
 
     #[test]
@@ -5411,6 +7126,255 @@ mod tests {
             collapsed_precomp["deferred_raster_checkpoint"]["status"],
             json!("matrix_pushdown_only")
         );
+    }
+
+    #[test]
+    fn collapsed_plain_text_uses_p6_vector_deferred_pixels() {
+        let _guard = test_env_lock();
+        unsafe {
+            std::env::set_var(COLLAPSED_TEXT_VECTOR_DEFERRED_ENV_VAR, "1");
+        }
+        let font_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf");
+        if !font_path.exists() {
+            unsafe {
+                std::env::remove_var(COLLAPSED_TEXT_VECTOR_DEFERRED_ENV_VAR);
+            }
+            return;
+        }
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 256,
+                height: 256,
+                fps: 30.0,
+                duration: 1.0 / 30.0,
+                background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
+            },
+            compositions: vec![CompositionNode {
+                composition: Composition {
+                    id: "text_child".to_string(),
+                    width: 128,
+                    height: 128,
+                    fps: 30.0,
+                    duration: 1.0 / 30.0,
+                    background: [0, 0, 0, 0],
+                    motion_blur: render_ir::MotionBlurSettings::default(),
+                },
+                layers: vec![Layer::Text {
+                    id: "glyph_o".to_string(),
+                    start: 0.0,
+                    duration: 1.0 / 30.0,
+                    text: "O".to_string(),
+                    font: font_path.display().to_string(),
+                    fontSize: 48.0,
+                    fill: [255, 255, 255, 255],
+                    box_: Some(Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 128.0,
+                        h: 128.0,
+                    }),
+                    transform: render_ir::Transform2D::default(),
+                    text_animators: Vec::new(),
+                    effects: Vec::new(),
+                }],
+            }],
+            assets: Vec::new(),
+            layers: vec![Layer::Precomp {
+                id: "collapsed_text_child".to_string(),
+                start: 0.0,
+                duration: 1.0 / 30.0,
+                composition: "text_child".to_string(),
+                collapse_transformations: true,
+                transform: render_ir::Transform2D {
+                    scale: [180.0, 180.0],
+                    ..render_ir::Transform2D::default()
+                },
+                effects: Vec::new(),
+            }],
+        };
+
+        let mut footage = CheckerboardFootageProvider;
+        let (frame, trace) = render_frame_with_footage_traced(&scene, 0, &mut footage).unwrap();
+
+        assert!(frame.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
+        let text_layout = trace
+            .text_layouts
+            .iter()
+            .find(|record| record["render_path"] == "collapsed_text_vector_deferred")
+            .expect("collapsed plain text should use vector-deferred P6 path");
+        assert!(text_layout["request"]["font_size"]
+            .as_f64()
+            .is_some_and(|font_size| font_size > 48.0));
+        assert_eq!(
+            text_layout["draw_char"]["events"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|event| event["stage"] == "p6_ad68_pixel_write")
+                .unwrap()["payload"]["vector_transform"]["font_size_baked_scale"],
+            json!(true)
+        );
+        let collapsed_text = trace
+            .collapse
+            .iter()
+            .find(|record| record["mode"] == "collapsed_text_vector_deferred")
+            .unwrap();
+        assert_eq!(
+            collapsed_text["deferred_raster_checkpoint"]["status"],
+            json!("deferred_text_vector_matrix_carrier")
+        );
+        let bee_route = trace
+            .collapse
+            .iter()
+            .find(|record| {
+                record["mode"] == "bee_text_carrier_route"
+                    && record["bee_text_carrier_route"]["status"] == "bee_text_carrier_required"
+            })
+            .expect("collapsed text should declare the BEE carrier owner");
+        assert_eq!(
+            bee_route["bee_text_carrier_route"]["source_layer_id"],
+            json!("glyph_o")
+        );
+        assert_eq!(
+            bee_route["bee_text_carrier_route"]["counts_as_direct_p6_success"],
+            json!(false)
+        );
+        let routed_route = trace
+            .collapse
+            .iter()
+            .find(|record| {
+                record["mode"] == "bee_text_carrier_route"
+                    && record["bee_text_carrier_route"]["status"] == "bee_text_carrier_routed"
+            })
+            .expect("collapsed text vector path should route the BEE carrier payload");
+        assert_eq!(
+            routed_route["bee_text_carrier_route"]["source_layer_id"],
+            json!("glyph_o")
+        );
+        assert_eq!(
+            routed_route["bee_text_carrier_route"]["payload_bridge"],
+            json!("layer_text_source_outline_to_p6_ad68_vector_transform")
+        );
+        assert!(
+            routed_route["bee_text_carrier_route"]["pixel_write_count"]
+                .as_u64()
+                .unwrap_or(0)
+                > 0
+        );
+        unsafe {
+            std::env::remove_var(COLLAPSED_TEXT_VECTOR_DEFERRED_ENV_VAR);
+        }
+    }
+
+    #[test]
+    fn rasterized_precomp_text_disables_p6_pixels_for_source_input() {
+        let _guard = test_env_lock();
+        unsafe {
+            std::env::remove_var(COLLAPSED_TEXT_VECTOR_DEFERRED_ENV_VAR);
+            std::env::set_var("AE_NATIVE_RENDERER_P6_AD68_TEXT_PIXELS_OPT_IN", "1");
+        }
+        let font_path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf");
+        if !font_path.exists() {
+            unsafe {
+                std::env::remove_var("AE_NATIVE_RENDERER_P6_AD68_TEXT_PIXELS_OPT_IN");
+            }
+            return;
+        }
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "root".to_string(),
+                width: 256,
+                height: 256,
+                fps: 30.0,
+                duration: 1.0 / 30.0,
+                background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
+            },
+            compositions: vec![CompositionNode {
+                composition: Composition {
+                    id: "text_child".to_string(),
+                    width: 128,
+                    height: 128,
+                    fps: 30.0,
+                    duration: 1.0 / 30.0,
+                    background: [0, 0, 0, 0],
+                    motion_blur: render_ir::MotionBlurSettings::default(),
+                },
+                layers: vec![Layer::Text {
+                    id: "glyph_o".to_string(),
+                    start: 0.0,
+                    duration: 1.0 / 30.0,
+                    text: "O".to_string(),
+                    font: font_path.display().to_string(),
+                    fontSize: 48.0,
+                    fill: [255, 255, 255, 255],
+                    box_: Some(Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 128.0,
+                        h: 128.0,
+                    }),
+                    transform: render_ir::Transform2D::default(),
+                    text_animators: Vec::new(),
+                    effects: Vec::new(),
+                }],
+            }],
+            assets: Vec::new(),
+            layers: vec![Layer::Precomp {
+                id: "rasterized_text_child".to_string(),
+                start: 0.0,
+                duration: 1.0 / 30.0,
+                composition: "text_child".to_string(),
+                collapse_transformations: false,
+                transform: render_ir::Transform2D::default(),
+                effects: Vec::new(),
+            }],
+        };
+
+        let mut footage = CheckerboardFootageProvider;
+        let (frame, trace) = render_frame_with_footage_traced(&scene, 0, &mut footage).unwrap();
+
+        assert!(frame.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
+        let text_layout = trace
+            .text_layouts
+            .iter()
+            .find(|record| record["render_path"] == "layer_text_precomp_raster_input_p6_disabled")
+            .expect("precomp source text should use the M17-safe P6-disabled text path");
+        let events = text_layout["draw_char"]["events"].as_array().unwrap();
+        assert!(events.iter().any(|event| {
+            event["stage"] == "p6_ad68_pixel_opt_in_flag"
+                && event["payload"]["state"] == "disabled_explicit"
+                && event["payload"]["enabled"] == false
+        }));
+        assert!(
+            !events
+                .iter()
+                .any(|event| event["stage"] == "p6_ad68_pixel_write"),
+            "precomp source text must not count P6 AD68 pixels as M17/P5 proof yet"
+        );
+        let bee_route = trace
+            .collapse
+            .iter()
+            .find(|record| {
+                record["mode"] == "bee_text_carrier_route"
+                    && record["bee_text_carrier_route"]["status"] == "precomp_rasterize_first"
+            })
+            .expect("rasterized precomp should declare non-carrier route status");
+        assert_eq!(
+            bee_route["bee_text_carrier_route"]["reason"],
+            json!("collapse_not_requested")
+        );
+        unsafe {
+            std::env::remove_var("AE_NATIVE_RENDERER_P6_AD68_TEXT_PIXELS_OPT_IN");
+        }
     }
 
     fn posterize_effect(frame_rate: f32) -> EffectSpec {

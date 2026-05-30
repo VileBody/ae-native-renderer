@@ -498,6 +498,9 @@ fn character_units(text: &str) -> Vec<TextUnit> {
         if ch == '\r' {
             continue;
         }
+        if ch.is_whitespace() {
+            continue;
+        }
         units.push(TextUnit {
             based_on: BasedOn::Characters,
             index: units.len(),
@@ -732,12 +735,12 @@ mod tests {
         let text = "Hi all\nRust now";
 
         let chars = text_units(text, BasedOn::Characters);
-        assert_eq!(chars.len(), 14);
+        assert_eq!(chars.len(), 12);
         assert_eq!(chars[0].index, 0);
         assert_eq!(chars[0].char_start, 0);
-        assert_eq!(chars[5].line_index, 0);
-        assert_eq!(chars[6].line_index, 1);
-        assert_eq!(&text[chars[6].byte_start..chars[6].byte_end], "R");
+        assert_eq!(chars[4].line_index, 0);
+        assert_eq!(chars[5].line_index, 1);
+        assert_eq!(&text[chars[5].byte_start..chars[5].byte_end], "R");
 
         let words = text_units(text, BasedOn::Words);
         let word_text: Vec<&str> = words
@@ -786,6 +789,17 @@ mod tests {
             .map(|unit| unit.weight)
             .collect();
         assert_eq!(line_weights, vec![1.0, 1.0, 0.0, 0.0]);
+    }
+
+    #[test]
+    fn character_units_exclude_whitespace_for_ae_selector_indexing() {
+        let units = text_units("AB CD", BasedOn::Characters);
+
+        assert_eq!(units.len(), 4);
+        assert_eq!(units[0].char_start, 0);
+        assert_eq!(units[1].char_start, 1);
+        assert_eq!(units[2].char_start, 3);
+        assert_eq!(units[3].char_start, 4);
     }
 
     #[test]

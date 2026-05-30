@@ -223,7 +223,7 @@ render-cli conformance-pack text_passport_comparison.json.
         var inWord = false;
         var glyphRunIndex = 0;
         var lineHeight = layerDef.font_size * 1.2;
-        var blockTop = layerDef.position[1] - ((lines.length - 1) * lineHeight) * 0.5;
+        var blockTop = layerDef.position[1];
 
         for (var lineIndex = 0; lineIndex < lines.length; lineIndex++) {
             var line = lines[lineIndex];

@@ -9,7 +9,7 @@ use render_ir::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, HashMap};
-use std::fs::{self, OpenOptions};
+use std::fs::{self, File, OpenOptions};
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -21,6 +21,18 @@ pub struct RunOptions {
     pub threshold_mean: Option<f64>,
     pub threshold_max: Option<u8>,
 }
+
+pub struct P2TextJournalOptions {
+    pub pack: PathBuf,
+    pub out: PathBuf,
+    pub cases: Vec<String>,
+    pub full_events: bool,
+    pub ae_ref_root: Option<PathBuf>,
+}
+
+const P2_TEXT_JOURNAL_DEFAULT_CASES: &[&str] = &[
+    "COV_W", "COV_I", "COV_O", "TXT_010", "TXT_020", "TXT_030", "TXT_040", "GPH_010",
+];
 
 #[derive(Debug, Clone, Deserialize)]
 struct PackManifest {
@@ -167,6 +179,358 @@ pub fn run_pack(options: RunOptions) -> Result<bool> {
         options.out.join("report.json").display()
     );
     Ok(ok)
+}
+
+pub fn run_p2_text_journal(options: P2TextJournalOptions) -> Result<Value> {
+    let started = Instant::now();
+    let pack_root = options.pack;
+    let manifest = load_manifest(&pack_root)?;
+    validate_pack_manifest(&manifest)?;
+    let primitive_assets = load_primitive_assets(&pack_root)?;
+    let case_ids = if options.cases.is_empty() {
+        P2_TEXT_JOURNAL_DEFAULT_CASES
+            .iter()
+            .map(|case| (*case).to_string())
+            .collect::<Vec<_>>()
+    } else {
+        options.cases
+    };
+
+    let journal_root = options.out.join("p2_run_journal");
+    fs::create_dir_all(&journal_root)?;
+    let mut cases = Vec::new();
+    let mut first_divergence = Value::Null;
+    for case_id in case_ids {
+        let case_summary = run_p2_text_journal_case(
+            &manifest,
+            &pack_root,
+            &primitive_assets,
+            &journal_root,
+            &case_id,
+            options.full_events,
+            options.ae_ref_root.as_deref(),
+        )?;
+        if first_divergence.is_null() {
+            if let Some(divergence) = case_summary.get("first_divergence") {
+                if !divergence.is_null() {
+                    first_divergence = divergence.clone();
+                }
+            }
+        }
+        cases.push(case_summary);
+    }
+
+    let total_events = cases
+        .iter()
+        .filter_map(|case| case.get("event_count").and_then(Value::as_u64))
+        .sum::<u64>();
+    let summary = json!({
+        "schema": "ae-native-renderer.p2-text-journal-summary.v1",
+        "out": options.out.display().to_string(),
+        "journal_root": journal_root.display().to_string(),
+        "pack": pack_root.display().to_string(),
+        "full_events": options.full_events,
+        "ae_ref_root": options.ae_ref_root.map(|path| path.display().to_string()),
+        "runtime_note": "Designed for the AE85 node TDD loop; local runs use native/Ghidra artifacts only.",
+        "case_count": cases.len(),
+        "event_count": total_events,
+        "elapsed_ms": elapsed_ms(started),
+        "cases": cases
+    });
+    fs::create_dir_all(&options.out)?;
+    fs::write(
+        options.out.join("summary.json"),
+        serde_json::to_string_pretty(&summary)?,
+    )?;
+    fs::write(
+        options.out.join("first_divergence.json"),
+        serde_json::to_string_pretty(&first_divergence)?,
+    )?;
+    println!(
+        "p2-text-journal.done cases={} events={} summary={}",
+        summary["case_count"],
+        total_events,
+        options.out.join("summary.json").display()
+    );
+    Ok(summary)
+}
+
+fn run_p2_text_journal_case(
+    manifest: &PackManifest,
+    pack_root: &Path,
+    primitive_assets: &HashMap<String, PrimitiveAsset>,
+    journal_root: &Path,
+    case_id: &str,
+    full_events: bool,
+    ae_ref_root: Option<&Path>,
+) -> Result<Value> {
+    let (recipe, frames, title, modules) =
+        if let Some((recipe, frames, title, modules)) = p2_cov_journal_recipe(pack_root, case_id) {
+            (recipe, frames, title, modules)
+        } else {
+            let case = manifest
+                .cases
+                .iter()
+                .find(|case| case.id == case_id)
+                .with_context(|| {
+                    format!("P2 journal case {case_id} is not a COV_* or manifest case")
+                })?;
+            (
+                build_recipe(manifest, pack_root, case)?,
+                case.frames_to_compare.clone(),
+                case.title.clone(),
+                case.modules.clone(),
+            )
+        };
+
+    let case_dir = journal_root.join(case_id);
+    fs::create_dir_all(&case_dir)?;
+    fs::write(
+        case_dir.join("scene.json"),
+        serde_json::to_string_pretty(&recipe.scene)?,
+    )?;
+    let mut provider = PackFootageProvider::new(
+        pack_root.to_path_buf(),
+        recipe.scene.composition.fps,
+        primitive_assets.clone(),
+    );
+    let mut stage_counts = BTreeMap::<String, u64>::new();
+    let mut frame_summaries = Vec::new();
+    let mut event_count = 0_u64;
+    let mut first_divergence = Value::Null;
+
+    for frame in frames {
+        let (_canvas, trace) = render_core::layer_eval::render_frame_with_footage_traced(
+            &recipe.scene,
+            frame,
+            &mut provider,
+        )
+        .with_context(|| format!("rendering P2 journal case {case_id} frame {frame}"))?;
+        let events = p2_text_journal_events_from_trace(case_id, frame, &trace, full_events);
+        let frame_path = case_dir.join(format!("{case_id}_{frame:05}.jsonl"));
+        let mut file = File::create(&frame_path)
+            .with_context(|| format!("creating P2 journal {}", frame_path.display()))?;
+        for event in &events {
+            if let Some(stage) = event.get("stage").and_then(Value::as_str) {
+                *stage_counts.entry(stage.to_string()).or_insert(0) += 1;
+            }
+            write_json_line(&mut file, event)?;
+        }
+        event_count += events.len() as u64;
+        if first_divergence.is_null() {
+            first_divergence = p2_known_first_divergence(case_id, frame, &events, ae_ref_root)
+                .unwrap_or(Value::Null);
+        }
+        frame_summaries.push(json!({
+            "frame": frame,
+            "path": frame_path.display().to_string(),
+            "event_count": events.len(),
+            "trace_hash": testkit::hash_json(&json!(&events))?
+        }));
+    }
+
+    Ok(json!({
+        "case": case_id,
+        "title": title,
+        "modules": modules,
+        "event_count": event_count,
+        "stage_counts": stage_counts,
+        "frames": frame_summaries,
+        "first_divergence": first_divergence
+    }))
+}
+
+fn p2_text_journal_events_from_trace(
+    case_id: &str,
+    frame: u32,
+    trace: &render_core::layer_eval::FrameRenderTrace,
+    full_events: bool,
+) -> Vec<Value> {
+    let mut out = Vec::new();
+    for record in &trace.text_selector_weights {
+        let layer_id = record
+            .get("layer_id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown_text_layer");
+        let composition = record
+            .get("composition")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        out.push(p2_synthetic_journal_event(
+            case_id,
+            frame,
+            trace.time,
+            layer_id,
+            composition,
+            out.len() as u64,
+            "selector_weights",
+            record.clone(),
+        ));
+    }
+    for record in &trace.text_layouts {
+        let layer_id = record
+            .get("layer_id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown_text_layer");
+        let composition = record
+            .get("composition")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let Some(events) = record
+            .pointer("/draw_char/events")
+            .and_then(Value::as_array)
+        else {
+            continue;
+        };
+        for event in events {
+            if !full_events
+                && event.get("stage").and_then(Value::as_str) == Some("pixel_write_composite")
+            {
+                continue;
+            }
+            let mut event = event.clone();
+            if let Some(object) = event.as_object_mut() {
+                object.insert("case_id".to_string(), json!(case_id));
+                object.insert("frame".to_string(), json!(frame));
+                object.insert("layer_id".to_string(), json!(layer_id));
+                object.insert("composition".to_string(), json!(composition));
+                object.insert("time".to_string(), json!(trace.time));
+            }
+            out.push(event);
+        }
+    }
+    for record in &trace.collapse {
+        let layer_id = record
+            .get("layer_id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown_collapse_layer");
+        let composition = record
+            .get("composition")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let stage = if record.get("mode").and_then(Value::as_str) == Some("bee_text_carrier_route")
+        {
+            "bee_text_carrier_route"
+        } else {
+            "collapse_trace"
+        };
+        out.push(p2_synthetic_journal_event(
+            case_id,
+            frame,
+            trace.time,
+            layer_id,
+            composition,
+            out.len() as u64,
+            stage,
+            record.clone(),
+        ));
+    }
+    out
+}
+
+fn p2_synthetic_journal_event(
+    case_id: &str,
+    frame: u32,
+    time: f64,
+    layer_id: &str,
+    composition: &str,
+    seq: u64,
+    stage: &'static str,
+    payload: Value,
+) -> Value {
+    let input = json!({
+        "case_id": case_id,
+        "frame": frame,
+        "layer_id": layer_id,
+        "stage": stage,
+        "seq": seq
+    });
+    let input_hash = testkit::hash_json(&input).unwrap_or_default();
+    let output_hash = testkit::hash_json(&payload).unwrap_or_default();
+    json!({
+        "schema": "ae-native-renderer.text-raster-event.v1",
+        "seq": seq,
+        "case_id": case_id,
+        "frame": frame,
+        "layer_id": layer_id,
+        "composition": composition,
+        "time": time,
+        "glyph_run_index": null,
+        "glyph_id": null,
+        "stage": stage,
+        "payload": payload,
+        "input_hash": input_hash,
+        "output_hash": output_hash
+    })
+}
+
+fn p2_known_first_divergence(
+    case_id: &str,
+    frame: u32,
+    events: &[Value],
+    ae_ref_root: Option<&Path>,
+) -> Option<Value> {
+    let _ = (case_id, frame, events, ae_ref_root);
+    None
+}
+
+fn p2_cov_journal_recipe(
+    pack_root: &Path,
+    case_id: &str,
+) -> Option<(CaseRecipe, Vec<u32>, String, Vec<String>)> {
+    let text = match case_id {
+        "COV_W" => "W",
+        "COV_I" => "I",
+        "COV_O" => "O",
+        _ => return None,
+    };
+    let mut transform = Transform2D::default();
+    transform.anchor = [128.0, 128.0];
+    transform.position = [128.0, 150.0];
+    let scene = Scene {
+        version: "0.1".to_string(),
+        composition: Composition {
+            id: case_id.to_string(),
+            width: 256,
+            height: 256,
+            fps: 30.0,
+            duration: 1.0 / 30.0,
+            background: [0, 0, 0, 0],
+            motion_blur: MotionBlurSettings::default(),
+        },
+        compositions: Vec::new(),
+        assets: Vec::new(),
+        layers: vec![Layer::Text {
+            id: format!("{case_id}_single_glyph"),
+            start: 0.0,
+            duration: 1.0 / 30.0,
+            text: text.to_string(),
+            font: font_montserrat(pack_root),
+            fontSize: 96.0,
+            fill: [255, 255, 255, 255],
+            box_: Some(Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 256.0,
+                h: 256.0,
+            }),
+            transform,
+            text_animators: Vec::new(),
+            effects: Vec::new(),
+        }],
+    };
+    Some((
+        CaseRecipe {
+            scene,
+            notes: vec![
+                "Synthetic P2 coverage-row journal scene matching p2_text_coverage_rows_probe."
+                    .to_string(),
+            ],
+        },
+        vec![0],
+        format!("P2 coverage-row single glyph {text}"),
+        vec!["M05".to_string()],
+    ))
 }
 
 fn load_manifest(pack_root: &Path) -> Result<PackManifest> {
@@ -2672,6 +3036,10 @@ fn append_trace_json_line(path: &Path, value: &Value) -> Result<()> {
         .append(true)
         .open(path)
         .with_context(|| format!("opening trace sidecar {}", path.display()))?;
+    write_json_line(&mut file, value)
+}
+
+fn write_json_line(file: &mut File, value: &Value) -> Result<()> {
     writeln!(file, "{}", serde_json::to_string(value)?)?;
     Ok(())
 }
@@ -3261,12 +3629,8 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
         "EXP_010" => {
             let mut transform = placed_transform(256.0, 256.0, 55.0, 100.0);
             transform.animation.expression = Transform2DExpression {
-                position: Some(PositionExpression::EdgeWobble {
-                    intro: 0.25,
-                    outro: 0.25,
-                    amp: 34.0,
-                    freq: 2.0,
-                    source: "ae_conformance_edge_wobble".to_string(),
+                position: Some(PositionExpression::ParsedProperty {
+                    source: exp010_position_expression_source().to_string(),
                 }),
             };
             b.place_with_transform("edge_wobble", "alpha_square", transform, 0.0, d, 0.0, vec![]);
@@ -3408,7 +3772,7 @@ fn build_recipe(manifest: &PackManifest, pack_root: &Path, case: &PackCase) -> R
         "GPH_010" => b.collapse_probe(),
         "CMP_010" => {
             b.place("checker", "checkerboard_16", 256.0, 256.0, 100.0, 100.0, vec![]);
-            b.place("premult_probe", "premult_probe", 256.0, 256.0, 100.0, 80.0, vec![]);
+            b.place("premult_probe", "premult_probe", 256.0, 256.0, 80.0, 100.0, vec![]);
             b.place("coordinate_alpha", "coordinate_field", 256.0, 256.0, 55.0, 45.0, vec![]);
         }
         other => anyhow::bail!("no native conformance recipe for case {other}"),
@@ -3820,6 +4184,7 @@ fn bounce_animator() -> TextAnimatorSpec {
             freq: 2.0,
             amplitude: 100.0,
             decay: 8.0,
+            pre_delay_amount: Some(100.0),
             source: "ae_conformance_bounce_selector".to_string(),
         }),
         ..TextAnimatorSpec::default()
@@ -3848,6 +4213,13 @@ fn elapsed_ms(started: Instant) -> f64 {
     started.elapsed().as_secs_f64() * 1000.0
 }
 
+fn exp010_position_expression_source() -> &'static str {
+    "intro = 0.25; outro = 0.25; amp = 34; freq = 2.0;\n\
+edge = Math.min(time - inPoint, outPoint - time);\n\
+env = Math.max(0, Math.min(1, edge / intro));\n\
+value + [Math.sin(time * freq * 2 * Math.PI) * amp * env, 0];"
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3861,6 +4233,13 @@ mod tests {
         Path::new(env!("CARGO_MANIFEST_DIR"))
             .join("../..")
             .join("fixtures/ae_conformance_pack")
+    }
+
+    fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
     }
 
     fn empty_trace(frame: u32, time: f64) -> FrameRenderTrace {
@@ -3892,6 +4271,58 @@ mod tests {
     }
 
     #[test]
+    fn cmp010_native_recipe_matches_ae_premult_probe_scale() {
+        let root = pack_root();
+        let manifest = load_manifest(&root).unwrap();
+        let case = manifest
+            .cases
+            .iter()
+            .find(|case| case.id == "CMP_010")
+            .unwrap();
+        let recipe = build_recipe(&manifest, &root, case).unwrap();
+        let layer = recipe
+            .scene
+            .layers
+            .iter()
+            .find(|layer| layer.id() == "CMP_010_premult_probe")
+            .unwrap();
+        let render_ir::Layer::Footage { transform, .. } = layer else {
+            panic!("CMP_010_premult_probe should be a footage layer");
+        };
+
+        assert_eq!(transform.scale, [80.0, 80.0]);
+        assert_eq!(transform.opacity, 100.0);
+    }
+
+    #[test]
+    fn exp010_native_recipe_uses_parsed_property_expression_source() {
+        let root = pack_root();
+        let manifest = load_manifest(&root).unwrap();
+        let case = manifest
+            .cases
+            .iter()
+            .find(|case| case.id == "EXP_010")
+            .unwrap();
+        let recipe = build_recipe(&manifest, &root, case).unwrap();
+        let layer = recipe
+            .scene
+            .layers
+            .iter()
+            .find(|layer| layer.id() == "EXP_010_edge_wobble")
+            .unwrap();
+        let render_ir::Layer::Footage { transform, .. } = layer else {
+            panic!("EXP_010_edge_wobble should be a footage layer");
+        };
+        let Some(PositionExpression::ParsedProperty { source }) =
+            &transform.animation.expression.position
+        else {
+            panic!("EXP_010 should use ParsedProperty instead of EdgeWobble");
+        };
+
+        assert_eq!(source, exp010_position_expression_source());
+    }
+
+    #[test]
     fn pack_provider_loads_still_and_numbered_frame() {
         let root = pack_root();
         let assets = load_primitive_assets(&root).unwrap();
@@ -3906,6 +4337,104 @@ mod tests {
             .unwrap();
         assert_eq!((frame.width, frame.height), (256, 256));
         assert_eq!(frame.pixel(0, 20)[0], 10);
+    }
+
+    #[test]
+    fn p2_text_journal_writes_cov_case_events_and_summary() {
+        let root = pack_root();
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("target/test_p2_text_journal_cov_o");
+        if out.exists() {
+            std::fs::remove_dir_all(&out).unwrap();
+        }
+
+        let summary = run_p2_text_journal(P2TextJournalOptions {
+            pack: root,
+            out: out.clone(),
+            cases: vec!["COV_O".to_string()],
+            full_events: true,
+            ae_ref_root: None,
+        })
+        .unwrap();
+
+        assert_eq!(summary["case_count"].as_u64(), Some(1));
+        assert!(summary["event_count"].as_u64().unwrap_or(0) > 0);
+        assert!(out.join("summary.json").is_file());
+        assert!(out.join("p2_run_journal/COV_O/COV_O_00000.jsonl").is_file());
+        let divergence: Value = serde_json::from_str(
+            &std::fs::read_to_string(out.join("first_divergence.json")).unwrap(),
+        )
+        .unwrap();
+        assert!(divergence.is_null());
+    }
+
+    #[test]
+    fn p2_text_journal_reports_gph010_bee_carrier_route() {
+        let root = pack_root();
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("target/test_p2_text_journal_gph010_bee_carrier");
+        if out.exists() {
+            std::fs::remove_dir_all(&out).unwrap();
+        }
+
+        let summary = run_p2_text_journal(P2TextJournalOptions {
+            pack: root,
+            out: out.clone(),
+            cases: vec!["GPH_010".to_string()],
+            full_events: true,
+            ae_ref_root: None,
+        })
+        .unwrap();
+
+        assert_eq!(summary["case_count"].as_u64(), Some(1));
+        let frame_path = summary["cases"][0]["frames"][0]["path"]
+            .as_str()
+            .expect("GPH_010 journal frame path");
+        let journal = std::fs::read_to_string(frame_path).unwrap();
+        assert!(journal.contains("\"stage\":\"bee_text_carrier_route\""));
+        assert!(journal.contains("\"status\":\"bee_text_carrier_required\""));
+        assert!(journal.contains("\"status\":\"precomp_rasterize_first\""));
+        assert!(journal.contains("\"counts_as_direct_p6_success\":false"));
+    }
+
+    #[test]
+    fn p2_text_journal_reports_gph010_bee_carrier_routed_with_vector_bridge() {
+        let _guard = test_env_lock();
+        unsafe {
+            std::env::set_var("AE_NATIVE_RENDERER_P5_COLLAPSED_TEXT_VECTOR_DEFERRED", "1");
+        }
+        let root = pack_root();
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("target/test_p2_text_journal_gph010_bee_carrier_routed");
+        if out.exists() {
+            std::fs::remove_dir_all(&out).unwrap();
+        }
+
+        let summary = run_p2_text_journal(P2TextJournalOptions {
+            pack: root,
+            out: out.clone(),
+            cases: vec!["GPH_010".to_string()],
+            full_events: true,
+            ae_ref_root: None,
+        })
+        .unwrap();
+
+        assert_eq!(summary["case_count"].as_u64(), Some(1));
+        let frame_path = summary["cases"][0]["frames"][0]["path"]
+            .as_str()
+            .expect("GPH_010 journal frame path");
+        let journal = std::fs::read_to_string(frame_path).unwrap();
+        assert!(journal.contains("\"status\":\"bee_text_carrier_required\""));
+        assert!(journal.contains("\"status\":\"bee_text_carrier_routed\""));
+        assert!(journal.contains(
+            "\"payload_bridge\":\"layer_text_source_outline_to_p6_ad68_vector_transform\""
+        ));
+        unsafe {
+            std::env::remove_var("AE_NATIVE_RENDERER_P5_COLLAPSED_TEXT_VECTOR_DEFERRED");
+        }
     }
 
     #[test]

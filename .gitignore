@@ -3,6 +3,8 @@
 Cargo.lock
 .DS_Store
 .env
+.venv/
+venv/
 jobs/*/out
 jobs/*/tmp
 *.mp4

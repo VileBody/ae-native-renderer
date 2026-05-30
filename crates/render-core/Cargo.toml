@@ -13,3 +13,4 @@ raster-cpu = { path = "../raster-cpu" }
 transform-math = { path = "../transform-math" }
 text-engine = { path = "../text-engine" }
 effects = { path = "../effects" }
+expression-engine = { path = "../expression-engine" }

@@ -9,6 +9,37 @@ use crate::{
     load_font_with_telemetry, FontResolutionSource, FontResolutionTelemetry, GlyphInstance,
 };
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RenderPlacementMode {
+    Fontdue,
+    MetricPen,
+    SourceRectPen,
+    SourceRectBbox,
+    GridCharShapedPen,
+    GridCharShapedSourceRectOrigin,
+}
+
+fn render_placement_mode() -> RenderPlacementMode {
+    #[cfg(debug_assertions)]
+    {
+        match std::env::var("AE_NATIVE_M05_RENDER_PLACEMENT").as_deref() {
+            Ok("fontdue") => RenderPlacementMode::Fontdue,
+            Ok("metric_pen") => RenderPlacementMode::MetricPen,
+            Ok("source_rect_pen") => RenderPlacementMode::SourceRectPen,
+            Ok("source_rect_bbox") => RenderPlacementMode::SourceRectBbox,
+            Ok("gridchar_shaped_pen") => RenderPlacementMode::GridCharShapedPen,
+            Ok("gridchar_shaped_source_rect_origin") => {
+                RenderPlacementMode::GridCharShapedSourceRectOrigin
+            }
+            _ => RenderPlacementMode::GridCharShapedPen,
+        }
+    }
+    #[cfg(not(debug_assertions))]
+    {
+        RenderPlacementMode::GridCharShapedPen
+    }
+}
+
 #[derive(Debug, Clone)]
 pub struct TextLayoutRequest {
     pub text: String,
@@ -234,6 +265,7 @@ fn layout_with_font(
     let mut word_index = 0usize;
     let mut in_word = false;
     let mut seen_word = false;
+    let placement_mode = render_placement_mode();
 
     for (line_index, line) in lines.iter().enumerate() {
         let render_line_width = measure_line_fontdue(font, line, req.font_size);
@@ -242,12 +274,22 @@ fn layout_with_font(
         let source_rect_metrics = metric_bytes.as_deref().and_then(|bytes| {
             source_rect_line_metrics(bytes, cooltype_face.as_ref(), line, req.font_size)
         });
+        let shaped_line_metrics = metric_bytes.as_deref().and_then(|bytes| {
+            cooltype_face
+                .as_ref()
+                .and_then(|face| shape_line_metrics(bytes, face, line, req.font_size, baseline))
+        });
         let telemetry_line_width = source_rect_metrics
             .as_ref()
             .map(|metrics| metrics.line.width)
             .unwrap_or(metric_line_width);
+        let shaped_line_width = shaped_line_metrics
+            .as_ref()
+            .map(|metrics| metrics.advance_width)
+            .unwrap_or(metric_line_width);
         let render_line_origin_x = line_start_x(box_rect, render_line_width);
         let metric_line_origin_x = line_start_x(box_rect, telemetry_line_width);
+        let shaped_line_origin_x = line_start_x(box_rect, shaped_line_width);
         let mut render_pen_x = render_line_origin_x;
         let mut metric_pen_x = line_start_x(box_rect, metric_line_width);
         let mut line_glyph_bbox = None;
@@ -282,8 +324,18 @@ fn layout_with_font(
                 baseline,
                 render_advance,
             );
-            let font_glyph_id = metrics.font_glyph_id;
             let bbox = metrics.bbox;
+            let shaped_metric = shaped_line_metrics
+                .as_ref()
+                .and_then(|line| line.glyphs.get(local_index))
+                .and_then(|glyph| glyph.as_ref());
+            let font_glyph_id = match (placement_mode, shaped_metric) {
+                (RenderPlacementMode::GridCharShapedPen, Some(shaped))
+                | (RenderPlacementMode::GridCharShapedSourceRectOrigin, Some(shaped)) => {
+                    shaped.font_glyph_id
+                }
+                _ => metrics.font_glyph_id,
+            };
             let telemetry_bbox = source_rect_metrics
                 .as_ref()
                 .and_then(|source| {
@@ -301,15 +353,40 @@ fn layout_with_font(
             let telemetry_advance = telemetry_bbox[2].max(0.0);
             let bbox_center = glyph_bbox_center(telemetry_bbox);
             let glyph_run_index = glyphs.len();
+            let (glyph_x, glyph_y, glyph_advance, glyph_bbox) = match placement_mode {
+                RenderPlacementMode::Fontdue => {
+                    (render_pen_x, render_bbox[1], render_advance, render_bbox)
+                }
+                RenderPlacementMode::MetricPen => (metric_pen_x, bbox[1], metrics.advance, bbox),
+                RenderPlacementMode::SourceRectPen => {
+                    let pen_x = metrics
+                        .bbox_scaled
+                        .map(|scaled| telemetry_bbox[0] - scaled[0])
+                        .unwrap_or(telemetry_bbox[0]);
+                    (pen_x, bbox[1], telemetry_advance, telemetry_bbox)
+                }
+                RenderPlacementMode::SourceRectBbox => (
+                    telemetry_bbox[0],
+                    telemetry_bbox[1],
+                    telemetry_advance,
+                    telemetry_bbox,
+                ),
+                RenderPlacementMode::GridCharShapedPen => shaped_metric
+                    .map(|shaped| shaped.shifted(shaped_line_origin_x))
+                    .unwrap_or((render_pen_x, render_bbox[1], render_advance, render_bbox)),
+                RenderPlacementMode::GridCharShapedSourceRectOrigin => shaped_metric
+                    .map(|shaped| shaped.shifted(metric_line_origin_x))
+                    .unwrap_or((render_pen_x, render_bbox[1], render_advance, render_bbox)),
+            };
             let glyph = GlyphInstance {
                 glyph_id: font_glyph_id as u32,
                 char_index: char_offset + local_index,
                 word_index,
                 line_index,
-                x: render_pen_x,
-                y: render_bbox[1],
-                advance: render_advance,
-                bbox: render_bbox,
+                x: glyph_x,
+                y: glyph_y,
+                advance: glyph_advance,
+                bbox: glyph_bbox,
             };
             line_glyph_bbox = union_visible_optional_bbox(line_glyph_bbox, telemetry_bbox);
             glyph_count += 1;
@@ -478,9 +555,69 @@ fn measure_source_rect(
     }
 }
 
-pub(crate) fn first_baseline(box_rect: [f32; 4], line_height: f32, line_count: usize) -> f32 {
-    let block_offset = line_height * line_count.saturating_sub(1) as f32 * 0.5;
-    box_rect[1] + box_rect[3] * 0.5 - block_offset
+fn shape_line_metrics(
+    font_bytes: &[u8],
+    face: &Face<'_>,
+    line: &str,
+    font_size: f32,
+    baseline: f32,
+) -> Option<ShapedLineMetrics> {
+    let buzz_face = BuzzFace::from_slice(font_bytes, 0)?;
+    let units_per_em = face.units_per_em() as f32;
+    if units_per_em <= 0.0 {
+        return None;
+    }
+    let scale = font_size / units_per_em;
+    let mut buffer = UnicodeBuffer::new();
+    buffer.set_cluster_level(BufferClusterLevel::Characters);
+    for (index, ch) in line.chars().enumerate() {
+        buffer.add(ch, index as u32);
+    }
+    buffer.guess_segment_properties();
+    let shaped = rustybuzz::shape(&buzz_face, &[], buffer);
+    let char_count = line.chars().count();
+    let mut glyphs = vec![None; char_count];
+    let mut pen_x = 0.0f32;
+
+    for (info, position) in shaped.glyph_infos().iter().zip(shaped.glyph_positions()) {
+        let local_index = info.cluster as usize;
+        if local_index >= char_count || glyphs[local_index].is_some() {
+            return None;
+        }
+        let glyph_id = GlyphId(info.glyph_id as u16);
+        let origin_x = pen_x + position.x_offset as f32 * scale;
+        let y_offset = -(position.y_offset as f32) * scale;
+        let advance = position.x_advance as f32 * scale;
+        let bbox = if let Some(rect) = face.glyph_bounding_box(glyph_id) {
+            let scaled = ttf_rect_to_scaled_cooltype_bbox(rect, scale);
+            [
+                origin_x + scaled[0],
+                baseline + y_offset + scaled[1],
+                (scaled[2] - scaled[0]).max(0.0),
+                (scaled[3] - scaled[1]).max(0.0),
+            ]
+        } else {
+            [origin_x, baseline + y_offset, 0.0, 0.0]
+        };
+        glyphs[local_index] = Some(ShapedGlyphMetric {
+            font_glyph_id: glyph_id_to_u32(glyph_id),
+            origin_x,
+            y: bbox[1],
+            advance,
+            bbox,
+        });
+        pen_x += advance;
+    }
+
+    Some(ShapedLineMetrics {
+        advance_width: pen_x.max(0.0),
+        glyphs,
+    })
+}
+
+pub(crate) fn first_baseline(box_rect: [f32; 4], _line_height: f32, _line_count: usize) -> f32 {
+    // AE point text anchors the first line baseline; multiline lines advance downward.
+    box_rect[1] + box_rect[3] * 0.5
 }
 
 pub(crate) fn line_start_x(box_rect: [f32; 4], line_width: f32) -> f32 {
@@ -551,6 +688,37 @@ struct SourceRectMeasure {
 struct SourceRectLineMetrics {
     line: SourceRectMeasure,
     prefix_widths: Vec<f32>,
+}
+
+#[derive(Debug, Clone)]
+struct ShapedGlyphMetric {
+    font_glyph_id: u32,
+    origin_x: f32,
+    y: f32,
+    advance: f32,
+    bbox: [f32; 4],
+}
+
+impl ShapedGlyphMetric {
+    fn shifted(&self, line_origin_x: f32) -> (f32, f32, f32, [f32; 4]) {
+        (
+            line_origin_x + self.origin_x,
+            self.y,
+            self.advance,
+            [
+                line_origin_x + self.bbox[0],
+                self.bbox[1],
+                self.bbox[2],
+                self.bbox[3],
+            ],
+        )
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ShapedLineMetrics {
+    advance_width: f32,
+    glyphs: Vec<Option<ShapedGlyphMetric>>,
 }
 
 fn glyph_metrics(
@@ -909,7 +1077,7 @@ mod tests {
     }
 
     #[test]
-    fn real_layout_centers_multiline_block_with_ae_auto_leading() {
+    fn real_layout_places_multiline_point_text_from_first_baseline() {
         let Some(path) = point_light_fixture() else {
             return;
         };
@@ -923,8 +1091,8 @@ mod tests {
         .unwrap();
 
         assert_approx(layout.telemetry.line_height, font_size * 1.2);
-        assert_approx(layout.telemetry.line_boxes[0].baseline, 28.0);
-        assert_approx(layout.telemetry.line_boxes[1].baseline, 52.0);
+        assert_approx(layout.telemetry.line_boxes[0].baseline, 40.0);
+        assert_approx(layout.telemetry.line_boxes[1].baseline, 64.0);
     }
 
     #[test]
@@ -1006,8 +1174,8 @@ mod tests {
         assert_approx(glyph.bbox_scaled.unwrap()[0], 5.742);
         assert_approx(glyph.bbox[2], 65.018);
 
-        // Raster placement remains on the previous fontdue bitmap bbox until
-        // CoolType raster coverage/glyph ids are probed deeply enough.
+        // Raster placement now follows the GridChar-shaped pen lane; passport
+        // sourceRect geometry remains separate selector/telemetry evidence.
         assert_ne!(layout.glyphs[0].bbox, glyph.bbox);
         assert_approx(layout.glyphs[0].advance, glyph.advance);
     }
@@ -1031,7 +1199,7 @@ mod tests {
         assert_approx_eps(glyphs[4].advance, 0.0, 0.001);
         assert_approx_eps(glyphs[5].advance, 59.739991, 0.001);
         assert_approx_eps(glyphs[0].bbox[0], 28.466008, 0.001);
-        assert_approx_eps(glyphs[0].bbox[1], 179.903999, 0.001);
+        assert_approx_eps(glyphs[0].bbox[1], 214.703999, 0.001);
         assert_approx_eps(glyphs[0].bbox[3], 41.992001, 0.001);
     }
 
