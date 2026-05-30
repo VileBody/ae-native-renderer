@@ -20,7 +20,7 @@ pub const GEOMETRY2_CASE: Phase4Case = Phase4Case {
 
 pub const TURBULENT_DISPLACE_CASE: Phase4Case = Phase4Case {
     id: "EFF_060",
-    frames: &[0, 15, 30, 45],
+    frames: &[0, 1, 15, 30, 45, 59],
     checkpoints: &[
         "params",
         "noise",
@@ -123,6 +123,18 @@ mod tests {
         let manifest = conformance_manifest();
         let width = manifest["composition"]["width"].as_u64().unwrap() as u32;
         let height = manifest["composition"]["height"].as_u64().unwrap() as u32;
+        let missing = missing_phase4_goldens();
+        if !missing.is_empty() {
+            if !crate::ae_png_goldens_required() {
+                eprintln!(
+                    "skipping phase4 AE PNG golden load test: {} files missing; set {}=1 to require checked-in goldens",
+                    missing.len(),
+                    crate::REQUIRE_AE_PNG_GOLDENS_ENV
+                );
+                return;
+            }
+            panic!("missing phase4 AE PNG goldens: {:?}", missing);
+        }
 
         for phase_case in phase4_cases() {
             for frame in phase_case.frames {
@@ -141,6 +153,21 @@ mod tests {
                 );
             }
         }
+    }
+
+    fn missing_phase4_goldens() -> Vec<PathBuf> {
+        phase4_cases()
+            .into_iter()
+            .flat_map(|phase_case| {
+                phase_case.frames.iter().map(move |frame| {
+                    repo_path(&format!(
+                        "{PACK_ROOT}/ae_goldens/png/{0}/{0}_{1:05}.png",
+                        phase_case.id, frame
+                    ))
+                })
+            })
+            .filter(|path| !path.is_file())
+            .collect()
     }
 
     #[test]

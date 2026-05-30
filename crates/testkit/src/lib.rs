@@ -14,6 +14,19 @@ pub mod phase5;
 pub mod telemetry;
 pub mod temporal;
 
+pub const REQUIRE_AE_PNG_GOLDENS_ENV: &str = "AE_NATIVE_REQUIRE_AE_PNG_GOLDENS";
+
+pub fn ae_png_goldens_required() -> bool {
+    std::env::var(REQUIRE_AE_PNG_GOLDENS_ENV)
+        .ok()
+        .is_some_and(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on" | "required" | "strict"
+            )
+        })
+}
+
 pub use conformance::*;
 pub use fixtures::*;
 pub use hypothesis::*;
