@@ -1,4 +1,5 @@
 pub mod adjustment_layer;
+pub mod bee_text_carrier;
 pub mod collapse;
 pub mod composition;
 pub mod expressions;

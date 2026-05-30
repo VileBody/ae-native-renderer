@@ -1,5 +1,6 @@
 use crate::{
-    accumulate_75d0_for_sample_x, build_95cc_interval_list, build_e854_working_set,
+    accumulate_75d0_for_sample_x, build_95cc_interval_list,
+    build_95cc_scanline_interval_list_from_source, build_e854_working_set,
     build_native_debug_crossing_lists_for_row, build_native_row_event_crossing_lists_for_row,
     classify_edge_pair_candidate, Are95ccStateClass, AreActiveEdge, AreBezierSourcePathInput,
     AreContourClose, AreCrossingListError, AreDescriptorCursorPolicy, AreDescriptorTriplet,
@@ -341,13 +342,64 @@ pub fn build_materializer_input_from_source(
 ) -> Result<AreSamplerMaterializerInput, AreSamplerMaterializationError> {
     let working_set =
         build_e854_working_set(source_input).map_err(AreSamplerMaterializationError::Source)?;
-    let interval_list =
-        build_95cc_interval_list(&working_set).map_err(AreSamplerMaterializationError::Interval)?;
+    let interval_list = if use_scanline_95cc_for_source(source_input) {
+        build_95cc_scanline_interval_list_from_source(source_input, &working_set)
+            .map_err(AreSamplerMaterializationError::Interval)?
+    } else {
+        build_95cc_interval_list(&working_set).map_err(AreSamplerMaterializationError::Interval)?
+    };
     Ok(AreSamplerMaterializerInput::source_owned(
         source_input.clone(),
         working_set,
         interval_list,
     ))
+}
+
+fn use_scanline_95cc_for_source(source_input: &AreBezierSourcePathInput) -> bool {
+    matches!(
+        source_input.provenance,
+        AreSourcePathProvenance::SourceOwnedGlyphPath
+            | AreSourcePathProvenance::SourceOwnedGlyphRun
+    ) && source_has_closed_contour(source_input)
+}
+
+fn source_has_closed_contour(source_input: &AreBezierSourcePathInput) -> bool {
+    let mut contour_start = None;
+    let mut contour_id = None;
+    let mut last_endpoint = None;
+
+    for segment in &source_input.segments {
+        if segment.is_close_boundary || segment.verb == ArePathVerb::Close {
+            return true;
+        }
+
+        if contour_id != Some(segment.contour_id) {
+            if contour_start
+                .zip(last_endpoint)
+                .is_some_and(|(start, end)| points_close(start, end))
+            {
+                return true;
+            }
+            contour_id = Some(segment.contour_id);
+            contour_start = segment.previous_point.or(Some(segment.endpoint));
+            last_endpoint = None;
+        }
+
+        if segment.previous_point.is_none() {
+            contour_start = Some(segment.endpoint);
+        } else {
+            last_endpoint = Some(segment.endpoint);
+        }
+    }
+
+    contour_start
+        .zip(last_endpoint)
+        .is_some_and(|(start, end)| points_close(start, end))
+}
+
+fn points_close(left: ArePathPoint, right: ArePathPoint) -> bool {
+    const EPSILON: f32 = 0.001;
+    (left.x - right.x).abs() <= EPSILON && (left.y - right.y).abs() <= EPSILON
 }
 
 pub fn materialize_95cc_intervals(
@@ -2272,6 +2324,26 @@ mod materializer_tests {
         )
     }
 
+    fn closed_glyph_rectangle_without_close_verb() -> AreBezierSourcePathInput {
+        AreBezierSourcePathInput::source_owned_glyph_path(
+            vec![
+                ArePathPoint::new(1.0, 0.0),
+                ArePathPoint::new(5.0, 0.0),
+                ArePathPoint::new(5.0, 3.0),
+                ArePathPoint::new(1.0, 3.0),
+                ArePathPoint::new(1.0, 0.0),
+            ],
+            vec![
+                ArePathVerb::MoveTo,
+                ArePathVerb::LineTo,
+                ArePathVerb::LineTo,
+                ArePathVerb::LineTo,
+                ArePathVerb::LineTo,
+            ],
+            crate::ArePathTransform::identity(),
+        )
+    }
+
     fn quadratic_cap_source() -> AreBezierSourcePathInput {
         let start = ArePathPoint::new(0.0, 0.0);
         let control = ArePathPoint::new(1.0, 2.0);
@@ -2861,6 +2933,23 @@ mod materializer_tests {
             interval.state_hint.unwrap().state_class,
             Are95ccStateClass::Class1
         );
+    }
+
+    #[test]
+    fn closed_glyph_contour_without_close_verb_uses_scanline_95cc() {
+        let source_input = closed_glyph_rectangle_without_close_verb();
+        assert!(source_input
+            .segments
+            .iter()
+            .all(|segment| !segment.is_close_boundary && segment.verb != ArePathVerb::Close));
+
+        let input = input_from_source(&source_input);
+        let row = input.interval_list.row(1).unwrap();
+
+        assert_eq!(row.runs.len(), 1);
+        assert_eq!(row.runs[0].current_x, 1);
+        assert_eq!(row.runs[0].next_x, 5);
+        assert!(row.runs[0].materialize_candidate);
     }
 
     #[test]

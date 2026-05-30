@@ -399,6 +399,32 @@ fn p2_text_journal_events_from_trace(
             out.push(event);
         }
     }
+    for record in &trace.collapse {
+        let layer_id = record
+            .get("layer_id")
+            .and_then(Value::as_str)
+            .unwrap_or("unknown_collapse_layer");
+        let composition = record
+            .get("composition")
+            .and_then(Value::as_str)
+            .unwrap_or("");
+        let stage = if record.get("mode").and_then(Value::as_str) == Some("bee_text_carrier_route")
+        {
+            "bee_text_carrier_route"
+        } else {
+            "collapse_trace"
+        };
+        out.push(p2_synthetic_journal_event(
+            case_id,
+            frame,
+            trace.time,
+            layer_id,
+            composition,
+            out.len() as u64,
+            stage,
+            record.clone(),
+        ));
+    }
     out
 }
 
@@ -4209,6 +4235,13 @@ mod tests {
             .join("fixtures/ae_conformance_pack")
     }
 
+    fn test_env_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::OnceLock<std::sync::Mutex<()>> = std::sync::OnceLock::new();
+        LOCK.get_or_init(|| std::sync::Mutex::new(()))
+            .lock()
+            .unwrap_or_else(|err| err.into_inner())
+    }
+
     fn empty_trace(frame: u32, time: f64) -> FrameRenderTrace {
         FrameRenderTrace {
             frame,
@@ -4334,6 +4367,74 @@ mod tests {
         )
         .unwrap();
         assert!(divergence.is_null());
+    }
+
+    #[test]
+    fn p2_text_journal_reports_gph010_bee_carrier_route() {
+        let root = pack_root();
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("target/test_p2_text_journal_gph010_bee_carrier");
+        if out.exists() {
+            std::fs::remove_dir_all(&out).unwrap();
+        }
+
+        let summary = run_p2_text_journal(P2TextJournalOptions {
+            pack: root,
+            out: out.clone(),
+            cases: vec!["GPH_010".to_string()],
+            full_events: true,
+            ae_ref_root: None,
+        })
+        .unwrap();
+
+        assert_eq!(summary["case_count"].as_u64(), Some(1));
+        let frame_path = summary["cases"][0]["frames"][0]["path"]
+            .as_str()
+            .expect("GPH_010 journal frame path");
+        let journal = std::fs::read_to_string(frame_path).unwrap();
+        assert!(journal.contains("\"stage\":\"bee_text_carrier_route\""));
+        assert!(journal.contains("\"status\":\"bee_text_carrier_required\""));
+        assert!(journal.contains("\"status\":\"precomp_rasterize_first\""));
+        assert!(journal.contains("\"counts_as_direct_p6_success\":false"));
+    }
+
+    #[test]
+    fn p2_text_journal_reports_gph010_bee_carrier_routed_with_vector_bridge() {
+        let _guard = test_env_lock();
+        unsafe {
+            std::env::set_var("AE_NATIVE_RENDERER_P5_COLLAPSED_TEXT_VECTOR_DEFERRED", "1");
+        }
+        let root = pack_root();
+        let out = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../..")
+            .join("target/test_p2_text_journal_gph010_bee_carrier_routed");
+        if out.exists() {
+            std::fs::remove_dir_all(&out).unwrap();
+        }
+
+        let summary = run_p2_text_journal(P2TextJournalOptions {
+            pack: root,
+            out: out.clone(),
+            cases: vec!["GPH_010".to_string()],
+            full_events: true,
+            ae_ref_root: None,
+        })
+        .unwrap();
+
+        assert_eq!(summary["case_count"].as_u64(), Some(1));
+        let frame_path = summary["cases"][0]["frames"][0]["path"]
+            .as_str()
+            .expect("GPH_010 journal frame path");
+        let journal = std::fs::read_to_string(frame_path).unwrap();
+        assert!(journal.contains("\"status\":\"bee_text_carrier_required\""));
+        assert!(journal.contains("\"status\":\"bee_text_carrier_routed\""));
+        assert!(journal.contains(
+            "\"payload_bridge\":\"layer_text_source_outline_to_p6_ad68_vector_transform\""
+        ));
+        unsafe {
+            std::env::remove_var("AE_NATIVE_RENDERER_P5_COLLAPSED_TEXT_VECTOR_DEFERRED");
+        }
     }
 
     #[test]

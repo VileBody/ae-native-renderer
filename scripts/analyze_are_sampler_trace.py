@@ -78,9 +78,46 @@ def compact_edge(edge: Any) -> dict[str, Any] | None:
         "projected_min": edge.get("projected_min_0x28_f32"),
         "projected_max": edge.get("projected_max_0x2c_f32"),
         "dirty": edge.get("dirty_0x30_u8"),
+        "winding_flag": edge.get("winding_flag_0x33_s8"),
         "slope_or_sentinel": edge.get("slope_or_sentinel_0x34_f32"),
         "word0_0x0": compact_words(edge.get("words"), {0, 8, 16}),
     }
+
+
+def compact_command_queue(command_queue: Any) -> dict[str, Any] | None:
+    if not isinstance(command_queue, dict):
+        return None
+    ctx = command_queue.get("command_ctx_arg1")
+    row_ctx = command_queue.get("row_add_ctx_arg1")
+    out: dict[str, Any] = {
+        "phase": command_queue.get("phase"),
+        "hook": command_queue.get("hook"),
+        "regs": command_queue.get("regs"),
+        "edge_arg2": compact_edge(command_queue.get("edge_arg2")),
+        "edge_arg2_peer_0x10": compact_edge(command_queue.get("edge_arg2_peer_0x10")),
+        "vector_arg1": command_queue.get("vector_arg1"),
+        "edge_slot_arg2": command_queue.get("edge_slot_arg2"),
+    }
+    if isinstance(ctx, dict):
+        out["command_ctx"] = {
+            "ptr": ctx.get("ptr"),
+            "first_0xe0": ctx.get("first_0xe0"),
+            "last_0xe8": ctx.get("last_0xe8"),
+            "first_edge": compact_edge(ctx.get("first_edge")),
+            "last_edge": compact_edge(ctx.get("last_edge")),
+            "queue_0x90": ctx.get("queue_0x90"),
+            "current_point_0xd4": ctx.get("current_point_0xd4"),
+            "previous_point_0x10c": ctx.get("previous_point_0x10c"),
+            "flags": ctx.get("flags"),
+        }
+    if isinstance(row_ctx, dict):
+        out["row_add_ctx"] = row_ctx
+    edge_candidates = command_queue.get("edge_candidates")
+    if isinstance(edge_candidates, dict):
+        out["edge_candidates"] = {
+            key: compact_edge(value) for key, value in edge_candidates.items()
+        }
+    return out
 
 
 def compact_bucket(bucket: Any) -> dict[str, Any] | None:
@@ -192,6 +229,35 @@ def compact_event(event: dict[str, Any], phase: str, body: dict[str, Any]) -> di
     }
 
 
+def compact_active_edge_hook(active_edge: Any) -> dict[str, Any] | None:
+    if not isinstance(active_edge, dict):
+        return None
+    out = {
+        "phase": active_edge.get("phase"),
+        "hook": active_edge.get("hook"),
+        "regs": active_edge.get("regs"),
+        "rcx_edge_candidate": compact_edge(active_edge.get("rcx_edge_candidate")),
+        "rdx_edge_candidate": compact_edge(active_edge.get("rdx_edge_candidate")),
+        "r8_edge_candidate": compact_edge(active_edge.get("r8_edge_candidate")),
+        "r9_edge_candidate": compact_edge(active_edge.get("r9_edge_candidate")),
+    }
+    for key in [
+        "rcx_active_list_candidates",
+        "rdx_active_list_candidates",
+        "r8_active_list_candidates",
+        "r9_active_list_candidates",
+    ]:
+        values = []
+        for edge in active_edge.get(key) or []:
+            if not isinstance(edge, dict):
+                continue
+            if len(values) >= 12:
+                break
+            values.append(compact_edge(edge) or edge)
+        out[key] = values
+    return out
+
+
 def hex_slice(hex_value: str | None, start: int, end: int) -> str | None:
     if not isinstance(hex_value, str) or end <= start:
         return None
@@ -288,6 +354,10 @@ def analyze(path: Path, event_limit: int) -> dict[str, Any]:
     row_getters: list[dict[str, Any]] = []
     row_getter_rows: list[dict[str, Any]] = []
     edge_inserts: list[dict[str, Any]] = []
+    active_edge_events: list[dict[str, Any]] = []
+    event_builders: list[dict[str, Any]] = []
+    event_writes: list[dict[str, Any]] = []
+    command_queue_events: list[dict[str, Any]] = []
 
     edge_projection_ranges: Counter[tuple[Any, Any, Any, Any, Any, Any]] = Counter()
     coverage_values: Counter[tuple[Any, Any, Any, Any, Any]] = Counter()
@@ -391,6 +461,33 @@ def analyze(path: Path, event_limit: int) -> dict[str, Any]:
             if len(edge_inserts) < event_limit:
                 edge_inserts.append(compact_event(event, phase, {"node_arg3": compact_edge(edge)}))
 
+        elif hook in {"ARE_active_edge_bucket_insert_726c", "ARE_active_edge_drain_b944"}:
+            active_edge = compact_active_edge_hook(sampler_payload.get("active_edge"))
+            if active_edge is not None and len(active_edge_events) < event_limit:
+                active_edge_events.append(compact_event(event, phase, {"active_edge": active_edge}))
+
+        elif hook == "ARE_bucket_insert_or_update_430c":
+            builder = sampler_payload.get("event_builder")
+            if isinstance(builder, dict) and len(event_builders) < event_limit:
+                event_builders.append(compact_event(event, phase, {"event_builder": builder}))
+
+        elif isinstance(hook, str) and hook.startswith("ARE_event_"):
+            event_writer = sampler_payload.get("event_writer")
+            if isinstance(event_writer, dict) and len(event_writes) < event_limit:
+                event_writes.append(compact_event(event, phase, {"event_writer": event_writer}))
+
+        elif hook in {
+            "ARE_contour_sibling_merge_7348",
+            "ARE_close_finalize_7d20",
+            "ARE_edge_vector_append_4afc",
+            "ARE_row_bucket_add_71f4",
+        }:
+            command_queue = compact_command_queue(sampler_payload.get("command_queue"))
+            if command_queue is not None and len(command_queue_events) < event_limit:
+                command_queue_events.append(
+                    compact_event(event, phase, {"command_queue": command_queue})
+                )
+
     row_getter_ink_rows = merge_ink_rows(row_getter_rows)
     return {
         "schema": "ae-native-renderer.are-sampler-trace-analysis.v1",
@@ -409,6 +506,10 @@ def analyze(path: Path, event_limit: int) -> dict[str, Any]:
         "prepare_events": prepares,
         "row_getters": row_getters,
         "edge_inserts": edge_inserts,
+        "active_edge_events": active_edge_events,
+        "event_builders": event_builders,
+        "event_writes": event_writes,
+        "command_queue_events": command_queue_events,
     }
 
 
@@ -431,6 +532,10 @@ def main() -> int:
                     "edge_project_pairs": len(result["edge_project_pairs"]),
                     "eval_rows": len(result["eval_rows"]),
                     "row_getters": len(result["row_getters"]),
+                    "active_edge_events": len(result["active_edge_events"]),
+                    "event_builders": len(result["event_builders"]),
+                    "event_writes": len(result["event_writes"]),
+                    "command_queue_events": len(result["command_queue_events"]),
                 }
             )
         )

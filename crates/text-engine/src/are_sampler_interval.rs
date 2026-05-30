@@ -1,5 +1,16 @@
-use crate::{AreSourcePathProvenance, AreSourceRecord32, AreSourceSamplerWorkingSet};
+use crate::{
+    accumulate_75d0_for_sample_x, build_crossing_lists_for_row, AreActiveEdge,
+    AreBezierSourcePathInput, AreFillRule, ArePathPoint, ArePathVerb, AreSourcePathProvenance,
+    AreSourceRecord32, AreSourceSamplerWorkingSet, AreSourceSegment, AreSourceSegmentKind,
+    ARE_FIXED_SUBPIXEL_SCALE,
+};
 use serde::{Deserialize, Serialize};
+
+const ARE_DB98_CURVE_MAX_DEPTH: u8 = 15;
+const ARE_DB98_FLATNESS: f32 = 1.0;
+const ARE_DB98_SHORT_CHORD_RATIO: f32 = 0.25;
+const ARE_DB98_TOLERANCE_SCALE: f32 = 1.0;
+const QUADRATIC_TO_CUBIC_CONTROL_SCALE: f32 = 2.0 / 3.0;
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct AreSamplerIntervalListInput {
@@ -115,6 +126,9 @@ pub struct AreSamplerListWorkingState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum AreIntervalBuildError {
     TypedSpanFallbackRejected,
+    RequiresSourceOwnedProvenance {
+        provenance: AreSourcePathProvenance,
+    },
     EmptyWorkingSet,
     InvalidBounds {
         x_min: i32,
@@ -126,6 +140,17 @@ pub enum AreIntervalBuildError {
         record_index: usize,
         current_x: i32,
         next_x: i32,
+    },
+    MissingSourceSegment {
+        record_index: usize,
+        source_point_index: usize,
+    },
+    UnsupportedCurveRequiresControlPoints {
+        record_index: usize,
+        source_point_index: usize,
+    },
+    ScanlineCrossingList {
+        row_y: i32,
     },
 }
 
@@ -139,6 +164,24 @@ pub fn build_95cc_interval_list_from_input(
     input: &AreSamplerIntervalListInput,
 ) -> Result<AreSamplerIntervalList, AreIntervalBuildError> {
     build_interval_list(&input.working_set, input.provenance)
+}
+
+pub fn build_95cc_scanline_interval_list_from_source(
+    source_input: &AreBezierSourcePathInput,
+    working_set: &AreSourceSamplerWorkingSet,
+) -> Result<AreSamplerIntervalList, AreIntervalBuildError> {
+    match source_input.provenance {
+        AreSourcePathProvenance::SourceOwned
+        | AreSourcePathProvenance::SourceOwnedGlyphPath
+        | AreSourcePathProvenance::SourceOwnedGlyphRun => {}
+        AreSourcePathProvenance::TypedSpanFallback => {
+            return Err(AreIntervalBuildError::TypedSpanFallbackRejected);
+        }
+        provenance => {
+            return Err(AreIntervalBuildError::RequiresSourceOwnedProvenance { provenance })
+        }
+    }
+    build_scanline_interval_list_from_source(source_input, working_set)
 }
 
 fn build_interval_list(
@@ -262,6 +305,422 @@ fn build_interval_list(
     })
 }
 
+fn build_scanline_interval_list_from_source(
+    source_input: &AreBezierSourcePathInput,
+    working_set: &AreSourceSamplerWorkingSet,
+) -> Result<AreSamplerIntervalList, AreIntervalBuildError> {
+    validate_working_set_bounds_and_records(working_set)?;
+
+    let scanline_edges = scanline_active_edges_from_source(source_input, working_set)?;
+    let mut rows = Vec::new();
+    let mut zero_width_records = Vec::new();
+    let mut emitted_boundary_count = 0;
+    let mut emitted_run_count = 0;
+    let row_end = interval_row_end(working_set);
+
+    for row_y in working_set.bounds.y_min..row_end {
+        let mut row = AreSamplerIntervalRow {
+            row_y,
+            boundaries: Vec::new(),
+            runs: Vec::new(),
+            is_empty_sentinel: false,
+        };
+
+        for (record_index, record) in working_set.records.iter().enumerate() {
+            if let Some(RowRecordClassification::ZeroWidth(record)) =
+                classify_record_for_row(record_index, record, row_y)?
+            {
+                zero_width_records.push(record);
+            }
+        }
+
+        let row_edges = scanline_edges
+            .iter()
+            .filter(|edge| active_edge_touches_row(&edge.edge, row_y))
+            .collect::<Vec<_>>();
+        if !row_edges.is_empty() {
+            let edges = row_edges
+                .iter()
+                .map(|edge| edge.edge.clone())
+                .collect::<Vec<_>>();
+            let crossings =
+                build_crossing_lists_for_row(row_y, &edges, AreFillRule::NonZeroWinding)
+                    .map_err(|_| AreIntervalBuildError::ScanlineCrossingList { row_y })?;
+            let source_record_indices = unique_record_indices(&row_edges);
+            let mut row_runs = Vec::new();
+            let mut current_start = None;
+
+            for x in working_set.bounds.x_min..working_set.bounds.x_max {
+                let coverage = accumulate_75d0_for_sample_x(&crossings, x)
+                    .map_err(|_| AreIntervalBuildError::ScanlineCrossingList { row_y })?
+                    .coverage
+                    .value_0x264;
+                if coverage > 0 {
+                    current_start.get_or_insert(x);
+                } else if let Some(start) = current_start.take() {
+                    push_scanline_run(&mut row_runs, start, x, &source_record_indices);
+                }
+            }
+            if let Some(start) = current_start.take() {
+                push_scanline_run(
+                    &mut row_runs,
+                    start,
+                    working_set.bounds.x_max,
+                    &source_record_indices,
+                );
+            }
+
+            for run in row_runs {
+                push_or_merge_run(&mut row.runs, run);
+            }
+        }
+
+        for run in &row.runs {
+            row.boundaries.push(AreSamplerIntervalBoundary {
+                x: run.current_x,
+                kind: AreSamplerIntervalBoundaryKind::Start,
+                tag: run.tag,
+                source_record_index: run.source_record_indices.first().copied(),
+            });
+            row.boundaries.push(AreSamplerIntervalBoundary {
+                x: run.next_x,
+                kind: AreSamplerIntervalBoundaryKind::End,
+                tag: run.tag,
+                source_record_index: run.source_record_indices.first().copied(),
+            });
+        }
+
+        if row.runs.is_empty() {
+            row.is_empty_sentinel = true;
+            row.boundaries.push(AreSamplerIntervalBoundary {
+                x: working_set.bounds.x_min,
+                kind: AreSamplerIntervalBoundaryKind::Sentinel,
+                tag: AreSamplerIntervalTag::Empty,
+                source_record_index: None,
+            });
+        }
+
+        emitted_boundary_count += row.boundaries.len();
+        emitted_run_count += row.runs.len();
+        rows.push(row);
+    }
+
+    Ok(AreSamplerIntervalList {
+        provenance: AreSourcePathProvenance::SourceOwned,
+        y_min: working_set.bounds.y_min,
+        y_max: working_set.bounds.y_max,
+        rows,
+        source_record_count: working_set.records.len(),
+        working_state: AreSamplerListWorkingState {
+            current_record_index: working_set.records.len(),
+            emitted_boundary_count,
+            emitted_run_count,
+            skipped_zero_width_record_count: zero_width_records.len(),
+        },
+        zero_width_policy: AreZeroWidthIntervalPolicy::SkipNonMaterialized,
+        zero_width_records,
+    })
+}
+
+fn validate_working_set_bounds_and_records(
+    working_set: &AreSourceSamplerWorkingSet,
+) -> Result<(), AreIntervalBuildError> {
+    if working_set.records.is_empty() {
+        return Err(AreIntervalBuildError::EmptyWorkingSet);
+    }
+    if working_set.bounds.x_max <= working_set.bounds.x_min
+        || working_set.bounds.y_max < working_set.bounds.y_min
+    {
+        return Err(AreIntervalBuildError::InvalidBounds {
+            x_min: working_set.bounds.x_min,
+            x_max: working_set.bounds.x_max,
+            y_min: working_set.bounds.y_min,
+            y_max: working_set.bounds.y_max,
+        });
+    }
+    for (record_index, record) in working_set.records.iter().enumerate() {
+        if record.max_x_0x10 < record.min_x_0x08 {
+            return Err(AreIntervalBuildError::InvalidIntervalOrder {
+                record_index,
+                current_x: record.min_x_0x08,
+                next_x: record.max_x_0x10,
+            });
+        }
+    }
+    Ok(())
+}
+
+fn interval_row_end(working_set: &AreSourceSamplerWorkingSet) -> i32 {
+    if working_set.bounds.y_max == working_set.bounds.y_min {
+        working_set.bounds.y_max + 1
+    } else {
+        working_set.bounds.y_max
+    }
+}
+
+struct ScanlineActiveEdge {
+    record_index: usize,
+    edge: AreActiveEdge,
+}
+
+fn scanline_active_edges_from_source(
+    source_input: &AreBezierSourcePathInput,
+    working_set: &AreSourceSamplerWorkingSet,
+) -> Result<Vec<ScanlineActiveEdge>, AreIntervalBuildError> {
+    let mut edges = Vec::new();
+    for (record_index, record) in working_set.records.iter().enumerate() {
+        let Some(segment) = working_set.source_segment_for_record(record) else {
+            return Err(AreIntervalBuildError::MissingSourceSegment {
+                record_index,
+                source_point_index: record.source_point_index_0x00,
+            });
+        };
+        let transformed = segment.transformed(source_input.transform);
+        for edge in active_edges_from_segment(record_index, &transformed)? {
+            edges.push(ScanlineActiveEdge { record_index, edge });
+        }
+    }
+    Ok(edges)
+}
+
+fn active_edges_from_segment(
+    record_index: usize,
+    segment: &AreSourceSegment,
+) -> Result<Vec<AreActiveEdge>, AreIntervalBuildError> {
+    let Some(start) = segment.previous_point else {
+        return Err(AreIntervalBuildError::MissingSourceSegment {
+            record_index,
+            source_point_index: segment.source_point_index,
+        });
+    };
+    match segment.verb {
+        ArePathVerb::LineTo | ArePathVerb::Close => {
+            Ok(push_line_active_edge(start, segment.endpoint)
+                .into_iter()
+                .collect())
+        }
+        ArePathVerb::QuadTo | ArePathVerb::CubicTo => {
+            active_edges_from_curve_segment(record_index, segment, start)
+        }
+        ArePathVerb::MoveTo | ArePathVerb::Unknown(_) => Ok(Vec::new()),
+    }
+}
+
+fn active_edges_from_curve_segment(
+    record_index: usize,
+    segment: &AreSourceSegment,
+    start: ArePathPoint,
+) -> Result<Vec<AreActiveEdge>, AreIntervalBuildError> {
+    let mut edges = Vec::new();
+    match segment.kind {
+        AreSourceSegmentKind::Quadratic {
+            control: Some(control),
+        } => {
+            let (control_1, control_2) =
+                quadratic_to_cubic_controls(start, control.control, segment.endpoint);
+            push_db98_cubic_active_edges(
+                start,
+                control_1,
+                control_2,
+                segment.endpoint,
+                0,
+                &mut edges,
+            );
+        }
+        AreSourceSegmentKind::Cubic {
+            controls: Some(controls),
+        } => {
+            push_db98_cubic_active_edges(
+                start,
+                controls.control_1,
+                controls.control_2,
+                segment.endpoint,
+                0,
+                &mut edges,
+            );
+        }
+        AreSourceSegmentKind::Quadratic { .. } | AreSourceSegmentKind::Cubic { .. } => {
+            return Err(
+                AreIntervalBuildError::UnsupportedCurveRequiresControlPoints {
+                    record_index,
+                    source_point_index: segment.source_point_index,
+                },
+            );
+        }
+        _ => {}
+    }
+    Ok(edges)
+}
+
+fn quadratic_to_cubic_controls(
+    start: ArePathPoint,
+    control: ArePathPoint,
+    end: ArePathPoint,
+) -> (ArePathPoint, ArePathPoint) {
+    (
+        ArePathPoint {
+            x: start.x + QUADRATIC_TO_CUBIC_CONTROL_SCALE * (control.x - start.x),
+            y: start.y + QUADRATIC_TO_CUBIC_CONTROL_SCALE * (control.y - start.y),
+        },
+        ArePathPoint {
+            x: end.x + QUADRATIC_TO_CUBIC_CONTROL_SCALE * (control.x - end.x),
+            y: end.y + QUADRATIC_TO_CUBIC_CONTROL_SCALE * (control.y - end.y),
+        },
+    )
+}
+
+fn push_db98_cubic_active_edges(
+    p0: ArePathPoint,
+    p1: ArePathPoint,
+    p2: ArePathPoint,
+    p3: ArePathPoint,
+    depth: u8,
+    edges: &mut Vec<AreActiveEdge>,
+) {
+    if depth > ARE_DB98_CURVE_MAX_DEPTH || db98_flat_enough(p0, p1, p2, p3) {
+        push_5258_active_edge(p0, p3, edges);
+        return;
+    }
+
+    let p01 = midpoint(p0, p1);
+    let p12 = midpoint(p1, p2);
+    let p23 = midpoint(p2, p3);
+    let p012 = midpoint(p01, p12);
+    let p123 = midpoint(p12, p23);
+    let p0123 = midpoint(p012, p123);
+    let next_depth = depth + 1;
+
+    push_db98_cubic_active_edges(p0, p01, p012, p0123, next_depth, edges);
+    push_db98_cubic_active_edges(p0123, p123, p23, p3, next_depth, edges);
+}
+
+fn db98_flat_enough(
+    p0: ArePathPoint,
+    control_1: ArePathPoint,
+    control_2: ArePathPoint,
+    p3: ArePathPoint,
+) -> bool {
+    let min_x = p0.x.min(p3.x) - ARE_DB98_FLATNESS;
+    let max_x = p0.x.max(p3.x) + ARE_DB98_FLATNESS;
+    let min_y = p0.y.min(p3.y) - ARE_DB98_FLATNESS;
+    let max_y = p0.y.max(p3.y) + ARE_DB98_FLATNESS;
+
+    if control_1.x < min_x
+        || control_1.x > max_x
+        || control_2.x < min_x
+        || control_2.x > max_x
+        || control_1.y < min_y
+        || control_1.y > max_y
+        || control_2.y < min_y
+        || control_2.y > max_y
+    {
+        return false;
+    }
+
+    let extent = (p0.x - p3.x).abs().max((p3.y - p0.y).abs());
+    if extent <= ARE_DB98_FLATNESS * ARE_DB98_SHORT_CHORD_RATIO {
+        return true;
+    }
+
+    let dx = p3.x - p0.x;
+    let dy = p3.y - p0.y;
+    let d1 = ((control_1.x - p0.x) * dy - (control_1.y - p0.y) * dx).abs();
+    let d2 = ((control_2.x - p0.x) * dy - (control_2.y - p0.y) * dx).abs();
+    let tolerance = ARE_DB98_FLATNESS * extent * ARE_DB98_TOLERANCE_SCALE;
+    d1 <= tolerance && d2 <= tolerance
+}
+
+fn midpoint(a: ArePathPoint, b: ArePathPoint) -> ArePathPoint {
+    ArePathPoint {
+        x: (a.x + b.x) * 0.5,
+        y: (a.y + b.y) * 0.5,
+    }
+}
+
+fn push_5258_active_edge(start: ArePathPoint, end: ArePathPoint, edges: &mut Vec<AreActiveEdge>) {
+    if !start.x.is_finite() || !start.y.is_finite() || !end.x.is_finite() || !end.y.is_finite() {
+        return;
+    }
+    if (start.y.floor() as i32) == (end.y.floor() as i32) {
+        return;
+    }
+
+    let (start, end, winding_delta) = if end.y <= start.y {
+        (end, start, 1)
+    } else {
+        (start, end, -1)
+    };
+    edges.push(AreActiveEdge::line_fixed(
+        to_fixed(start.x),
+        to_fixed(start.y),
+        to_fixed(end.x),
+        to_fixed(end.y),
+        winding_delta,
+    ));
+}
+
+fn push_line_active_edge(start: ArePathPoint, end: ArePathPoint) -> Option<AreActiveEdge> {
+    let mut edges = Vec::with_capacity(1);
+    push_5258_active_edge(start, end, &mut edges);
+    edges.pop()
+}
+
+fn to_fixed(value: f32) -> i32 {
+    (value * ARE_FIXED_SUBPIXEL_SCALE as f32).floor() as i32
+}
+
+fn active_edge_touches_row(edge: &AreActiveEdge, row_y: i32) -> bool {
+    let row_start = row_y * ARE_FIXED_SUBPIXEL_SCALE;
+    let row_end = row_start + ARE_FIXED_SUBPIXEL_SCALE;
+    let min_y = edge.start_y_fixed.min(edge.end_y_fixed);
+    let max_y = edge.start_y_fixed.max(edge.end_y_fixed);
+    max_y > row_start && min_y < row_end
+}
+
+fn unique_record_indices(row_edges: &[&ScanlineActiveEdge]) -> Vec<usize> {
+    let mut indices = Vec::new();
+    for edge in row_edges {
+        if !indices.contains(&edge.record_index) {
+            indices.push(edge.record_index);
+        }
+    }
+    indices
+}
+
+fn push_scanline_run(
+    row_runs: &mut Vec<AreSamplerIntervalRun>,
+    current_x: i32,
+    next_x: i32,
+    source_record_indices: &[usize],
+) {
+    if next_x <= current_x || source_record_indices.is_empty() {
+        return;
+    }
+    row_runs.push(AreSamplerIntervalRun {
+        current_x,
+        next_x,
+        tag: AreSamplerIntervalTag::SourceSpan,
+        source_record_indices: source_record_indices.to_vec(),
+        materialize_candidate: true,
+    });
+}
+
+fn push_or_merge_run(row_runs: &mut Vec<AreSamplerIntervalRun>, mut run: AreSamplerIntervalRun) {
+    if let Some(last) = row_runs.last_mut() {
+        if can_merge(last, &run) {
+            last.current_x = last.current_x.min(run.current_x);
+            last.next_x = last.next_x.max(run.next_x);
+            for record_index in run.source_record_indices.drain(..) {
+                if !last.source_record_indices.contains(&record_index) {
+                    last.source_record_indices.push(record_index);
+                }
+            }
+            return;
+        }
+    }
+    row_runs.push(run);
+}
+
 enum RowRecordClassification {
     Run(AreSamplerIntervalRun),
     ZeroWidth(AreZeroWidthIntervalRecord),
@@ -336,8 +795,8 @@ fn interval_tag_sort_key(tag: AreSamplerIntervalTag) -> u8 {
 mod interval_95cc_tests {
     use super::*;
     use crate::{
-        build_e854_working_set, AreBezierSourcePathInput, ArePathPoint, ArePathVerb,
-        AreSourceBounds,
+        build_e854_working_set, AreBezierSourcePathInput, ArePathPoint, ArePathTransform,
+        ArePathVerb, AreSourceBounds,
     };
 
     fn record(
@@ -390,6 +849,26 @@ mod interval_95cc_tests {
             x_max,
             y_max,
         }
+    }
+
+    fn rectangle_source(x0: f32, y0: f32, x1: f32, y1: f32) -> AreBezierSourcePathInput {
+        AreBezierSourcePathInput::source_owned_glyph_path(
+            vec![
+                ArePathPoint::new(x0, y0),
+                ArePathPoint::new(x1, y0),
+                ArePathPoint::new(x1, y1),
+                ArePathPoint::new(x0, y1),
+                ArePathPoint::new(x0, y0),
+            ],
+            vec![
+                ArePathVerb::MoveTo,
+                ArePathVerb::LineTo,
+                ArePathVerb::LineTo,
+                ArePathVerb::LineTo,
+                ArePathVerb::Close,
+            ],
+            ArePathTransform::identity(),
+        )
     }
 
     #[test]
@@ -448,6 +927,75 @@ mod interval_95cc_tests {
         assert_eq!(row.runs[0].current_x, 1);
         assert_eq!(row.runs[0].next_x, 6);
         assert_eq!(row.runs[0].width(), 5);
+    }
+
+    #[test]
+    fn scanline_95cc_fills_between_active_edges() {
+        let source = rectangle_source(1.0, 0.0, 5.0, 3.0);
+        let working_set = build_e854_working_set(&source).unwrap();
+        let legacy = build_95cc_interval_list(&working_set).unwrap();
+        let scanline =
+            build_95cc_scanline_interval_list_from_source(&source, &working_set).unwrap();
+
+        assert!(legacy.row(1).unwrap().runs.is_empty());
+        let row = scanline.row(1).unwrap();
+        assert_eq!(row.runs.len(), 1);
+        assert_eq!(row.runs[0].current_x, 1);
+        assert!(row.runs[0].next_x >= 5);
+        assert_eq!(row.runs[0].tag, AreSamplerIntervalTag::SourceSpan);
+        assert!(row.runs[0].materialize_candidate);
+        assert!(row.runs[0].source_record_indices.len() >= 2);
+    }
+
+    #[test]
+    fn scanline_95cc_splits_disjoint_filled_spans() {
+        let mut left = rectangle_source(0.0, 0.0, 2.0, 2.0);
+        let right = rectangle_source(5.0, 0.0, 7.0, 2.0);
+        let point_offset = left.points.len();
+        let segment_offset = left.segments.len();
+        left.points.extend(right.points);
+        left.verbs.extend(right.verbs);
+        left.segments
+            .extend(right.segments.into_iter().map(|mut segment| {
+                segment.contour_id = crate::AreSourceContourId(segment.contour_id.0 + 1);
+                segment.segment_id =
+                    crate::AreSourceSegmentId(segment.segment_id.0 + segment_offset);
+                segment.source_point_index += point_offset;
+                segment
+            }));
+        left.segments = left
+            .segments
+            .into_iter()
+            .enumerate()
+            .map(|(index, mut segment)| {
+                segment.source_point_index = index;
+                segment
+            })
+            .collect();
+
+        let working_set = build_e854_working_set(&left).unwrap();
+        let scanline = build_95cc_scanline_interval_list_from_source(&left, &working_set).unwrap();
+        let row = scanline.row(1).unwrap();
+
+        assert_eq!(row.runs.len(), 2);
+        assert_eq!(row.runs[0].current_x, 0);
+        assert!(row.runs[0].next_x < row.runs[1].current_x);
+        assert_eq!(row.runs[1].current_x, 5);
+    }
+
+    #[test]
+    fn scanline_95cc_keeps_open_horizontal_source_empty() {
+        let source = AreBezierSourcePathInput::source_owned_glyph_path(
+            vec![ArePathPoint::new(1.0, 2.0), ArePathPoint::new(5.0, 2.0)],
+            vec![ArePathVerb::MoveTo, ArePathVerb::LineTo],
+            ArePathTransform::identity(),
+        );
+        let working_set = build_e854_working_set(&source).unwrap();
+        let scanline =
+            build_95cc_scanline_interval_list_from_source(&source, &working_set).unwrap();
+
+        assert!(scanline.row(2).unwrap().runs.is_empty());
+        assert!(scanline.row(2).unwrap().is_empty_sentinel);
     }
 
     #[test]

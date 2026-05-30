@@ -272,7 +272,8 @@ fn p6_10i_native_row_event_bucket_parity_corpus() {
 
     assert!(map.summary.compared_runs > 0);
     assert_eq!(map.summary.unresolved_726c_callback_runs, 0);
-    assert_eq!(map.summary.span_delta_runs, 34);
-    assert_eq!(map.summary.crossing_delta_runs, 36);
-    assert_eq!(map.summary.ordering_delta_runs, 65);
+    assert_eq!(map.summary.compared_runs, 772);
+    assert_eq!(map.summary.span_delta_runs, 229);
+    assert_eq!(map.summary.crossing_delta_runs, 261);
+    assert_eq!(map.summary.ordering_delta_runs, 268);
 }

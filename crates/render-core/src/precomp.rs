@@ -705,6 +705,7 @@ fn push_barrier_unique<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bee_text_carrier::{classify_bee_text_carrier_routes, BeeTextCarrierRouteStatus};
     use render_ir::{Composition, EffectSpec, Rect, Transform2D};
 
     #[test]
@@ -944,6 +945,51 @@ mod tests {
             title.opacity.rule,
             DeferredOpacityRule::EvaluateSourceTransformAtFinalSourceTime
         );
+
+        let carrier_routes = classify_bee_text_carrier_routes(&plan);
+        assert_eq!(carrier_routes.len(), 1);
+        assert_eq!(
+            carrier_routes[0].status,
+            BeeTextCarrierRouteStatus::BeeTextCarrierRequired
+        );
+        assert_eq!(carrier_routes[0].source_layer_id, Some("title"));
+        assert_eq!(
+            carrier_routes[0].reason,
+            "collapsed_text_vector_requires_bee_carrier_payload"
+        );
+    }
+
+    #[test]
+    fn bee_text_carrier_classifier_marks_rasterized_precomp_as_rasterize_first() {
+        let root_layers = vec![precomp_layer("root_pre", "child", false)];
+        let child_layers = vec![text_layer("title")];
+        let graph = PrecompGraph::from_nodes(
+            "root",
+            [
+                CompositionNode {
+                    id: "root",
+                    layers: &root_layers,
+                },
+                CompositionNode {
+                    id: "child",
+                    layers: &child_layers,
+                },
+            ],
+        )
+        .unwrap();
+
+        let plan = graph
+            .deferred_raster_plan_for_precomp_layer("root", "root_pre")
+            .unwrap();
+        let carrier_routes = classify_bee_text_carrier_routes(&plan);
+
+        assert_eq!(carrier_routes.len(), 1);
+        assert_eq!(
+            carrier_routes[0].status,
+            BeeTextCarrierRouteStatus::PrecompRasterizeFirst
+        );
+        assert_eq!(carrier_routes[0].reason, "collapse_not_requested");
+        assert_eq!(carrier_routes[0].source_layer_id, None);
     }
 
     #[test]

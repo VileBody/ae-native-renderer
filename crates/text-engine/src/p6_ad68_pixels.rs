@@ -143,10 +143,15 @@ pub struct P6Ad68PixelWriteReport {
     pub pixel_write_count: usize,
     pub nonzero_coverage_pixel_count: usize,
     pub source_sample_count: usize,
+    pub class0_sample_count: usize,
+    pub class1_sample_count: usize,
+    pub class2_sample_count: usize,
     pub class0_span_count: usize,
     pub class1_span_count: usize,
     pub class2_span_count: usize,
     pub class2_byte_count: usize,
+    pub source_coverage_byte_sum: u64,
+    pub final_coverage_byte_sum: u64,
     pub clipped_sample_count: usize,
     pub used_coverage_bitmap_for_pixel_bytes: bool,
     pub used_coverage_rows_for_pixel_bytes: bool,
@@ -161,10 +166,15 @@ impl P6Ad68PixelWriteReport {
             pixel_write_count: 0,
             nonzero_coverage_pixel_count: 0,
             source_sample_count: 0,
+            class0_sample_count: 0,
+            class1_sample_count: 0,
+            class2_sample_count: 0,
             class0_span_count: 0,
             class1_span_count: 0,
             class2_span_count: 0,
             class2_byte_count: 0,
+            source_coverage_byte_sum: 0,
+            final_coverage_byte_sum: 0,
             clipped_sample_count: 0,
             used_coverage_bitmap_for_pixel_bytes: false,
             used_coverage_rows_for_pixel_bytes: false,
@@ -265,10 +275,12 @@ pub fn blend_p6_ad68_event_stream_to_canvas(
             match event.event_class {
                 EventClass::Class0 => {
                     report.class0_span_count += 1;
+                    report.class0_sample_count += width;
                     report.source_sample_count += width;
                 }
                 EventClass::Class1 => {
                     report.class1_span_count += 1;
+                    report.class1_sample_count += width;
                     accumulate_constant_coverage(
                         &mut coverage_accum,
                         placement.width,
@@ -328,6 +340,7 @@ pub fn blend_p6_ad68_event_stream_to_canvas(
                     let payload =
                         &backing.bytes[payload_window.offset..payload_window.offset + width];
                     report.class2_byte_count += payload.len();
+                    report.class2_sample_count += payload.len();
                     accumulate_payload_coverage(
                         &mut coverage_accum,
                         placement.width,
@@ -357,6 +370,7 @@ pub fn blend_p6_ad68_event_stream_to_canvas(
                 continue;
             }
             report.nonzero_coverage_pixel_count += 1;
+            report.final_coverage_byte_sum += u64::from(coverage);
 
             let px = placement.origin_x + bx as i32;
             let py = placement.origin_y + by as i32;
@@ -440,6 +454,7 @@ fn accumulate_source_sample(
     report: &mut P6Ad68PixelWriteReport,
 ) {
     report.source_sample_count += 1;
+    report.source_coverage_byte_sum += u64::from(coverage);
     if coverage == 0 {
         return;
     }
@@ -644,6 +659,10 @@ mod tests {
 
         assert_eq!(report.class2_span_count, 1);
         assert_eq!(report.class2_byte_count, 2);
+        assert_eq!(report.class2_sample_count, 2);
+        assert_eq!(report.source_sample_count, 2);
+        assert_eq!(report.source_coverage_byte_sum, 192);
+        assert_eq!(report.final_coverage_byte_sum, 192);
         assert_eq!(report.pixel_write_count, 2);
         assert_eq!(canvas.pixel(0, 0), [10, 20, 30, 64]);
         assert_eq!(canvas.pixel(1, 0), [10, 20, 30, 128]);
@@ -666,6 +685,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(report.class0_span_count, 1);
+        assert_eq!(report.class0_sample_count, 3);
+        assert_eq!(report.source_sample_count, 3);
+        assert_eq!(report.source_coverage_byte_sum, 0);
+        assert_eq!(report.final_coverage_byte_sum, 0);
         assert_eq!(report.pixel_write_count, 0);
         assert!(canvas.data.chunks_exact(4).all(|pixel| pixel[3] == 0));
     }
@@ -687,6 +710,10 @@ mod tests {
         .unwrap();
 
         assert_eq!(report.class1_span_count, 1);
+        assert_eq!(report.class1_sample_count, 2);
+        assert_eq!(report.source_sample_count, 2);
+        assert_eq!(report.source_coverage_byte_sum, 510);
+        assert_eq!(report.final_coverage_byte_sum, 510);
         assert_eq!(report.pixel_write_count, 2);
         assert_eq!(canvas.pixel(0, 0), [0, 0, 0, 0]);
         assert_eq!(canvas.pixel(1, 0), [5, 6, 7, 255]);
@@ -717,6 +744,9 @@ mod tests {
         .unwrap();
 
         assert_eq!(report.source_sample_count, 4);
+        assert_eq!(report.class2_sample_count, 4);
+        assert_eq!(report.source_coverage_byte_sum, 1020);
+        assert_eq!(report.final_coverage_byte_sum, 255);
         assert_eq!(report.pixel_write_count, 1);
         assert_eq!(canvas.pixel(0, 0), [11, 12, 13, 255]);
     }

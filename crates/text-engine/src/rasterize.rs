@@ -5,6 +5,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, HashMap};
 use std::fs;
 use std::sync::{Arc, Mutex, OnceLock};
+use transform_math::{Mat3, Vec2};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, Tag};
 
 use crate::{
@@ -415,6 +416,73 @@ fn p6_ad68_pixel_path_segments_for_text(
     p6_ad68_path_segments_for_text(path_segments, scale, x_min, y_max, ss)
 }
 
+fn p6_ad68_transformed_path_segments_for_text(
+    path_segments: &[RawPathSegment],
+    scale: f32,
+    glyph_x: f32,
+    baseline: f32,
+    transform: TextVectorTransform,
+    supersample: u32,
+) -> Vec<P6Ad68RawPathSegment> {
+    let ss = supersample.max(1) as f32;
+    path_segments
+        .iter()
+        .copied()
+        .map(|raw| {
+            let segment = match raw.segment {
+                AePathSegment::Line { start, end } => P6Ad68PathSegment::Line {
+                    start: transformed_p6_ad68_path_point(
+                        start, scale, glyph_x, baseline, transform, ss,
+                    ),
+                    end: transformed_p6_ad68_path_point(
+                        end, scale, glyph_x, baseline, transform, ss,
+                    ),
+                },
+                AePathSegment::Cubic {
+                    start,
+                    control1,
+                    control2,
+                    end,
+                } => P6Ad68PathSegment::Cubic {
+                    start: transformed_p6_ad68_path_point(
+                        start, scale, glyph_x, baseline, transform, ss,
+                    ),
+                    control1: transformed_p6_ad68_path_point(
+                        control1, scale, glyph_x, baseline, transform, ss,
+                    ),
+                    control2: transformed_p6_ad68_path_point(
+                        control2, scale, glyph_x, baseline, transform, ss,
+                    ),
+                    end: transformed_p6_ad68_path_point(
+                        end, scale, glyph_x, baseline, transform, ss,
+                    ),
+                },
+            };
+            P6Ad68RawPathSegment {
+                contour_index: raw.contour_index,
+                segment_index: raw.segment_index,
+                segment,
+            }
+        })
+        .collect()
+}
+
+fn transformed_p6_ad68_path_point(
+    point: Point,
+    scale: f32,
+    glyph_x: f32,
+    baseline: f32,
+    transform: TextVectorTransform,
+    supersample: f32,
+) -> P6Ad68PathPoint {
+    let local = Vec2::new(
+        transform.local_origin[0] + glyph_x + point.x * scale,
+        transform.local_origin[1] + baseline - point.y * scale,
+    );
+    let device = transform.matrix.transform_point(local);
+    P6Ad68PathPoint::new(device.x * supersample, device.y * supersample)
+}
+
 fn p6_ad68_source_path_y_max(y_max: f32, supersample: u32) -> f32 {
     let _ = supersample;
     if cov_o_text_variant() == CovOTextVariant::CoordOriginPhasePlus {
@@ -518,6 +586,14 @@ pub struct TextRasterEvent {
     pub output_hash: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct TextVectorTransform {
+    pub matrix: Mat3,
+    pub local_origin: [f32; 2],
+    pub scale_carrier: &'static str,
+    pub font_size_baked_scale: bool,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DrawCharPlan {
     pub glyph_run_index: usize,
@@ -611,6 +687,41 @@ pub fn rasterize_text_with_layout(
     height: u32,
     color: [u8; 4],
 ) -> anyhow::Result<(Canvas, TextRasterTrace)> {
+    rasterize_text_with_layout_p6_pixel_state(
+        req,
+        layout,
+        width,
+        height,
+        color,
+        p6_ad68_pixel_opt_in_flag_state(),
+    )
+}
+
+pub fn rasterize_text_with_layout_p6_pixels_disabled(
+    req: &TextLayoutRequest,
+    layout: &TextLayoutResult,
+    width: u32,
+    height: u32,
+    color: [u8; 4],
+) -> anyhow::Result<(Canvas, TextRasterTrace)> {
+    rasterize_text_with_layout_p6_pixel_state(
+        req,
+        layout,
+        width,
+        height,
+        color,
+        P6Ad68PixelOptInFlagState::DisabledExplicit,
+    )
+}
+
+fn rasterize_text_with_layout_p6_pixel_state(
+    req: &TextLayoutRequest,
+    layout: &TextLayoutResult,
+    width: u32,
+    height: u32,
+    color: [u8; 4],
+    p6_ad68_pixel_flag_state: P6Ad68PixelOptInFlagState,
+) -> anyhow::Result<(Canvas, TextRasterTrace)> {
     let (font, font_resolution) = load_font_with_telemetry(&req.font_id)?;
     let font_bytes = font_resolution
         .resolved_path
@@ -673,7 +784,6 @@ pub fn rasterize_text_with_layout(
     if p6_ad68_flag_state != P6Ad68OptInFlagState::DisabledDefault {
         push_p6_ad68_opt_in_flag_event(&mut events, &mut event_seq, p6_ad68_flag_state);
     }
-    let p6_ad68_pixel_flag_state = p6_ad68_pixel_opt_in_flag_state();
     push_p6_ad68_pixel_opt_in_flag_event(&mut events, &mut event_seq, p6_ad68_pixel_flag_state);
 
     for (run_index, glyph) in layout.glyphs.iter().enumerate() {
@@ -819,10 +929,15 @@ pub fn rasterize_text_with_layout(
                                     "pixel_write_count": pixel_report.pixel_write_count,
                                     "nonzero_coverage_pixel_count": pixel_report.nonzero_coverage_pixel_count,
                                     "source_sample_count": pixel_report.source_sample_count,
+                                    "class0_sample_count": pixel_report.class0_sample_count,
+                                    "class1_sample_count": pixel_report.class1_sample_count,
+                                    "class2_sample_count": pixel_report.class2_sample_count,
                                     "class0_span_count": pixel_report.class0_span_count,
                                     "class1_span_count": pixel_report.class1_span_count,
                                     "class2_span_count": pixel_report.class2_span_count,
                                     "class2_byte_count": pixel_report.class2_byte_count,
+                                    "source_coverage_byte_sum": pixel_report.source_coverage_byte_sum,
+                                    "final_coverage_byte_sum": pixel_report.final_coverage_byte_sum,
                                     "clipped_sample_count": pixel_report.clipped_sample_count,
                                     "used_coverage_bitmap_for_pixel_bytes": pixel_report.used_coverage_bitmap_for_pixel_bytes,
                                     "used_coverage_rows_for_pixel_bytes": pixel_report.used_coverage_rows_for_pixel_bytes,
@@ -1268,6 +1383,509 @@ pub fn rasterize_text_with_layout(
             events,
         },
     ))
+}
+
+pub fn rasterize_text_with_layout_vector_transform(
+    req: &TextLayoutRequest,
+    layout: &TextLayoutResult,
+    width: u32,
+    height: u32,
+    color: [u8; 4],
+    transform: TextVectorTransform,
+) -> anyhow::Result<(Canvas, TextRasterTrace)> {
+    let p6_ad68_pixel_flag_state = p6_ad68_pixel_opt_in_flag_state();
+    if !p6_ad68_pixel_flag_state.enabled() {
+        anyhow::bail!("p6_ad68_pixel_path_disabled_for_vector_transform");
+    }
+
+    let (_font, font_resolution) = load_font_with_telemetry(&req.font_id)?;
+    let font_bytes = font_resolution
+        .resolved_path
+        .as_ref()
+        .and_then(|path| fs::read(path).ok());
+    let outline_face = font_bytes
+        .as_deref()
+        .and_then(|bytes| Face::parse(bytes, 0).ok());
+    let mut canvas = Canvas::transparent(width, height);
+    let mut draw_chars = Vec::with_capacity(layout.glyphs.len());
+    let chars = req.text.chars().collect::<Vec<_>>();
+    let fill_rgba = rgba_u8_to_f32(color);
+    let stroke_rgba = [0.0, 0.0, 0.0, 0.0];
+    let mut used_outline_backend = false;
+    let mut events = Vec::new();
+    let mut event_seq = 0_u64;
+    let outline_font_key = font_resolution
+        .resolved_path
+        .as_ref()
+        .map(|path| path.display().to_string())
+        .unwrap_or_else(|| req.font_id.clone());
+
+    push_text_raster_event(
+        &mut events,
+        &mut event_seq,
+        "layout_input",
+        None,
+        None,
+        json!({
+            "text": &req.text,
+            "font_id": &req.font_id,
+            "font_size": f32_trace(req.font_size),
+            "box_rect": req.box_rect,
+            "canvas_size": [width, height],
+            "glyph_count": layout.glyphs.len(),
+            "vector_transform": {
+                "matrix": transform.matrix.m,
+                "local_origin": transform.local_origin,
+                "scale_carrier": transform.scale_carrier,
+                "font_size_baked_scale": transform.font_size_baked_scale
+            }
+        }),
+    );
+    push_text_raster_event(
+        &mut events,
+        &mut event_seq,
+        "layout_output",
+        None,
+        None,
+        json!({
+            "font_resolution": &layout.telemetry.font_resolution,
+            "source_rect_union": layout.telemetry.source_rect_union,
+            "line_count": layout.telemetry.line_boxes.len(),
+            "glyphs": layout.glyphs.iter().map(|glyph| json!({
+                "glyph_id": glyph.glyph_id,
+                "char_index": glyph.char_index,
+                "word_index": glyph.word_index,
+                "line_index": glyph.line_index,
+                "x": f32_trace(glyph.x),
+                "y": f32_trace(glyph.y),
+                "advance": f32_trace(glyph.advance),
+                "bbox": glyph.bbox.iter().map(|value| f32_trace(*value)).collect::<Vec<_>>()
+            })).collect::<Vec<_>>()
+        }),
+    );
+    push_p6_ad68_pixel_opt_in_flag_event(&mut events, &mut event_seq, p6_ad68_pixel_flag_state);
+
+    let p6_pixel_handoff_mode = p6_ad68_pixel_handoff_mode();
+    for (run_index, glyph) in layout.glyphs.iter().enumerate() {
+        let ch = chars.get(glyph.char_index).copied();
+        let glyph_id = glyph.glyph_id.min(u16::MAX as u32) as u16;
+        let telemetry = layout.telemetry.glyphs.get(run_index);
+        let baseline = telemetry
+            .map(|telemetry| telemetry.baseline)
+            .unwrap_or_else(|| glyph.bbox[1] + glyph.bbox[3]);
+        let expected_advance_only_space =
+            ch.is_some_and(char::is_whitespace) && glyph.advance.is_finite() && glyph.advance > 0.0;
+
+        let coverage = outline_face.as_ref().and_then(|face| {
+            outline_coverage(
+                face,
+                &outline_font_key,
+                glyph_id,
+                glyph.x,
+                baseline,
+                req.font_size,
+            )
+        });
+        used_outline_backend |= coverage
+            .as_ref()
+            .is_some_and(|coverage| coverage.backend == "ttf_outline_are_scanline_16x");
+
+        let p6_pixel_source_path_supersample = coverage
+            .as_ref()
+            .map(|coverage| p6_pixel_handoff_mode.source_path_supersample(coverage.supersample))
+            .unwrap_or_else(|| p6_pixel_handoff_mode.source_path_supersample(1));
+        let p6_path_segments = coverage
+            .as_ref()
+            .map(|coverage| {
+                p6_ad68_transformed_path_segments_for_text(
+                    coverage.path_segments.as_ref(),
+                    coverage.scale,
+                    glyph.x,
+                    baseline,
+                    transform,
+                    p6_pixel_source_path_supersample,
+                )
+            })
+            .unwrap_or_default();
+        let output = materialize_text_source_path_to_p6_ad68_rows(&P6Ad68TextPathInput {
+            glyph_run_index: run_index,
+            glyph_id: glyph.glyph_id,
+            path_segments: &p6_path_segments,
+            expected_advance_only_space,
+        });
+
+        let mut route_status = "unsupported_source_path";
+        let mut renderable = false;
+        let mut will_draw = false;
+        let mut skip_reason = draw_char_skip_reason(
+            ch,
+            glyph.glyph_id,
+            color[3] > 0,
+            false,
+            Some([0, 0, width as i32, height as i32]),
+        );
+        let mut coverage_rows = Vec::new();
+        let mut plan_edge_signatures = Vec::new();
+        let coverage_backend = coverage
+            .as_ref()
+            .map(|coverage| coverage.backend.to_string())
+            .unwrap_or_else(|| "none".to_string());
+        let coverage_supersample = coverage
+            .as_ref()
+            .map(|coverage| coverage.supersample)
+            .unwrap_or(1);
+        let mut coverage_origin_source = "text_vector_transform_p6_ad68".to_string();
+        let mut coverage_nonzero_pixels = 0_u32;
+        let mut glyph_bounds_minmax = [0.0, 0.0, width as f32, height as f32];
+        let mut bitmap_size = [width, height];
+
+        match output {
+            P6Ad68TextRowsOutput::Routed {
+                report,
+                event_stream,
+                row_table,
+            } => {
+                let placement = P6Ad68PixelPlacement {
+                    origin_x: 0,
+                    origin_y: 0,
+                    width: width as usize,
+                    height: height as usize,
+                    clip: Some([0, 0, width as i32, height as i32]),
+                    coordinate_scale: p6_pixel_handoff_mode.coordinate_scale(coverage_supersample),
+                };
+                let pixel_report = blend_p6_ad68_event_stream_to_canvas(
+                    &mut canvas,
+                    &event_stream,
+                    placement,
+                    color,
+                )
+                .map_err(|err| anyhow::anyhow!("p6_vector_transform_pixel_write: {err:?}"))?;
+                route_status = report.status.as_str();
+                renderable = true;
+                will_draw = pixel_report.pixel_write_count > 0;
+                skip_reason = None;
+                coverage_nonzero_pixels = pixel_report.nonzero_coverage_pixel_count as u32;
+                if let Some(coverage) = coverage.as_ref() {
+                    plan_edge_signatures = coverage_edge_signatures(
+                        run_index,
+                        glyph.glyph_id,
+                        coverage.edge_signatures.as_ref(),
+                    );
+                    glyph_bounds_minmax = transformed_glyph_bounds_minmax(
+                        coverage.x_min,
+                        coverage.y_max,
+                        coverage.width,
+                        coverage.height,
+                        transform,
+                    );
+                    bitmap_size = [coverage.width as u32, coverage.height as u32];
+                    coverage_origin_source = coverage.origin_source.to_string();
+                }
+
+                for (row_offset, nodes) in row_table.rows.iter().enumerate() {
+                    let y = row_table.y_min + row_offset as i32;
+                    for node in nodes {
+                        push_text_raster_event(
+                            &mut events,
+                            &mut event_seq,
+                            "row_byte_build",
+                            Some(run_index),
+                            Some(glyph.glyph_id),
+                            json!({
+                                "y": y,
+                                "start_x": node.x,
+                                "end_x": node.x + node.len,
+                                "state": node.state,
+                                "coverage_len": node.bytes.as_ref().map(Vec::len).unwrap_or(0),
+                                "coverage_hex": node.bytes.as_ref().map(|bytes| bytes_hex(bytes)),
+                                "coordinate_basis": p6_pixel_handoff_mode.coordinate_basis(),
+                                "vector_transform": true
+                            }),
+                        );
+                    }
+                }
+
+                let mut payload = json!({
+                    "env_var": P6_AD68_TEXT_PIXELS_OPT_IN_ENV_VAR,
+                    "status": "routed_pixels",
+                    "route_status": report.status.as_str(),
+                    "success": true,
+                    "fallback_to_default_path": false,
+                    "fallback_counted_as_p6_success": false,
+                    "producer": "p6_source_owned_ad68_event_stream_to_canvas_pixels_vector_transform_v1",
+                    "handoff_env_var": P6_AD68_TEXT_PIXELS_HANDOFF_ENV_VAR,
+                    "handoff_mode": p6_pixel_handoff_mode.as_str(),
+                    "coordinate_basis": p6_pixel_handoff_mode.coordinate_basis(),
+                    "source_path_supersample": p6_pixel_source_path_supersample,
+                    "coverage_supersample": coverage_supersample,
+                    "coordinate_scale": placement.coordinate_scale,
+                    "placement_origin": [placement.origin_x, placement.origin_y],
+                    "placement_size": [placement.width, placement.height],
+                    "clip": placement.clip,
+                    "row_count": row_table.rows.len(),
+                    "event_stream_row_count": event_stream.rows.len(),
+                    "pixel_write_count": pixel_report.pixel_write_count,
+                    "nonzero_coverage_pixel_count": pixel_report.nonzero_coverage_pixel_count,
+                    "source_sample_count": pixel_report.source_sample_count,
+                    "class0_sample_count": pixel_report.class0_sample_count,
+                    "class1_sample_count": pixel_report.class1_sample_count,
+                    "class2_sample_count": pixel_report.class2_sample_count,
+                    "class0_span_count": pixel_report.class0_span_count,
+                    "class1_span_count": pixel_report.class1_span_count,
+                    "class2_span_count": pixel_report.class2_span_count,
+                    "class2_byte_count": pixel_report.class2_byte_count,
+                    "source_coverage_byte_sum": pixel_report.source_coverage_byte_sum,
+                    "final_coverage_byte_sum": pixel_report.final_coverage_byte_sum,
+                    "clipped_sample_count": pixel_report.clipped_sample_count,
+                    "used_coverage_bitmap_for_pixel_bytes": pixel_report.used_coverage_bitmap_for_pixel_bytes,
+                    "used_coverage_rows_for_pixel_bytes": pixel_report.used_coverage_rows_for_pixel_bytes,
+                    "used_typed_span_proof": pixel_report.used_typed_span_proof,
+                    "used_fixture_payload": pixel_report.used_fixture_payload,
+                    "used_synthetic_payload": pixel_report.used_synthetic_payload,
+                    "vector_transform": {
+                        "matrix": transform.matrix.m,
+                        "local_origin": transform.local_origin,
+                        "scale_carrier": transform.scale_carrier,
+                        "font_size_baked_scale": transform.font_size_baked_scale
+                    }
+                });
+                if let Some(limit) = p6_ad68_row_byte_debug_limit() {
+                    payload["row_byte_debug"] = p6_ad68_row_byte_debug_payload(&row_table, limit);
+                }
+                if let Some(limit) = p6_ad68_frontier_debug_limit() {
+                    payload["frontier_debug"] = p6_ad68_frontier_debug_payload(
+                        &P6Ad68TextPathInput {
+                            glyph_run_index: run_index,
+                            glyph_id: glyph.glyph_id,
+                            path_segments: &p6_path_segments,
+                            expected_advance_only_space,
+                        },
+                        limit,
+                    );
+                }
+                push_p6_ad68_pixel_write_event(&mut events, &mut event_seq, &report, payload);
+            }
+            P6Ad68TextRowsOutput::ExpectedAdvanceOnlySpace { report } => {
+                route_status = report.status.as_str();
+                skip_reason = Some("whitespace".to_string());
+                push_p6_ad68_pixel_write_event(
+                    &mut events,
+                    &mut event_seq,
+                    &report,
+                    json!({
+                        "env_var": P6_AD68_TEXT_PIXELS_OPT_IN_ENV_VAR,
+                        "status": "expected_advance_only_space",
+                        "route_status": report.status.as_str(),
+                        "success": false,
+                        "expected_advance_only": true,
+                        "fallback_to_default_path": false,
+                        "fallback_counted_as_p6_success": false,
+                        "producer": "p6_source_owned_ad68_event_stream_to_canvas_pixels_vector_transform_v1",
+                        "used_coverage_bitmap_for_pixel_bytes": false,
+                        "used_coverage_rows_for_pixel_bytes": false,
+                        "used_typed_span_proof": false,
+                        "used_fixture_payload": false,
+                        "used_synthetic_payload": false
+                    }),
+                );
+            }
+            P6Ad68TextRowsOutput::Unsupported { report } => {
+                push_p6_ad68_pixel_write_event(
+                    &mut events,
+                    &mut event_seq,
+                    &report,
+                    json!({
+                        "env_var": P6_AD68_TEXT_PIXELS_OPT_IN_ENV_VAR,
+                        "status": "unsupported_source_path",
+                        "route_status": report.status.as_str(),
+                        "success": false,
+                        "reason": report.reason,
+                        "fallback_to_default_path": true,
+                        "fallback_counted_as_p6_success": false,
+                        "producer": "p6_source_owned_ad68_event_stream_to_canvas_pixels_vector_transform_v1",
+                        "used_coverage_bitmap_for_pixel_bytes": false,
+                        "used_coverage_rows_for_pixel_bytes": false,
+                        "used_typed_span_proof": false,
+                        "used_fixture_payload": false,
+                        "used_synthetic_payload": false
+                    }),
+                );
+                if !expected_advance_only_space {
+                    anyhow::bail!(
+                        "p6_vector_transform_unsupported_glyph run_index={} glyph_id={} status={}",
+                        run_index,
+                        glyph.glyph_id,
+                        report.status.as_str()
+                    );
+                }
+            }
+        }
+
+        let text_matrix = [
+            transform.matrix.m[0][0],
+            transform.matrix.m[0][1],
+            0.0,
+            transform.matrix.m[1][0],
+            transform.matrix.m[1][1],
+            0.0,
+            transform.matrix.m[0][2],
+            transform.matrix.m[1][2],
+            1.0,
+        ];
+        let plan = DrawCharPlan {
+            glyph_run_index: run_index,
+            char_index: glyph.char_index,
+            character: ch.map(|ch| ch.to_string()).unwrap_or_default(),
+            glyph_id: glyph.glyph_id,
+            font_postscript_name: telemetry
+                .and_then(|telemetry| telemetry.font_postscript_name.clone()),
+            font_path: telemetry
+                .and_then(|telemetry| telemetry.font_path.as_ref())
+                .map(|path| path.display().to_string()),
+            metric_source: telemetry
+                .map(|telemetry| telemetry.metric_source.clone())
+                .unwrap_or_else(|| "unknown".to_string()),
+            renderable,
+            will_draw,
+            draw_fill: color[3] > 0,
+            draw_stroke: false,
+            skip_reason,
+            glyph_matrix: [
+                req.font_size,
+                0.0,
+                0.0,
+                0.0,
+                req.font_size,
+                0.0,
+                0.0,
+                0.0,
+                1.0,
+            ],
+            text_matrix,
+            fill_rgba,
+            stroke_rgba,
+            stroke_width: 0.0,
+            line_join: 0,
+            miter_limit: 2.5,
+            orientation: 0,
+            glyph_origin: [glyph.x, glyph.y],
+            baseline,
+            raster_origin: [0.0, 0.0],
+            bitmap_size,
+            glyph_bounds_minmax,
+            clipped_bounds_i32: Some([0, 0, width as i32, height as i32]),
+            coverage_backend,
+            coverage_supersample,
+            coverage_origin_source,
+            coverage_nonzero_pixels,
+            coverage_rows: std::mem::take(&mut coverage_rows),
+            coverage_edge_signature_source: "p6_ad68_vector_transform_source_path".to_string(),
+            coverage_edge_signatures: plan_edge_signatures,
+            output_semantics: "p6_ad68_vector_transform_pf_pixel8_integer_source_over_v1"
+                .to_string(),
+        };
+        push_text_raster_event(
+            &mut events,
+            &mut event_seq,
+            "draw_char_boundary",
+            Some(run_index),
+            Some(glyph.glyph_id),
+            json!({
+                "char_index": plan.char_index,
+                "character": &plan.character,
+                "renderable": plan.renderable,
+                "will_draw": plan.will_draw,
+                "draw_fill": plan.draw_fill,
+                "draw_stroke": plan.draw_stroke,
+                "skip_reason": &plan.skip_reason,
+                "route_status": route_status,
+                "glyph_matrix": plan.glyph_matrix.iter().map(|value| f32_trace(*value)).collect::<Vec<_>>(),
+                "text_matrix": plan.text_matrix.iter().map(|value| f32_trace(*value)).collect::<Vec<_>>(),
+                "clipped_bounds_i32": plan.clipped_bounds_i32,
+                "coverage_backend": &plan.coverage_backend,
+                "coverage_rows": plan.coverage_rows.len(),
+                "coverage_edge_signatures": plan.coverage_edge_signatures.len(),
+                "vector_transform": {
+                    "matrix": transform.matrix.m,
+                    "local_origin": transform.local_origin,
+                    "scale_carrier": transform.scale_carrier,
+                    "font_size_baked_scale": transform.font_size_baked_scale
+                }
+            }),
+        );
+        draw_chars.push(plan);
+    }
+
+    Ok((
+        canvas,
+        TextRasterTrace {
+            schema: "txt_drawchar_boundary/v1".to_string(),
+            source: "native_recovered_from_BEE_TextRenderNode_TXT_DrawChar_vector_transform"
+                .to_string(),
+            canvas_size: [width, height],
+            fill_rgba,
+            stroke_rgba,
+            coverage_backend: if used_outline_backend {
+                "ttf_outline_are_scanline_16x_v1"
+            } else {
+                "p6_ad68_vector_transform_no_outline"
+            }
+            .to_string(),
+            pf_world_semantics:
+                "TXT_DrawChar ARE PF_Pixel8 direct source-over; text transform carried by ARE matrix"
+                    .to_string(),
+            draw_chars,
+            events,
+        },
+    ))
+}
+
+fn transformed_glyph_bounds_minmax(
+    x_min: f32,
+    y_max: f32,
+    width: usize,
+    height: usize,
+    transform: TextVectorTransform,
+) -> [f32; 4] {
+    let corners = [
+        Vec2::new(
+            transform.local_origin[0] + x_min,
+            transform.local_origin[1] + y_max,
+        ),
+        Vec2::new(
+            transform.local_origin[0] + x_min + width as f32,
+            transform.local_origin[1] + y_max,
+        ),
+        Vec2::new(
+            transform.local_origin[0] + x_min + width as f32,
+            transform.local_origin[1] + y_max + height as f32,
+        ),
+        Vec2::new(
+            transform.local_origin[0] + x_min,
+            transform.local_origin[1] + y_max + height as f32,
+        ),
+    ];
+    let points = corners
+        .into_iter()
+        .map(|point| transform.matrix.transform_point(point))
+        .collect::<Vec<_>>();
+    let x0 = points
+        .iter()
+        .map(|point| point.x)
+        .fold(f32::INFINITY, f32::min);
+    let y0 = points
+        .iter()
+        .map(|point| point.y)
+        .fold(f32::INFINITY, f32::min);
+    let x1 = points
+        .iter()
+        .map(|point| point.x)
+        .fold(f32::NEG_INFINITY, f32::max);
+    let y1 = points
+        .iter()
+        .map(|point| point.y)
+        .fold(f32::NEG_INFINITY, f32::max);
+    [x0, y0, x1, y1]
 }
 
 struct CoverageBitmap {
@@ -4706,6 +5324,80 @@ mod tests {
                 && event.output_hash.len() == 64
                 && event.input_hash.len() == 64
         }));
+    }
+
+    #[test]
+    fn p6_ad68_vector_transform_keeps_font_size_unbaked_and_writes_pixels() {
+        let Some(path) = montserrat_bolditalic_fixture() else {
+            return;
+        };
+        let req = TextLayoutRequest {
+            text: "O".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 48.0,
+            box_rect: Some([0.0, 0.0, 512.0, 512.0]),
+        };
+        let layout = layout_text(&req).unwrap();
+        let (canvas, trace) = rasterize_text_with_layout_vector_transform(
+            &req,
+            &layout,
+            1024,
+            1024,
+            [255, 255, 255, 255],
+            TextVectorTransform {
+                matrix: Mat3::scale(Vec2::new(1.8, 1.8)),
+                local_origin: [-2.4257813, 59.0],
+                scale_carrier: "text_are_matrix",
+                font_size_baked_scale: false,
+            },
+        )
+        .unwrap();
+
+        assert!(canvas.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
+        assert_eq!(
+            trace.source,
+            "native_recovered_from_BEE_TextRenderNode_TXT_DrawChar_vector_transform"
+        );
+        assert_eq!(trace.draw_chars[0].glyph_matrix[0], 48.0);
+        assert!((trace.draw_chars[0].text_matrix[0] - 1.8).abs() < 0.00001);
+
+        let pixel_write = trace
+            .events
+            .iter()
+            .find(|event| event.stage == "p6_ad68_pixel_write")
+            .expect("vector transform should emit P6 pixel write event");
+        assert_eq!(
+            pixel_write.payload.get("producer").and_then(Value::as_str),
+            Some("p6_source_owned_ad68_event_stream_to_canvas_pixels_vector_transform_v1")
+        );
+        assert_eq!(
+            pixel_write
+                .payload
+                .pointer("/vector_transform/font_size_baked_scale")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            pixel_write
+                .payload
+                .get("used_typed_span_proof")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            pixel_write
+                .payload
+                .get("used_fixture_payload")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
+        assert_eq!(
+            pixel_write
+                .payload
+                .get("used_synthetic_payload")
+                .and_then(Value::as_bool),
+            Some(false)
+        );
     }
 
     #[test]

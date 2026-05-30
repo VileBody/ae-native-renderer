@@ -130,6 +130,8 @@ def render_report(policy: dict[str, Any], out: Path, extra_cases: list[str], no_
         "run",
         "-p",
         "render-cli",
+        "--bin",
+        "render-cli",
         "--",
         "conformance-pack",
         "--pack",
