@@ -4,6 +4,7 @@ use crate::{
 };
 use raster_cpu::Canvas;
 use serde_json::Value;
+use std::collections::VecDeque;
 
 const EDGE_POLICY_CLIP_TO_IMAGE_BOUNDS: &str = "clip_to_image_bounds";
 const EDGE_POLICY_TRANSPARENT_BLACK_OUTSIDE_BOUNDS: &str = "transparent_black_outside_bounds";
@@ -316,7 +317,7 @@ fn edge_policy_label(dont_shrink_edges: bool) -> &'static str {
 }
 
 fn kernel_radius(radius: f32) -> u32 {
-    radius.round().clamp(0.0, 32.0) as u32
+    radius.round().max(0.0) as u32
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -598,81 +599,97 @@ fn minimax_pass(
     axis: Axis,
     dont_shrink_edges: bool,
 ) -> Canvas {
-    let mut output = Canvas::transparent(input.width, input.height);
-    for y in 0..input.height {
-        for x in 0..input.width {
-            output.set_pixel(
-                x,
-                y,
-                extremum_pixel(
-                    input,
-                    x,
-                    y,
-                    radius,
-                    extremum,
-                    channels,
-                    axis,
-                    dont_shrink_edges,
-                ),
+    let mut output = input.clone();
+    let (line_count, line_len) = match axis {
+        Axis::Horizontal => (input.height as usize, input.width as usize),
+        Axis::Vertical => (input.width as usize, input.height as usize),
+    };
+    let radius = radius as usize;
+    let mut deque = VecDeque::with_capacity(line_len);
+
+    for channel in 0..4 {
+        if !channel_is_selected(channels, channel) {
+            continue;
+        }
+        for line in 0..line_count {
+            deque.clear();
+            minimax_line(
+                input,
+                &mut output,
+                line,
+                line_len,
+                radius,
+                channel,
+                axis,
+                extremum,
+                dont_shrink_edges,
+                &mut deque,
             );
         }
     }
     output
 }
 
-fn extremum_pixel(
+#[allow(clippy::too_many_arguments)]
+fn minimax_line(
     input: &Canvas,
-    x: u32,
-    y: u32,
-    radius: u32,
-    extremum: Extremum,
-    channels: Channels,
+    output: &mut Canvas,
+    line: usize,
+    line_len: usize,
+    radius: usize,
+    channel: usize,
     axis: Axis,
+    extremum: Extremum,
     dont_shrink_edges: bool,
-) -> [u8; 4] {
-    let mut output = input.pixel(x, y);
-    let mut values = match extremum {
-        Extremum::Maximum => [0_u8; 4],
-        Extremum::Minimum => [255_u8; 4],
-    };
-    let radius = radius as i32;
-    let x = x as i32;
-    let y = y as i32;
-    let (mut min_x, mut max_x, mut min_y, mut max_y) = match axis {
-        Axis::Horizontal => (x - radius, x + radius, y, y),
-        Axis::Vertical => (x, x, y - radius, y + radius),
-    };
+    deque: &mut VecDeque<(usize, u8)>,
+) {
+    let mut next = 0_usize;
 
-    if dont_shrink_edges {
-        min_x = min_x.clamp(0, input.width.saturating_sub(1) as i32);
-        max_x = max_x.clamp(0, input.width.saturating_sub(1) as i32);
-        min_y = min_y.clamp(0, input.height.saturating_sub(1) as i32);
-        max_y = max_y.clamp(0, input.height.saturating_sub(1) as i32);
-    }
-
-    for sy in min_y..=max_y {
-        for sx in min_x..=max_x {
-            let pixel = if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32
-            {
-                [0, 0, 0, 0]
-            } else {
-                input.pixel(sx as u32, sy as u32)
-            };
-            for channel in 0..4 {
-                values[channel] = match extremum {
-                    Extremum::Maximum => values[channel].max(pixel[channel]),
-                    Extremum::Minimum => values[channel].min(pixel[channel]),
+    for center in 0..line_len {
+        let window_end = center.saturating_add(radius).min(line_len - 1);
+        while next <= window_end {
+            let value = input.data[canvas_index(input.width as usize, axis, line, next, channel)];
+            while let Some(&(_, previous)) = deque.back() {
+                let is_dominated = match extremum {
+                    Extremum::Maximum => previous <= value,
+                    Extremum::Minimum => previous >= value,
                 };
+                if !is_dominated {
+                    break;
+                }
+                deque.pop_back();
             }
+            deque.push_back((next, value));
+            next += 1;
         }
-    }
 
-    for channel in 0..4 {
-        if channel_is_selected(channels, channel) {
-            output[channel] = values[channel];
+        let window_start = center.saturating_sub(radius);
+        while deque
+            .front()
+            .is_some_and(|&(index, _)| index < window_start)
+        {
+            deque.pop_front();
         }
+
+        let samples_transparent_black = !dont_shrink_edges
+            && extremum == Extremum::Minimum
+            && (radius > center || radius > line_len - 1 - center);
+        let value = if samples_transparent_black {
+            0
+        } else {
+            deque.front().map_or(0, |&(_, value)| value)
+        };
+        let output_index = canvas_index(output.width as usize, axis, line, center, channel);
+        output.data[output_index] = value;
     }
-    output
+}
+
+fn canvas_index(width: usize, axis: Axis, line: usize, position: usize, channel: usize) -> usize {
+    let (x, y) = match axis {
+        Axis::Horizontal => (position, line),
+        Axis::Vertical => (line, position),
+    };
+    (y * width + x) * 4 + channel
 }
 
 fn channel_is_selected(channels: Channels, channel: usize) -> bool {
@@ -697,6 +714,23 @@ mod tests {
     use super::*;
     use serde_json::{json, Value};
 
+    #[derive(Debug, Clone, Copy)]
+    struct TestRng(u64);
+
+    impl TestRng {
+        fn next_u8(&mut self) -> u8 {
+            self.0 = self
+                .0
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            (self.0 >> 32) as u8
+        }
+
+        fn dimension(&mut self) -> u32 {
+            u32::from(self.next_u8() % 8 + 1)
+        }
+    }
+
     fn ctx() -> EffectContext {
         EffectContext {
             time: 0.0,
@@ -706,6 +740,167 @@ mod tests {
 
     fn render(input: &Canvas, params: Value) -> Canvas {
         Minimax::default().render(input, &ctx(), &params).unwrap()
+    }
+
+    fn random_canvas(rng: &mut TestRng, width: u32, height: u32) -> Canvas {
+        let mut input = Canvas::transparent(width, height);
+        for value in &mut input.data {
+            *value = rng.next_u8();
+        }
+        input
+    }
+
+    fn naive_minimax_canvas(input: &Canvas, radius: u32, params: MinimaxParams) -> Canvas {
+        match params.operation {
+            Operation::Minimum => naive_apply_extremum_operation(
+                input,
+                radius,
+                Extremum::Minimum,
+                params.channels,
+                params.direction,
+                params.dont_shrink_edges,
+            ),
+            Operation::Maximum => naive_apply_extremum_operation(
+                input,
+                radius,
+                Extremum::Maximum,
+                params.channels,
+                params.direction,
+                params.dont_shrink_edges,
+            ),
+            Operation::MinimumThenMaximum => {
+                let first = naive_apply_extremum_operation(
+                    input,
+                    radius,
+                    Extremum::Minimum,
+                    params.channels,
+                    params.direction,
+                    params.dont_shrink_edges,
+                );
+                naive_apply_extremum_operation(
+                    &first,
+                    radius,
+                    Extremum::Maximum,
+                    params.channels,
+                    params.direction,
+                    params.dont_shrink_edges,
+                )
+            }
+            Operation::MaximumThenMinimum => {
+                let first = naive_apply_extremum_operation(
+                    input,
+                    radius,
+                    Extremum::Maximum,
+                    params.channels,
+                    params.direction,
+                    params.dont_shrink_edges,
+                );
+                naive_apply_extremum_operation(
+                    &first,
+                    radius,
+                    Extremum::Minimum,
+                    params.channels,
+                    params.direction,
+                    params.dont_shrink_edges,
+                )
+            }
+        }
+    }
+
+    fn naive_apply_extremum_operation(
+        input: &Canvas,
+        radius: u32,
+        extremum: Extremum,
+        channels: Channels,
+        direction: Direction,
+        dont_shrink_edges: bool,
+    ) -> Canvas {
+        match direction {
+            Direction::HorizontalAndVertical => {
+                let horizontal = naive_minimax_pass(
+                    input,
+                    radius,
+                    extremum,
+                    channels,
+                    Axis::Horizontal,
+                    dont_shrink_edges,
+                );
+                naive_minimax_pass(
+                    &horizontal,
+                    radius,
+                    extremum,
+                    channels,
+                    Axis::Vertical,
+                    dont_shrink_edges,
+                )
+            }
+            Direction::Horizontal => naive_minimax_pass(
+                input,
+                radius,
+                extremum,
+                channels,
+                Axis::Horizontal,
+                dont_shrink_edges,
+            ),
+            Direction::Vertical => naive_minimax_pass(
+                input,
+                radius,
+                extremum,
+                channels,
+                Axis::Vertical,
+                dont_shrink_edges,
+            ),
+        }
+    }
+
+    fn naive_minimax_pass(
+        input: &Canvas,
+        radius: u32,
+        extremum: Extremum,
+        channels: Channels,
+        axis: Axis,
+        dont_shrink_edges: bool,
+    ) -> Canvas {
+        let mut output = input.clone();
+        let (line_count, line_len) = match axis {
+            Axis::Horizontal => (input.height as usize, input.width as usize),
+            Axis::Vertical => (input.width as usize, input.height as usize),
+        };
+        let radius = radius as usize;
+
+        for channel in 0..4 {
+            if !channel_is_selected(channels, channel) {
+                continue;
+            }
+            for line in 0..line_count {
+                for center in 0..line_len {
+                    let samples_transparent_black = !dont_shrink_edges
+                        && extremum == Extremum::Minimum
+                        && (radius > center || radius > line_len - 1 - center);
+                    let value = if samples_transparent_black {
+                        0
+                    } else {
+                        let start = center.saturating_sub(radius);
+                        let end = center.saturating_add(radius).min(line_len - 1);
+                        let initial = match extremum {
+                            Extremum::Maximum => 0,
+                            Extremum::Minimum => 255,
+                        };
+                        (start..=end).fold(initial, |value, position| {
+                            let sample = input.data
+                                [canvas_index(input.width as usize, axis, line, position, channel)];
+                            match extremum {
+                                Extremum::Maximum => value.max(sample),
+                                Extremum::Minimum => value.min(sample),
+                            }
+                        })
+                    };
+                    let index = canvas_index(output.width as usize, axis, line, center, channel);
+                    output.data[index] = value;
+                }
+            }
+        }
+        output
     }
 
     #[test]
@@ -925,6 +1120,70 @@ mod tests {
         assert_eq!(below_half.params.kernel_radius, 0);
         assert_eq!(at_half.params.kernel_radius, 1);
         assert_eq!(above_one_and_half.params.kernel_radius, 2);
+    }
+
+    #[test]
+    fn kernel_radius_is_not_capped_at_32() {
+        assert_eq!(kernel_radius(32.0), 32);
+        assert_eq!(kernel_radius(33.0), 33);
+        assert_eq!(kernel_radius(165.0), 165);
+        assert_eq!(kernel_radius(-1.0), 0);
+    }
+
+    #[test]
+    fn monotonic_deque_matches_naive_reference_for_all_modes() {
+        const OPERATIONS: [Operation; 4] = [
+            Operation::Maximum,
+            Operation::Minimum,
+            Operation::MinimumThenMaximum,
+            Operation::MaximumThenMinimum,
+        ];
+        const CHANNELS: [Channels; 6] = [
+            Channels::Color,
+            Channels::AlphaAndColor,
+            Channels::Red,
+            Channels::Green,
+            Channels::Blue,
+            Channels::Alpha,
+        ];
+        const DIRECTIONS: [Direction; 3] = [
+            Direction::HorizontalAndVertical,
+            Direction::Horizontal,
+            Direction::Vertical,
+        ];
+        const RADII: [u32; 7] = [0, 1, 2, 7, 32, 33, 165];
+
+        let mut rng = TestRng(0x6d69_6e69_6d61_7821);
+        for case in 0..3 {
+            let width = rng.dimension();
+            let height = rng.dimension();
+            let input = random_canvas(&mut rng, width, height);
+
+            for operation in OPERATIONS {
+                for channels in CHANNELS {
+                    for direction in DIRECTIONS {
+                        for dont_shrink_edges in [false, true] {
+                            for radius in RADII {
+                                let params = MinimaxParams {
+                                    operation,
+                                    radius: radius as f32,
+                                    channels,
+                                    direction,
+                                    dont_shrink_edges,
+                                };
+                                let actual = minimax_canvas(&input, radius, params);
+                                let expected = naive_minimax_canvas(&input, radius, params);
+
+                                assert_eq!(
+                                    actual.data, expected.data,
+                                    "case={case} size={width}x{height} operation={operation:?} channels={channels:?} direction={direction:?} dont_shrink_edges={dont_shrink_edges} radius={radius}"
+                                );
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
 
     #[test]

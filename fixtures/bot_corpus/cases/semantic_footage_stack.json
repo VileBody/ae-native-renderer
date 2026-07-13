@@ -1,0 +1,7 @@
+{
+  "schema": "blast.bot-render.v1", "caseId": "semantic_footage_stack", "subtitles_mode": "legacy_blocks",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 1.8}, "effectStyleIds": ["ftg_al16_default_v1"],
+  "subtitle_payload": {"segments": [
+    {"id": "style-1", "text": "footage stack", "in_point": 0.15, "out_point": 1.5, "style_tag": "block", "tokens": [{"text": "footage", "t_start": 0.15, "t_end": 0.75}, {"text": "stack", "t_start": 0.75, "t_end": 1.3}]}
+  ]}
+}

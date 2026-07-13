@@ -1,21 +1,72 @@
 use crate::motion_blur;
 use effects::{posterize_time::PosterizeTimeParams, EffectContext, EffectRegistry};
-use raster_cpu::{composite_normal, BilinearSampler, Canvas, Sampler};
+use raster_cpu::{composite_normal, BilinearSampler, Canvas, Sampler, AE_ALPHA_GAIN_EPSILON};
 use render_ir::{
-    Composition, EffectSpec, Layer, PositionExpression, Rect, ScalarKeyframe, Scene,
-    TextAnimatorSpec, TextExpressionSelector, TextSelectorBasedOn, TextSelectorShape, Vec2Keyframe,
+    BlendMode, Composition, EffectSpec, Layer, PositionExpression, Rect, ScalarKeyframe, Scene,
+    TextAnimatorSpec, TextExpressionSelector, TextPaintSpec, TextSelectorBasedOn,
+    TextSelectorShape, Vec2Keyframe, TEXT_PAINT_MATCH_NAME,
 };
 use serde_json::{json, Value};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, VecDeque};
+use std::sync::Arc;
 use std::time::Instant;
 use text_engine::{
-    layout_text, rasterize_text, rasterize_text_with_layout, GlyphLayoutTelemetry,
-    TextLayoutRequest, TextLayoutResult, TextRasterTrace,
+    layout_text, rasterize_text_with_layout_and_paint, rasterize_text_with_paint,
+    GlyphLayoutTelemetry, TextJustification as LayoutTextJustification, TextLayoutRequest,
+    TextLayoutResult, TextPaintStyle, TextRasterTrace,
 };
 use transform_math::{Mat3, Transform2D, Vec2};
 
 pub trait FootageProvider {
     fn frame_at(&mut self, source: &str, time: f64) -> anyhow::Result<Option<Canvas>>;
+
+    /// Returns immutable source frames for a contiguous render batch when the provider can
+    /// decode them ahead of time. The default keeps custom/test providers sequential.
+    fn prefetch_frames(
+        &mut self,
+        _frames: &[u32],
+    ) -> anyhow::Result<Option<PrefetchedFootageProvider>> {
+        Ok(None)
+    }
+}
+
+const PREFETCH_TIME_SCALE: f64 = 1_000_000.0;
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PrefetchedFootageKey {
+    source: String,
+    time_key: i64,
+}
+
+/// Immutable footage snapshot for a render batch. Each worker gets a cheap clone and never
+/// touches a stateful decoder while rendering.
+#[derive(Debug, Clone, Default)]
+pub struct PrefetchedFootageProvider {
+    frames: Arc<BTreeMap<PrefetchedFootageKey, Arc<Canvas>>>,
+}
+
+impl PrefetchedFootageProvider {
+    pub fn insert(&mut self, source: impl Into<String>, time: f64, frame: Canvas) {
+        let key = PrefetchedFootageKey {
+            source: source.into(),
+            time_key: prefetch_time_key(time),
+        };
+        Arc::make_mut(&mut self.frames).insert(key, Arc::new(frame));
+    }
+}
+
+impl FootageProvider for PrefetchedFootageProvider {
+    fn frame_at(&mut self, source: &str, time: f64) -> anyhow::Result<Option<Canvas>> {
+        let key = PrefetchedFootageKey {
+            source: source.to_string(),
+            time_key: prefetch_time_key(time),
+        };
+        Ok(self.frames.get(&key).map(|frame| (**frame).clone()))
+    }
+}
+
+fn prefetch_time_key(time: f64) -> i64 {
+    (time.max(0.0) * PREFETCH_TIME_SCALE).round() as i64
 }
 
 #[derive(Debug, Clone)]
@@ -33,6 +84,7 @@ pub struct FrameRenderTrace {
     pub text_selector_weights: Vec<Value>,
     pub position_expressions: Vec<Value>,
     pub collapse: Vec<Value>,
+    pub capture_effect_debug: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +251,162 @@ impl FootageProvider for CheckerboardFootageProvider {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct LowerStackCacheKey {
+    composition: String,
+    adjustment_layer: String,
+    time_bits: u64,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PrecompCacheKey {
+    composition: String,
+    time_bits: u64,
+    width: u32,
+    height: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct TextCanvasCacheKey {
+    composition: String,
+    layer: String,
+    width: u32,
+    height: u32,
+}
+
+/// Per-render CPU state. The cache is deliberately small enough to stay well below the
+/// production RSS budget while retaining adjacent Posterize Time buckets.
+#[derive(Debug)]
+pub struct EffectRuntime {
+    lower_stack_cache: BTreeMap<LowerStackCacheKey, Arc<Canvas>>,
+    lower_stack_lru: VecDeque<LowerStackCacheKey>,
+    lower_stack_bytes: usize,
+    max_lower_stack_bytes: usize,
+    precomp_cache: BTreeMap<PrecompCacheKey, Arc<Canvas>>,
+    precomp_lru: VecDeque<PrecompCacheKey>,
+    precomp_bytes: usize,
+    max_precomp_bytes: usize,
+    text_cache: BTreeMap<TextCanvasCacheKey, Arc<Canvas>>,
+    text_lru: VecDeque<TextCanvasCacheKey>,
+    text_bytes: usize,
+    max_text_bytes: usize,
+    pub ping: Canvas,
+    pub pong: Canvas,
+    pub worker_scratch: Vec<Vec<f32>>,
+}
+
+impl Default for EffectRuntime {
+    fn default() -> Self {
+        let workers = std::thread::available_parallelism()
+            .map(usize::from)
+            .unwrap_or(1)
+            .min(8);
+        Self {
+            lower_stack_cache: BTreeMap::new(),
+            lower_stack_lru: VecDeque::new(),
+            lower_stack_bytes: 0,
+            max_lower_stack_bytes: 192 * 1024 * 1024,
+            precomp_cache: BTreeMap::new(),
+            precomp_lru: VecDeque::new(),
+            precomp_bytes: 0,
+            max_precomp_bytes: 128 * 1024 * 1024,
+            text_cache: BTreeMap::new(),
+            text_lru: VecDeque::new(),
+            text_bytes: 0,
+            max_text_bytes: 64 * 1024 * 1024,
+            ping: Canvas::transparent(0, 0),
+            pong: Canvas::transparent(0, 0),
+            worker_scratch: (0..workers).map(|_| Vec::new()).collect(),
+        }
+    }
+}
+
+impl EffectRuntime {
+    fn lower_stack(&mut self, key: &LowerStackCacheKey) -> Option<Arc<Canvas>> {
+        let canvas = self.lower_stack_cache.get(key).cloned()?;
+        self.lower_stack_lru.retain(|candidate| candidate != key);
+        self.lower_stack_lru.push_back(key.clone());
+        Some(canvas)
+    }
+
+    fn store_lower_stack(&mut self, key: LowerStackCacheKey, canvas: Arc<Canvas>) {
+        let canvas_bytes = canvas.data.len();
+        if canvas_bytes > self.max_lower_stack_bytes {
+            return;
+        }
+        if let Some(replaced) = self.lower_stack_cache.insert(key.clone(), canvas) {
+            self.lower_stack_bytes = self.lower_stack_bytes.saturating_sub(replaced.data.len());
+        }
+        self.lower_stack_bytes += canvas_bytes;
+        self.lower_stack_lru.retain(|candidate| candidate != &key);
+        self.lower_stack_lru.push_back(key);
+        while self.lower_stack_bytes > self.max_lower_stack_bytes {
+            let Some(oldest) = self.lower_stack_lru.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.lower_stack_cache.remove(&oldest) {
+                self.lower_stack_bytes = self.lower_stack_bytes.saturating_sub(removed.data.len());
+            }
+        }
+    }
+
+    fn precomp(&mut self, key: &PrecompCacheKey) -> Option<Arc<Canvas>> {
+        let canvas = self.precomp_cache.get(key).cloned()?;
+        self.precomp_lru.retain(|candidate| candidate != key);
+        self.precomp_lru.push_back(key.clone());
+        Some(canvas)
+    }
+
+    fn store_precomp(&mut self, key: PrecompCacheKey, canvas: Arc<Canvas>) {
+        let canvas_bytes = canvas.data.len();
+        if canvas_bytes > self.max_precomp_bytes {
+            return;
+        }
+        if let Some(replaced) = self.precomp_cache.insert(key.clone(), canvas) {
+            self.precomp_bytes = self.precomp_bytes.saturating_sub(replaced.data.len());
+        }
+        self.precomp_bytes += canvas_bytes;
+        self.precomp_lru.retain(|candidate| candidate != &key);
+        self.precomp_lru.push_back(key);
+        while self.precomp_bytes > self.max_precomp_bytes {
+            let Some(oldest) = self.precomp_lru.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.precomp_cache.remove(&oldest) {
+                self.precomp_bytes = self.precomp_bytes.saturating_sub(removed.data.len());
+            }
+        }
+    }
+
+    fn text_canvas(&mut self, key: &TextCanvasCacheKey) -> Option<Arc<Canvas>> {
+        let canvas = self.text_cache.get(key).cloned()?;
+        self.text_lru.retain(|candidate| candidate != key);
+        self.text_lru.push_back(key.clone());
+        Some(canvas)
+    }
+
+    fn store_text_canvas(&mut self, key: TextCanvasCacheKey, canvas: Arc<Canvas>) {
+        let canvas_bytes = canvas.data.len();
+        if canvas_bytes > self.max_text_bytes {
+            return;
+        }
+        if let Some(replaced) = self.text_cache.insert(key.clone(), canvas) {
+            self.text_bytes = self.text_bytes.saturating_sub(replaced.data.len());
+        }
+        self.text_bytes += canvas_bytes;
+        self.text_lru.retain(|candidate| candidate != &key);
+        self.text_lru.push_back(key);
+        while self.text_bytes > self.max_text_bytes {
+            let Some(oldest) = self.text_lru.pop_front() else {
+                break;
+            };
+            if let Some(removed) = self.text_cache.remove(&oldest) {
+                self.text_bytes = self.text_bytes.saturating_sub(removed.data.len());
+            }
+        }
+    }
+}
+
 pub fn render_frame(scene: &Scene, frame_index: u32) -> anyhow::Result<Canvas> {
     let mut footage = CheckerboardFootageProvider;
     render_frame_with_footage(scene, frame_index, &mut footage)
@@ -209,6 +417,16 @@ pub fn render_frame_with_footage(
     frame_index: u32,
     footage: &mut dyn FootageProvider,
 ) -> anyhow::Result<Canvas> {
+    let mut runtime = EffectRuntime::default();
+    render_frame_with_footage_runtime(scene, frame_index, footage, &mut runtime)
+}
+
+fn render_frame_with_footage_runtime(
+    scene: &Scene,
+    frame_index: u32,
+    footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
+) -> anyhow::Result<Canvas> {
     let comp = &scene.composition;
     let time = frame_index as f64 / comp.fps;
     render_composition_frame(
@@ -217,6 +435,7 @@ pub fn render_frame_with_footage(
         &scene.layers,
         time,
         footage,
+        runtime,
         &mut Vec::new(),
         None,
     )
@@ -226,6 +445,32 @@ pub fn render_frame_with_footage_traced(
     scene: &Scene,
     frame_index: u32,
     footage: &mut dyn FootageProvider,
+) -> anyhow::Result<(Canvas, FrameRenderTrace)> {
+    render_frame_with_footage_profiled(scene, frame_index, footage, true)
+}
+
+pub fn render_frame_with_footage_profiled(
+    scene: &Scene,
+    frame_index: u32,
+    footage: &mut dyn FootageProvider,
+    capture_effect_debug: bool,
+) -> anyhow::Result<(Canvas, FrameRenderTrace)> {
+    let mut runtime = EffectRuntime::default();
+    render_frame_with_footage_profiled_runtime(
+        scene,
+        frame_index,
+        footage,
+        &mut runtime,
+        capture_effect_debug,
+    )
+}
+
+pub fn render_frame_with_footage_profiled_runtime(
+    scene: &Scene,
+    frame_index: u32,
+    footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
+    capture_effect_debug: bool,
 ) -> anyhow::Result<(Canvas, FrameRenderTrace)> {
     let comp = &scene.composition;
     let time = frame_index as f64 / comp.fps;
@@ -243,6 +488,7 @@ pub fn render_frame_with_footage_traced(
         text_selector_weights: Vec::new(),
         position_expressions: Vec::new(),
         collapse: Vec::new(),
+        capture_effect_debug,
     };
     let canvas = render_composition_frame(
         scene,
@@ -250,6 +496,7 @@ pub fn render_frame_with_footage_traced(
         &scene.layers,
         time,
         footage,
+        runtime,
         &mut Vec::new(),
         Some(&mut trace),
     )?;
@@ -262,6 +509,7 @@ fn render_composition_frame(
     layers: &[Layer],
     time: f64,
     footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
     stack: &mut Vec<String>,
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
@@ -291,22 +539,35 @@ fn render_composition_frame(
                 lower_stack_time,
                 posterize.map(|timing| timing.posterize),
             );
-            let input_canvas = if time_changed(lower_stack_time, time) {
-                render_composition_frame(
-                    scene,
-                    comp,
-                    &layers[layer_index + 1..],
-                    lower_stack_time,
-                    footage,
-                    stack,
-                    None,
-                )?
+            let lower_stack_canvas = if time_changed(lower_stack_time, time) {
+                let key = LowerStackCacheKey {
+                    composition: comp.id.clone(),
+                    adjustment_layer: layer.id().to_string(),
+                    time_bits: lower_stack_time.to_bits(),
+                };
+                if let Some(cached) = runtime.lower_stack(&key) {
+                    Some(cached)
+                } else {
+                    let rendered = Arc::new(render_composition_frame(
+                        scene,
+                        comp,
+                        &layers[layer_index + 1..],
+                        lower_stack_time,
+                        footage,
+                        runtime,
+                        stack,
+                        None,
+                    )?);
+                    runtime.store_lower_stack(key, Arc::clone(&rendered));
+                    Some(rendered)
+                }
             } else {
-                canvas
+                None
             };
+            let input_canvas = lower_stack_canvas.as_deref().unwrap_or(&canvas);
             canvas = apply_adjustment_effects_to_canvas(
                 effects,
-                &input_canvas,
+                input_canvas,
                 AdjustmentTimeRouting {
                     comp_time: time,
                     layer_time,
@@ -314,6 +575,7 @@ fn render_composition_frame(
                     posterize,
                 },
                 comp.fps,
+                runtime,
                 trace.as_deref_mut(),
                 &comp.id,
                 layer.id(),
@@ -332,7 +594,13 @@ fn render_composition_frame(
             continue;
         }
         let layer_time = posterized_time_for_effects(effects_of(layer), time);
-        let layer_opacity = opacity_of(layer, layer_time);
+        // Posterize Time samples footage/source pixels. AE keeps a text layer's
+        // own animator and opacity clocks live, then applies its pixel effects.
+        let layer_opacity = if matches!(layer, Layer::Text { .. }) {
+            opacity_of(layer, time)
+        } else {
+            opacity_of(layer, layer_time)
+        };
         if layer_opacity <= 0.0 {
             continue;
         }
@@ -343,10 +611,11 @@ fn render_composition_frame(
                 layer,
                 time,
                 footage,
+                runtime,
                 stack,
                 trace.as_deref_mut(),
             )?;
-            composite_normal(&mut canvas, &layer_canvas, 100.0);
+            composite_layer(&mut canvas, &layer_canvas, 100.0, layer.blend_mode());
         } else {
             let layer_canvas = render_layer_stub(
                 scene,
@@ -354,14 +623,72 @@ fn render_composition_frame(
                 layer,
                 time,
                 footage,
+                runtime,
                 stack,
                 trace.as_deref_mut(),
             )?;
-            composite_normal(&mut canvas, &layer_canvas, layer_opacity);
+            composite_layer(
+                &mut canvas,
+                &layer_canvas,
+                layer_opacity,
+                layer.blend_mode(),
+            );
         }
     }
 
     Ok(canvas)
+}
+
+fn composite_layer(dst: &mut Canvas, src: &Canvas, opacity_percent: f32, blend_mode: BlendMode) {
+    if blend_mode == BlendMode::Normal {
+        composite_normal(dst, src, opacity_percent);
+        return;
+    }
+
+    let opacity = (opacity_percent / 100.0).clamp(0.0, 1.0);
+    if opacity <= AE_ALPHA_GAIN_EPSILON {
+        return;
+    }
+
+    let width = dst.width.min(src.width);
+    let height = dst.height.min(src.height);
+    for y in 0..height {
+        for x in 0..width {
+            let dst_index = ((y * dst.width + x) * 4) as usize;
+            let src_index = ((y * src.width + x) * 4) as usize;
+            let src_alpha = src.data[src_index + 3] as f32 / 255.0 * opacity;
+            if src_alpha <= 0.0 {
+                continue;
+            }
+
+            let dst_alpha = dst.data[dst_index + 3] as f32 / 255.0;
+            let out_alpha = src_alpha + dst_alpha * (1.0 - src_alpha);
+            for channel in 0..3 {
+                let backdrop = dst.data[dst_index + channel] as f32 / 255.0;
+                let source = src.data[src_index + channel] as f32 / 255.0;
+                let blended = match blend_mode {
+                    BlendMode::Add => (backdrop + source).min(1.0),
+                    BlendMode::Screen => 1.0 - (1.0 - backdrop) * (1.0 - source),
+                    BlendMode::Difference => (backdrop - source).abs(),
+                    BlendMode::Normal => unreachable!("normal uses composite_normal"),
+                };
+                let premultiplied = source * src_alpha * (1.0 - dst_alpha)
+                    + backdrop * dst_alpha * (1.0 - src_alpha)
+                    + blended * src_alpha * dst_alpha;
+                let output = if out_alpha > 0.0 {
+                    premultiplied / out_alpha
+                } else {
+                    backdrop
+                };
+                dst.data[dst_index + channel] = quantize_blend_unit(output);
+            }
+            dst.data[dst_index + 3] = quantize_blend_unit(out_alpha);
+        }
+    }
+}
+
+fn quantize_blend_unit(value: f32) -> u8 {
+    (value * 255.0).round().clamp(0.0, 255.0) as u8
 }
 
 fn should_motion_blur_layer(comp: &Composition, layer: &Layer) -> bool {
@@ -387,6 +714,7 @@ fn render_motion_blurred_layer(
     layer: &Layer,
     frame_time: f64,
     footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
     stack: &mut Vec<String>,
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
@@ -454,6 +782,7 @@ fn render_motion_blurred_layer(
             layer,
             sample_time,
             footage,
+            runtime,
             stack,
             trace.as_deref_mut(),
         )?;
@@ -714,6 +1043,7 @@ fn render_layer_stub(
     layer: &Layer,
     time: f64,
     footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
     stack: &mut Vec<String>,
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
@@ -743,12 +1073,7 @@ fn render_layer_stub(
                 *duration,
                 comp.fps,
             );
-            let mut c = Canvas::transparent(canvas_dim(rect.w), canvas_dim(rect.h));
-            for y in 0..c.height {
-                for x in 0..c.width {
-                    c.set_pixel(x, y, *color);
-                }
-            }
+            let c = Canvas::new(canvas_dim(rect.w), canvas_dim(rect.h), *color);
             transform_canvas(&c, comp.width, comp.height, &evaluated, [rect.x, rect.y])
         }
         Layer::Text {
@@ -756,21 +1081,31 @@ fn render_layer_stub(
             text,
             font,
             fontSize,
+            char_styles,
+            tracking,
+            leading,
+            center_source_rect_y,
+            justification,
             fill,
             box_,
             transform,
             text_animators,
+            effects,
             start,
             duration,
             ..
         } => {
-            let evaluated = evaluate_transform(transform, layer_time, *start, *duration, comp.fps);
+            // Posterize Time in the layer stack holds the text animator's
+            // rendered source frame. Dynamic effect parameters remain on the
+            // composition clock below when the effect stack is applied.
+            let text_time = layer_time;
+            let evaluated = evaluate_transform(transform, text_time, *start, *duration, comp.fps);
             record_transform_sampling_trace(
                 trace.as_deref_mut(),
                 &comp.id,
                 id,
                 transform,
-                layer_time,
+                text_time,
                 *start,
                 *duration,
                 comp.fps,
@@ -783,29 +1118,68 @@ fn render_layer_stub(
             });
             let local_width = canvas_dim(rect.w);
             let local_height = canvas_dim(rect.h);
+            let effective_tracking = evaluate_text_tracking(*tracking, text_animators, text_time);
+            let paint = resolve_text_paint(*fill, effects);
             let request = TextLayoutRequest {
                 text: text.clone(),
                 font_id: font.clone(),
                 font_size: *fontSize,
+                font_overrides: char_styles
+                    .iter()
+                    .filter_map(|style| style.font.clone().map(|font| (style.index, font)))
+                    .collect(),
+                font_size_overrides: char_styles
+                    .iter()
+                    .filter_map(|style| style.font_size.map(|font_size| (style.index, font_size)))
+                    .collect(),
+                tracking: effective_tracking,
+                leading: *leading,
+                center_source_rect_y: *center_source_rect_y,
+                justification: layout_text_justification(*justification),
                 box_rect: Some([0.0, 0.0, local_width as f32, local_height as f32]),
             };
             let layout = layout_text(&request).ok();
-            let (mut text_canvas, raster_trace) = if let Some(layout) = layout.as_ref() {
-                let (canvas, raster_trace) =
-                    rasterize_text_with_layout(&request, layout, local_width, local_height, *fill)?;
+            let static_cache_key = (text_animators.is_empty()
+                && transform.animation.reveal.is_empty()
+                && effects
+                    .iter()
+                    .all(|effect| effect.match_name == TEXT_PAINT_MATCH_NAME))
+            .then(|| TextCanvasCacheKey {
+                composition: comp.id.clone(),
+                layer: id.clone(),
+                width: local_width,
+                height: local_height,
+            });
+            let cached_text = static_cache_key
+                .as_ref()
+                .and_then(|key| runtime.text_canvas(key));
+            let (mut text_canvas, raster_trace) = if let Some(cached) = cached_text {
+                ((*cached).clone(), None)
+            } else if let Some(layout) = layout.as_ref() {
+                let (canvas, raster_trace) = rasterize_text_with_layout_and_paint(
+                    &request,
+                    layout,
+                    local_width,
+                    local_height,
+                    paint,
+                )?;
+                if let Some(key) = static_cache_key.clone() {
+                    runtime.store_text_canvas(key, Arc::new(canvas.clone()));
+                }
                 (canvas, Some(raster_trace))
             } else {
-                (
-                    rasterize_text(&request, local_width, local_height, *fill)?,
-                    None,
-                )
+                let canvas = rasterize_text_with_paint(&request, local_width, local_height, paint)?;
+                if let Some(key) = static_cache_key {
+                    runtime.store_text_canvas(key, Arc::new(canvas.clone()));
+                }
+                (canvas, None)
             };
             record_text_layout_trace(
                 trace.as_deref_mut(),
                 &comp.id,
                 id,
                 time,
-                layer_time,
+                text_time,
                 &request,
                 [local_width, local_height],
                 1.0,
@@ -815,7 +1189,7 @@ fn render_layer_stub(
                 raster_trace.as_ref(),
                 "layer_text",
             );
-            let reveal = evaluate_scalar_keyframes(&transform.animation.reveal, layer_time, 100.0);
+            let reveal = evaluate_scalar_keyframes(&transform.animation.reveal, text_time, 100.0);
             if text_animators.is_empty() {
                 apply_horizontal_reveal(&mut text_canvas, reveal);
             } else {
@@ -824,7 +1198,7 @@ fn render_layer_stub(
                     text,
                     layout.as_ref(),
                     text_animators,
-                    layer_time,
+                    text_time,
                     *start,
                     1.0,
                     trace.as_deref_mut(),
@@ -832,6 +1206,18 @@ fn render_layer_stub(
                     id,
                 );
             }
+            let effects_started = Instant::now();
+            text_canvas = apply_effects_to_canvas(
+                effects,
+                &text_canvas,
+                time,
+                comp.fps,
+                runtime,
+                trace.as_deref_mut(),
+                &comp.id,
+                id,
+            )?;
+            layer_space_effects_ms = Some(elapsed_ms(effects_started));
             transform_canvas(
                 &text_canvas,
                 comp.width,
@@ -870,6 +1256,7 @@ fn render_layer_stub(
                             &frame,
                             layer_time,
                             comp.fps,
+                            runtime,
                             trace.as_deref_mut(),
                             &comp.id,
                             layer.id(),
@@ -899,6 +1286,7 @@ fn render_layer_stub(
                     layer,
                     layer_time,
                     footage,
+                    runtime,
                     stack,
                     trace.as_deref_mut(),
                 )?
@@ -917,18 +1305,41 @@ fn render_layer_stub(
                         composition
                     );
                 }
-                stack.push(composition.clone());
                 let source_time = (layer_time - *start).max(0.0);
-                let precomp_canvas = render_composition_frame(
-                    scene,
-                    &node.composition,
-                    &node.layers,
-                    source_time,
-                    footage,
-                    stack,
-                    trace.as_deref_mut(),
-                )?;
-                stack.pop();
+                let use_cache = trace
+                    .as_ref()
+                    .is_some_and(|trace| !trace.capture_effect_debug);
+                let cache_key = PrecompCacheKey {
+                    composition: composition.clone(),
+                    time_bits: source_time.to_bits(),
+                    width: node.composition.width,
+                    height: node.composition.height,
+                };
+                let precomp_canvas = if use_cache {
+                    runtime.precomp(&cache_key)
+                } else {
+                    None
+                };
+                let precomp_canvas = if let Some(cached) = precomp_canvas {
+                    cached
+                } else {
+                    stack.push(composition.clone());
+                    let rendered = Arc::new(render_composition_frame(
+                        scene,
+                        &node.composition,
+                        &node.layers,
+                        source_time,
+                        footage,
+                        runtime,
+                        stack,
+                        trace.as_deref_mut(),
+                    )?);
+                    stack.pop();
+                    if use_cache {
+                        runtime.store_precomp(cache_key, Arc::clone(&rendered));
+                    }
+                    rendered
+                };
                 let evaluated =
                     evaluate_transform(transform, layer_time, *start, *duration, comp.fps);
                 record_transform_sampling_trace(
@@ -953,7 +1364,7 @@ fn render_layer_stub(
                     [node.composition.width, node.composition.height],
                 );
                 transform_canvas(
-                    &precomp_canvas,
+                    precomp_canvas.as_ref(),
                     comp.width,
                     comp.height,
                     &evaluated,
@@ -974,6 +1385,7 @@ fn render_layer_stub(
             &canvas,
             layer_time,
             comp.fps,
+            runtime,
             trace.as_deref_mut(),
             &comp.id,
             layer.id(),
@@ -999,6 +1411,7 @@ fn render_collapsed_precomp(
     layer: &Layer,
     time: f64,
     footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
     stack: &mut Vec<String>,
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
@@ -1061,11 +1474,17 @@ fn render_collapsed_precomp(
             child,
             source_time,
             footage,
+            runtime,
             stack,
             parent_matrix,
             trace.as_deref_mut(),
         )?;
-        composite_normal(&mut canvas, &child_canvas, opacity_of(child, source_time));
+        composite_layer(
+            &mut canvas,
+            &child_canvas,
+            opacity_of(child, source_time),
+            child.blend_mode(),
+        );
     }
     stack.pop();
 
@@ -1078,6 +1497,7 @@ fn render_layer_with_parent_matrix(
     layer: &Layer,
     time: f64,
     footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
     stack: &mut Vec<String>,
     parent_matrix: Mat3,
     mut trace: Option<&mut FrameRenderTrace>,
@@ -1103,12 +1523,7 @@ fn render_layer_with_parent_matrix(
                 *duration,
                 parent_comp.fps,
             );
-            let mut c = Canvas::transparent(canvas_dim(rect.w), canvas_dim(rect.h));
-            for y in 0..c.height {
-                for x in 0..c.width {
-                    c.set_pixel(x, y, *color);
-                }
-            }
+            let c = Canvas::new(canvas_dim(rect.w), canvas_dim(rect.h), *color);
             let matrix = parent_matrix.mul(transform_to_matrix(&evaluated).matrix());
             Ok(transform_canvas_with_matrix(
                 &c,
@@ -1123,10 +1538,16 @@ fn render_layer_with_parent_matrix(
             text,
             font,
             fontSize,
+            char_styles,
+            tracking,
+            leading,
+            center_source_rect_y,
+            justification,
             fill,
             box_,
             transform,
             text_animators,
+            effects,
             start,
             duration,
             ..
@@ -1153,20 +1574,44 @@ fn render_layer_with_parent_matrix(
             let raster_scale = matrix_scale_hint(matrix).clamp(1.0, 4.0);
             let local_width = canvas_dim(rect.w * raster_scale);
             let local_height = canvas_dim(rect.h * raster_scale);
+            let effective_tracking = evaluate_text_tracking(*tracking, text_animators, time);
+            let mut paint = resolve_text_paint(*fill, effects);
+            paint.stroke_width *= raster_scale;
             let request = TextLayoutRequest {
                 text: text.clone(),
                 font_id: font.clone(),
                 font_size: *fontSize * raster_scale,
+                font_overrides: char_styles
+                    .iter()
+                    .filter_map(|style| style.font.clone().map(|font| (style.index, font)))
+                    .collect(),
+                font_size_overrides: char_styles
+                    .iter()
+                    .filter_map(|style| {
+                        style
+                            .font_size
+                            .map(|font_size| (style.index, font_size * raster_scale))
+                    })
+                    .collect(),
+                tracking: effective_tracking,
+                leading: leading.map(|value| value * raster_scale),
+                center_source_rect_y: *center_source_rect_y,
+                justification: layout_text_justification(*justification),
                 box_rect: Some([0.0, 0.0, local_width as f32, local_height as f32]),
             };
             let layout = layout_text(&request).ok();
             let (mut text_canvas, raster_trace) = if let Some(layout) = layout.as_ref() {
-                let (canvas, raster_trace) =
-                    rasterize_text_with_layout(&request, layout, local_width, local_height, *fill)?;
+                let (canvas, raster_trace) = rasterize_text_with_layout_and_paint(
+                    &request,
+                    layout,
+                    local_width,
+                    local_height,
+                    paint,
+                )?;
                 (canvas, Some(raster_trace))
             } else {
                 (
-                    rasterize_text(&request, local_width, local_height, *fill)?,
+                    rasterize_text_with_paint(&request, local_width, local_height, paint)?,
                     None,
                 )
             };
@@ -1295,11 +1740,17 @@ fn render_layer_with_parent_matrix(
                     child,
                     source_time,
                     footage,
+                    runtime,
                     stack,
                     matrix,
                     trace.as_deref_mut(),
                 )?;
-                composite_normal(&mut canvas, &child_canvas, opacity_of(child, source_time));
+                composite_layer(
+                    &mut canvas,
+                    &child_canvas,
+                    opacity_of(child, source_time),
+                    child.blend_mode(),
+                );
             }
             stack.pop();
             Ok(canvas)
@@ -1310,6 +1761,7 @@ fn render_layer_with_parent_matrix(
             layer,
             time,
             footage,
+            runtime,
             stack,
             trace.as_deref_mut(),
         ),
@@ -1359,18 +1811,37 @@ fn apply_effects_to_canvas(
     input: &Canvas,
     time: f64,
     fps: f64,
+    runtime: &mut EffectRuntime,
     mut trace: Option<&mut FrameRenderTrace>,
     composition: &str,
     layer_id: &str,
 ) -> anyhow::Result<Canvas> {
-    let mut canvas = input.clone();
+    let mut canvas = None::<Canvas>;
     for (effect_index, spec) in effects.iter().enumerate() {
+        if spec.match_name == TEXT_PAINT_MATCH_NAME {
+            continue;
+        }
         if let Some(effect) = EffectRegistry::create(&spec.match_name) {
-            let debug_trace = trace.as_ref().and_then(|_| {
-                effect_debug_trace_json(&spec.match_name, &canvas, &spec.params, time)
-            });
+            let effect_input = canvas.as_ref().unwrap_or(input);
+            let debug_trace = trace
+                .as_ref()
+                .is_some_and(|trace| trace.capture_effect_debug)
+                .then(|| {
+                    effect_debug_trace_json(&spec.match_name, effect_input, &spec.params, time)
+                })
+                .flatten();
             let started = Instant::now();
-            canvas = effect.render(&canvas, &EffectContext { time, fps }, &spec.params)?;
+            effect.render_into(
+                effect_input,
+                &EffectContext { time, fps },
+                &spec.params,
+                &mut runtime.ping,
+            )?;
+            let rendered = std::mem::replace(
+                &mut runtime.ping,
+                canvas.take().unwrap_or_else(|| Canvas::transparent(0, 0)),
+            );
+            canvas = Some(rendered);
             if let Some(trace) = trace.as_deref_mut() {
                 if let Some(debug_trace) = debug_trace {
                     trace.effect_debug.push(EffectDebugRecord {
@@ -1394,7 +1865,7 @@ fn apply_effects_to_canvas(
             anyhow::bail!("unknown effect matchName: {}", spec.match_name);
         }
     }
-    Ok(canvas)
+    Ok(canvas.unwrap_or_else(|| input.clone()))
 }
 
 fn apply_adjustment_effects_to_canvas(
@@ -1402,6 +1873,7 @@ fn apply_adjustment_effects_to_canvas(
     input: &Canvas,
     routing: AdjustmentTimeRouting,
     fps: f64,
+    runtime: &mut EffectRuntime,
     mut trace: Option<&mut FrameRenderTrace>,
     composition: &str,
     layer_id: &str,
@@ -1425,22 +1897,31 @@ fn apply_adjustment_effects_to_canvas(
             param_time,
             crop_bucketed_adjustment_input,
         );
-        let input_hash = trace.as_ref().map(|_| canvas_hash(&canvas));
-        let debug_trace = trace.as_ref().and_then(|_| {
-            effect_debug_trace_json(&spec.match_name, input_plan.input(), &params, param_time)
-        });
+        let capture_diagnostics = trace
+            .as_ref()
+            .is_some_and(|trace| trace.capture_effect_debug);
+        let input_hash = capture_diagnostics.then(|| canvas_hash(&canvas));
+        let debug_trace = trace
+            .as_ref()
+            .is_some_and(|trace| trace.capture_effect_debug)
+            .then(|| {
+                effect_debug_trace_json(&spec.match_name, input_plan.input(), &params, param_time)
+            })
+            .flatten();
         let started = Instant::now();
-        let rendered = effect.render(
+        effect.render_into(
             input_plan.input(),
             &EffectContext {
                 time: param_time,
                 fps,
             },
             &params,
+            &mut runtime.pong,
         )?;
+        let rendered = std::mem::replace(&mut runtime.pong, Canvas::transparent(0, 0));
         canvas = input_plan.place_output(rendered);
         let elapsed_ms = elapsed_ms(started);
-        let output_hash = trace.as_ref().map(|_| canvas_hash(&canvas));
+        let output_hash = capture_diagnostics.then(|| canvas_hash(&canvas));
 
         if let Some(trace) = trace.as_deref_mut() {
             if let Some(debug_trace) = debug_trace {
@@ -1469,8 +1950,8 @@ fn apply_adjustment_effects_to_canvas(
                 layer_time: routing.layer_time,
                 lower_stack_time: routing.lower_stack_time,
                 param_time,
-                input_hash: input_hash.unwrap_or_else(|| canvas_hash(input)),
-                output_hash: output_hash.unwrap_or_else(|| canvas_hash(&canvas)),
+                input_hash: input_hash.unwrap_or_default(),
+                output_hash: output_hash.unwrap_or_default(),
                 posterize: routing.posterize.and_then(|posterize| {
                     (posterize.effect_index == effect_index).then_some(posterize.posterize)
                 }),
@@ -2152,6 +2633,16 @@ fn transform_to_matrix(transform: &render_ir::Transform2D) -> Transform2D {
     }
 }
 
+fn layout_text_justification(
+    justification: render_ir::TextJustification,
+) -> LayoutTextJustification {
+    match justification {
+        render_ir::TextJustification::Left => LayoutTextJustification::Left,
+        render_ir::TextJustification::Center => LayoutTextJustification::Center,
+        render_ir::TextJustification::Full => LayoutTextJustification::Full,
+    }
+}
+
 fn evaluate_transform(
     transform: &render_ir::Transform2D,
     time: f64,
@@ -2785,6 +3276,10 @@ fn record_text_layout_trace(
             "text": &request.text,
             "font_id": &request.font_id,
             "font_size": request.font_size,
+            "tracking": request.tracking,
+            "leading": request.leading,
+            "center_source_rect_y": request.center_source_rect_y,
+            "justification": request.justification,
             "box_rect": request.box_rect
         },
         "raster": {
@@ -3124,6 +3619,17 @@ fn apply_text_animators(
             layer_start,
             unit_scale,
         );
+        if matches!(
+            animator.expression_selector,
+            Some(TextExpressionSelector::TrackingAmount { .. })
+        ) && animator.position.is_none()
+            && animator.scale.is_none()
+            && animator.rotation.is_none()
+            && animator.blur.is_none()
+            && (animator.opacity - 100.0).abs() <= f32::EPSILON
+        {
+            continue;
+        }
         if animator.position.is_some()
             || animator.scale.is_some()
             || animator.rotation.is_some()
@@ -3154,6 +3660,35 @@ fn apply_text_animators(
         }
     }
     canvas
+}
+
+fn evaluate_text_tracking(base_tracking: f32, animators: &[TextAnimatorSpec], time: f64) -> f32 {
+    animators.iter().fold(base_tracking, |tracking, animator| {
+        let Some(TextExpressionSelector::TrackingAmount { value, keyframes }) =
+            animator.expression_selector.as_ref()
+        else {
+            return tracking;
+        };
+        tracking + evaluate_scalar_keyframes(keyframes, time, *value)
+    })
+}
+
+fn resolve_text_paint(fill: [u8; 4], effects: &[EffectSpec]) -> TextPaintStyle {
+    let extension = effects.iter().find_map(TextPaintSpec::from_effect);
+    TextPaintStyle {
+        fill: extension
+            .as_ref()
+            .and_then(|paint| paint.fill)
+            .unwrap_or(fill),
+        stroke_color: extension.as_ref().and_then(|paint| paint.stroke_color),
+        stroke_width: extension
+            .as_ref()
+            .map(|paint| paint.stroke_width.max(0.0))
+            .unwrap_or(0.0),
+        stroke_over_fill: extension
+            .as_ref()
+            .is_some_and(|paint| paint.stroke_over_fill),
+    }
 }
 
 fn apply_range_opacity(
@@ -3284,7 +3819,9 @@ fn selector_order_index(
 }
 
 fn unit_center_percent(index: usize, total: usize) -> f32 {
-    ((index as f32 + 0.5) / total as f32) * 100.0
+    // AE percentage range selectors address the leading boundary of each
+    // text unit. With four words, starts 25/43.75/62.5 reveal 1/2/3 words.
+    (index as f32 / total.max(1) as f32) * 100.0
 }
 
 fn deterministic_order_index(index: usize, total: usize, seed: u32) -> usize {
@@ -3433,6 +3970,14 @@ fn text_expression_weight_detail(
                 text_total: total,
             }
         }
+        Some(TextExpressionSelector::TrackingAmount { .. }) => TextExpressionWeightDetail {
+            weight: 1.0,
+            raw_amount: None,
+            clamped_amount: None,
+            local_time_after_delay: None,
+            text_index: None,
+            text_total: total,
+        },
         None => TextExpressionWeightDetail {
             weight: 1.0,
             raw_amount: None,
@@ -3890,6 +4435,47 @@ mod tests {
     use serde_json::json;
 
     #[test]
+    fn normal_blend_dispatch_preserves_existing_compositor_bytes() {
+        let mut expected = Canvas::new(2, 1, [40, 100, 200, 128]);
+        expected.set_pixel(1, 0, [5, 5, 6, 0]);
+        let mut actual = expected.clone();
+        let mut source = Canvas::new(2, 1, [220, 80, 20, 128]);
+        source.set_pixel(1, 0, [17, 200, 90, 0]);
+
+        composite_normal(&mut expected, &source, 37.5);
+        composite_layer(&mut actual, &source, 37.5, BlendMode::Normal);
+
+        assert_eq!(actual.data, expected.data);
+    }
+
+    #[test]
+    fn add_and_difference_respect_source_alpha_and_layer_opacity() {
+        let source = Canvas::new(1, 1, [220, 80, 20, 128]);
+
+        let mut add = Canvas::new(1, 1, [40, 100, 200, 128]);
+        composite_layer(&mut add, &source, 50.0, BlendMode::Add);
+        assert_eq!(add.pixel(0, 0), [119, 112, 168, 160]);
+
+        let mut difference = Canvas::new(1, 1, [40, 100, 200, 128]);
+        composite_layer(&mut difference, &source, 50.0, BlendMode::Difference);
+        assert_eq!(difference.pixel(0, 0), [104, 80, 160, 160]);
+
+        let mut screen = Canvas::new(1, 1, [40, 100, 200, 128]);
+        composite_layer(&mut screen, &source, 50.0, BlendMode::Screen);
+        assert_eq!(screen.pixel(0, 0), [113, 106, 165, 160]);
+    }
+
+    #[test]
+    fn blend_modes_preserve_straight_source_color_over_transparency() {
+        let source = Canvas::new(1, 1, [200, 100, 50, 128]);
+        for mode in [BlendMode::Add, BlendMode::Screen, BlendMode::Difference] {
+            let mut destination = Canvas::new(1, 1, [5, 6, 7, 0]);
+            composite_layer(&mut destination, &source, 50.0, mode);
+            assert_eq!(destination.pixel(0, 0), [200, 100, 50, 64]);
+        }
+    }
+
+    #[test]
     fn scalar_keyframes_interpolate_linearly() {
         let keyframes = vec![
             ScalarKeyframe {
@@ -4008,6 +4594,7 @@ mod tests {
                 id: "ease_probe".to_string(),
                 start: 0.0,
                 duration: 1.0,
+                blend_mode: BlendMode::Normal,
                 color: [255, 255, 255, 255],
                 rect: Rect {
                     x: 0.0,
@@ -4248,6 +4835,7 @@ mod tests {
                 id: "expr".to_string(),
                 start: 0.0,
                 duration: 1.0,
+                blend_mode: BlendMode::Normal,
                 color: [255, 0, 0, 255],
                 rect: Rect {
                     x: 0.0,
@@ -4303,6 +4891,7 @@ mod tests {
                     id: "red".to_string(),
                     start: 0.0,
                     duration: 1.0,
+                    blend_mode: BlendMode::Normal,
                     color: [255, 0, 0, 255],
                     rect: Rect {
                         x: 0.0,
@@ -4321,6 +4910,7 @@ mod tests {
                 duration: 1.0,
                 composition: "child".to_string(),
                 collapse_transformations: false,
+                blend_mode: BlendMode::Normal,
                 transform: render_ir::Transform2D::default(),
                 effects: Vec::new(),
             }],
@@ -4410,6 +5000,12 @@ mod tests {
             text: "Hi all".to_string(),
             font_id: "missing".to_string(),
             font_size: 10.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: LayoutTextJustification::Center,
             box_rect: Some([0.0, 0.0, 100.0, 40.0]),
         });
 
@@ -4435,6 +5031,12 @@ mod tests {
             text: "ABCD".to_string(),
             font_id: "missing".to_string(),
             font_size: 10.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: LayoutTextJustification::Center,
             box_rect: Some([0.0, 0.0, 40.0, 10.0]),
         });
 
@@ -4458,6 +5060,12 @@ mod tests {
             text: "A".to_string(),
             font_id: "missing".to_string(),
             font_size: 10.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: LayoutTextJustification::Center,
             box_rect: Some([0.0, 0.0, 40.0, 20.0]),
         });
 
@@ -4470,6 +5078,133 @@ mod tests {
             [9.0, 2.0, 15.0, 12.0]
         );
         assert_eq!(telemetry.glyphs[0].bbox_center, [12.0, 7.0]);
+    }
+
+    #[test]
+    fn text_render_threads_tracking_and_leading_into_layout_trace() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "main".to_string(),
+                width: 200,
+                height: 100,
+                fps: 1.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+                motion_blur: render_ir::MotionBlurSettings::default(),
+            },
+            compositions: Vec::new(),
+            assets: Vec::new(),
+            layers: vec![Layer::Text {
+                id: "tracked".to_string(),
+                start: 0.0,
+                duration: 1.0,
+                text: "AB".to_string(),
+                font: "DejaVu Sans".to_string(),
+                fontSize: 20.0,
+                char_styles: Vec::new(),
+                blend_mode: BlendMode::Normal,
+                tracking: -50.0,
+                leading: Some(20.0),
+                center_source_rect_y: false,
+                justification: render_ir::TextJustification::Center,
+                fill: [255, 255, 255, 255],
+                box_: Some(Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: 200.0,
+                    h: 100.0,
+                }),
+                transform: render_ir::Transform2D::default(),
+                text_animators: Vec::new(),
+                effects: Vec::new(),
+            }],
+        };
+        let mut footage = CheckerboardFootageProvider;
+
+        let (_, trace) = render_frame_with_footage_traced(&scene, 0, &mut footage).unwrap();
+        let text = &trace.text_layouts[0];
+        assert_eq!(text["request"]["tracking"], json!(-50.0));
+        assert_eq!(text["request"]["leading"], json!(20.0));
+        assert_eq!(text["request"]["justification"], json!("center"));
+        assert_eq!(text["layout"]["tracking_px"], json!(-1.0));
+        assert_eq!(text["layout"]["line_height"], json!(20.0));
+    }
+
+    #[test]
+    fn tracking_amount_evaluates_before_layout_at_start_mid_and_end() {
+        let ease = render_ir::KeyframeEase {
+            x1: 0.333_333_33,
+            y1: 0.0,
+            x2: 0.666_666_7,
+            y2: 1.0,
+        };
+        let animator = TextAnimatorSpec {
+            name: "tracking".to_string(),
+            opacity: 100.0,
+            expression_selector: Some(TextExpressionSelector::TrackingAmount {
+                value: 7.0,
+                keyframes: vec![
+                    ScalarKeyframe {
+                        time: 1.0,
+                        value: 7.0,
+                        hold: false,
+                        approximate: false,
+                        ease: Some(ease),
+                    },
+                    ScalarKeyframe {
+                        time: 3.0,
+                        value: -1.0,
+                        hold: false,
+                        approximate: false,
+                        ease: Some(ease),
+                    },
+                ],
+            }),
+            ..TextAnimatorSpec::default()
+        };
+        let values = [1.0, 2.0, 3.0]
+            .map(|time| evaluate_text_tracking(-55.0, std::slice::from_ref(&animator), time));
+        assert!((values[0] - -48.0).abs() < 0.0001);
+        assert!((values[1] - -52.0).abs() < 0.0001);
+        assert!((values[2] - -56.0).abs() < 0.0001);
+
+        let layout_at = |tracking| {
+            text_engine::layout_text_stub(&TextLayoutRequest {
+                text: "AB".to_string(),
+                font_id: "missing".to_string(),
+                font_size: 100.0,
+                font_overrides: Vec::new(),
+                font_size_overrides: Vec::new(),
+                tracking,
+                leading: None,
+                center_source_rect_y: false,
+                justification: LayoutTextJustification::Left,
+                box_rect: Some([0.0, 0.0, 300.0, 120.0]),
+            })
+        };
+        let start_layout = layout_at(values[0]);
+        let end_layout = layout_at(values[2]);
+        let start_gap = start_layout.glyphs[1].x - start_layout.glyphs[0].x;
+        let end_gap = end_layout.glyphs[1].x - end_layout.glyphs[0].x;
+        assert!((start_gap - end_gap - 0.8).abs() < 0.0001);
+    }
+
+    #[test]
+    fn text_paint_extension_overrides_stroke_without_breaking_legacy_fill() {
+        let effects = vec![EffectSpec {
+            match_name: TEXT_PAINT_MATCH_NAME.to_string(),
+            params: json!({
+                "stroke_color": [10, 20, 30, 255],
+                "stroke_width": 5.0,
+                "stroke_over_fill": false
+            }),
+        }];
+        let paint = resolve_text_paint([240, 241, 242, 255], &effects);
+        assert_eq!(paint.fill, [240, 241, 242, 255]);
+        assert_eq!(paint.stroke_color, Some([10, 20, 30, 255]));
+        assert_eq!(paint.stroke_width, 5.0);
+        assert!(!paint.stroke_over_fill);
     }
 
     #[test]
@@ -4533,6 +5268,25 @@ mod tests {
     }
 
     #[test]
+    fn word_selector_uses_ae_left_boundaries_for_step_reveals() {
+        let selector = TextRangeSelector::default();
+
+        let initial: Vec<f32> = (0..4)
+            .map(|index| selector_weight(index, 4, &selector, 25.0, 100.0, 0.0))
+            .collect();
+        let third_word_reveal: Vec<f32> = (0..4)
+            .map(|index| selector_weight(index, 4, &selector, 62.5, 100.0, 0.0))
+            .collect();
+
+        // TYPE_1's animator has opacity 0: the selected suffix is hidden.
+        // AE places four word units at 0, 25, 50 and 75 percent, so a start
+        // of 25 keeps the first word visible and a start of 62.5 keeps the
+        // first three visible.
+        assert_eq!(initial, vec![0.0, 1.0, 1.0, 1.0]);
+        assert_eq!(third_word_reveal, vec![0.0, 0.0, 0.0, 1.0]);
+    }
+
+    #[test]
     fn posterize_time_quantizes_layer_sampling_time() {
         let scene = Scene {
             version: "test".to_string(),
@@ -4551,6 +5305,7 @@ mod tests {
                 id: "moving".to_string(),
                 start: 0.0,
                 duration: 1.0,
+                blend_mode: BlendMode::Normal,
                 color: [255, 255, 255, 255],
                 rect: Rect {
                     x: 0.0,
@@ -4622,6 +5377,7 @@ mod tests {
                 duration: 1.0,
                 source: "numbered_frames".to_string(),
                 source_start: 0.4,
+                blend_mode: BlendMode::Normal,
                 transform: render_ir::Transform2D::default(),
                 effects: vec![posterize_effect(2.0)],
             }],
@@ -4682,6 +5438,7 @@ mod tests {
                     id: "moving".to_string(),
                     start: 0.0,
                     duration: 1.0,
+                    blend_mode: BlendMode::Normal,
                     color: [255, 255, 255, 255],
                     rect: Rect {
                         x: 0.0,
@@ -4760,6 +5517,7 @@ mod tests {
                     id: "moving".to_string(),
                     start: 0.0,
                     duration: 1.0,
+                    blend_mode: BlendMode::Normal,
                     color: [255, 255, 255, 255],
                     rect: Rect {
                         x: 0.0,
@@ -4886,6 +5644,7 @@ mod tests {
                     id: "below".to_string(),
                     start: 0.0,
                     duration: 1.0,
+                    blend_mode: BlendMode::Normal,
                     color: [255, 255, 255, 255],
                     rect: Rect {
                         x: 0.0,
@@ -5036,6 +5795,7 @@ mod tests {
                     id: "below".to_string(),
                     start: 0.0,
                     duration: 1.0,
+                    blend_mode: BlendMode::Normal,
                     color: [255, 255, 255, 255],
                     rect: Rect {
                         x: 8.0,
@@ -5100,6 +5860,7 @@ mod tests {
                 id: "moving".to_string(),
                 start: 0.0,
                 duration: 1.0,
+                blend_mode: BlendMode::Normal,
                 color: [255, 255, 255, 255],
                 rect: Rect {
                     x: 0.0,
@@ -5171,6 +5932,7 @@ mod tests {
                 id: "moving".to_string(),
                 start: 0.0,
                 duration: 1.0,
+                blend_mode: BlendMode::Normal,
                 color: [255, 255, 255, 255],
                 rect: Rect {
                     x: 0.0,
@@ -5266,6 +6028,7 @@ mod tests {
                 duration: 2.0,
                 source: "numbered_frames".to_string(),
                 source_start: 1.0,
+                blend_mode: BlendMode::Normal,
                 transform: render_ir::Transform2D {
                     motion_blur: true,
                     ..render_ir::Transform2D::default()
@@ -5368,6 +6131,7 @@ mod tests {
                     id: "red".to_string(),
                     start: 0.0,
                     duration: 1.0,
+                    blend_mode: BlendMode::Normal,
                     color: [255, 0, 0, 255],
                     rect: Rect {
                         x: 0.0,
@@ -5386,6 +6150,7 @@ mod tests {
                 duration: 1.0,
                 composition: "child".to_string(),
                 collapse_transformations: true,
+                blend_mode: BlendMode::Normal,
                 transform: render_ir::Transform2D {
                     position: [2.0, 0.0],
                     ..render_ir::Transform2D::default()
@@ -5411,6 +6176,51 @@ mod tests {
             collapsed_precomp["deferred_raster_checkpoint"]["status"],
             json!("matrix_pushdown_only")
         );
+    }
+
+    #[test]
+    fn effect_runtime_lower_stack_cache_is_arc_backed_and_bounded() {
+        let mut runtime = EffectRuntime::default();
+        runtime.max_lower_stack_bytes = 64;
+        let first_key = LowerStackCacheKey {
+            composition: "root".to_string(),
+            adjustment_layer: "posterize".to_string(),
+            time_bits: 0.0_f64.to_bits(),
+        };
+        let second_key = LowerStackCacheKey {
+            time_bits: 1.0_f64.to_bits(),
+            ..first_key.clone()
+        };
+        let first = Arc::new(Canvas::transparent(4, 4));
+        runtime.store_lower_stack(first_key.clone(), Arc::clone(&first));
+        assert!(Arc::ptr_eq(
+            &runtime.lower_stack(&first_key).unwrap(),
+            &first
+        ));
+
+        let second = Arc::new(Canvas::transparent(4, 4));
+        runtime.store_lower_stack(second_key.clone(), Arc::clone(&second));
+        assert!(runtime.lower_stack(&first_key).is_none());
+        assert!(Arc::ptr_eq(
+            &runtime.lower_stack(&second_key).unwrap(),
+            &second
+        ));
+        assert!(!runtime.worker_scratch.is_empty());
+        assert!(runtime.worker_scratch.len() <= 8);
+    }
+
+    #[test]
+    fn prefetched_footage_is_immutable_and_quantizes_equivalent_times() {
+        let mut prefetched = PrefetchedFootageProvider::default();
+        let mut source = Canvas::transparent(2, 1);
+        source.set_pixel(1, 0, [11, 22, 33, 44]);
+        prefetched.insert("clip", 1.25, source.clone());
+
+        let mut worker_a = prefetched.clone();
+        let mut worker_b = prefetched;
+        let restored = worker_a.frame_at("clip", 1.2500001).unwrap().unwrap();
+        assert_eq!(restored.data, source.data);
+        assert!(worker_b.frame_at("missing", 1.25).unwrap().is_none());
     }
 
     fn posterize_effect(frame_rate: f32) -> EffectSpec {

@@ -1,0 +1,8 @@
+{
+  "schema": "blast.bot-render.v1", "caseId": "tape_focus_flash", "subtitles_mode": "template_4th",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 2.1}, "cutTimes": [0.0, 1.05], "effectStyleIds": ["txt_drop_v1"],
+  "subtitle_payload": {"word_timings": [
+    {"word": "дай", "start": 0.2, "end": 0.46, "focus": false}, {"word": "мне", "start": 0.46, "end": 0.72, "focus": false}, {"word": "повод", "start": 0.72, "end": 1.03, "focus": true},
+    {"word": "уйти", "start": 1.08, "end": 1.48, "focus": true}
+  ], "subtitles": [{"text": "дай мне повод", "in": 0.2, "out": 1.03}, {"text": "уйти", "in": 1.08, "out": 1.72}]}
+}

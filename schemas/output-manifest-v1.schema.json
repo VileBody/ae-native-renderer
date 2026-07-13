@@ -1,0 +1,113 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ae-native-renderer.output-manifest.v1",
+  "title": "AE Native Renderer Deterministic Output Manifest v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "renderer",
+    "request_hash",
+    "scene_hash",
+    "composition",
+    "capabilities",
+    "artifacts"
+  ],
+  "properties": {
+    "schema": { "const": "ae-native-renderer.output-manifest.v1" },
+    "renderer": {
+      "type": "object",
+      "required": ["name", "version"],
+      "properties": {
+        "name": { "const": "ae-native-renderer" },
+        "version": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "request_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "scene_hash": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "composition": {
+      "type": "object",
+      "required": ["id", "width", "height", "fps", "duration", "frame_count"],
+      "properties": {
+        "id": { "type": "string" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "fps": { "type": "number", "exclusiveMinimum": 0 },
+        "duration": { "type": "number", "exclusiveMinimum": 0 },
+        "frame_count": { "type": "integer", "minimum": 1 }
+      },
+      "additionalProperties": false
+    },
+    "capabilities": {
+      "$ref": "render-response-v1.schema.json#/$defs/capabilityReport"
+    },
+    "artifacts": {
+      "type": "object",
+      "required": ["capabilities", "normalized_request", "frames"],
+      "additionalProperties": { "$ref": "#/$defs/artifact" }
+    },
+    "output": {
+      "type": ["object", "null"],
+      "required": ["video", "frame_count", "duration", "probe", "audio_probe"],
+      "properties": {
+        "video": { "$ref": "#/$defs/artifact" },
+        "frame_count": { "type": "integer", "minimum": 1 },
+        "duration": { "type": "number", "exclusiveMinimum": 0 },
+        "probe": { "$ref": "#/$defs/mediaProbe" },
+        "audio_probe": {
+          "type": ["object", "null"],
+          "properties": {
+            "codec": { "type": "string" },
+            "sample_rate": { "type": ["integer", "null"], "minimum": 1 },
+            "channels": { "type": ["integer", "null"], "minimum": 1 },
+            "duration": { "type": ["number", "null"], "minimum": 0 }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "mediaProbe": {
+      "type": "object",
+      "required": ["path", "kind"],
+      "properties": {
+        "path": { "type": "string" },
+        "kind": { "type": "string" },
+        "width": { "type": ["integer", "null"] },
+        "height": { "type": ["integer", "null"] },
+        "fps": { "type": ["number", "null"] },
+        "duration": { "type": ["number", "null"] },
+        "pixel_format": { "type": ["string", "null"] },
+        "video_codec": { "type": ["string", "null"] },
+        "audio_codec": { "type": ["string", "null"] },
+        "audio_sample_rate": { "type": ["integer", "null"] },
+        "audio_channels": { "type": ["integer", "null"] },
+        "audio_duration": { "type": ["number", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "artifact": {
+      "type": "object",
+      "required": ["path", "size_bytes", "sha256"],
+      "properties": {
+        "path": { "type": "string" },
+        "count": { "type": "integer", "minimum": 0 },
+        "size_bytes": { "type": "integer", "minimum": 0 },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

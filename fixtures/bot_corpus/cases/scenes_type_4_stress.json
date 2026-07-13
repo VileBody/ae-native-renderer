@@ -1,0 +1,11 @@
+{
+  "schema": "blast.bot-render.v1",
+  "caseId": "scenes_type_4_stress",
+  "subtitles_mode": "scenes_3rd",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 1.8},
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 1.8}, "scenes": [{
+    "id": "4-stress", "type": "TYPE_4", "words": ["не", "отпускай"], "start": 0.20, "end": 1.56,
+    "lines": [["не", "отпускай"]], "focus_word": "отпускай", "focus_style": "red",
+    "word_timings": [{"word": "не", "start": 0.20, "end": 0.60}, {"word": "отпускай", "start": 0.60, "end": 1.56}]
+  }]}
+}

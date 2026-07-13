@@ -1,6 +1,7 @@
 use crate::{param_f32_at, Effect};
 use raster_cpu::Canvas;
 use serde_json::Value;
+use transform_math::CubicBezier;
 
 const NATIVE_LAYER_SPACE_ORIGIN_PARAM: &str = "__native_layer_space_origin";
 
@@ -143,17 +144,33 @@ impl Geometry2Params {
 
     pub(crate) fn from_json(input: &Canvas, params: &Value, time: f64) -> Self {
         let mut transform = Self::identity(input);
-        transform.anchor = point_param(params, &["anchor", "anchorPoint", "Anchor Point", "0001"])
-            .unwrap_or(transform.anchor);
-        transform.position =
-            point_param(params, &["position", "Position", "0002"]).unwrap_or(transform.position);
+        transform.anchor = point_param_at(
+            params,
+            &["anchor", "anchorPoint", "Anchor Point", "0001"],
+            time,
+        )
+        .unwrap_or(transform.anchor);
+        transform.position = point_param_at(params, &["position", "Position", "0002"], time)
+            .unwrap_or(transform.position);
         transform.scale = scale_param(params, time).unwrap_or(transform.scale);
         transform.rotation = scalar_param(
             params,
-            &["rotation", "Rotation", "0008", "ADBE Geometry2-0007"],
+            &["rotation", "Rotation", "0007", "ADBE Geometry2-0007"],
             time,
             0.0,
         );
+        // JSX extraction preserves AE's property match name. In production
+        // Geometry2 payloads `0008` is `ADBE Geometry2-0008` (opacity), not
+        // rotation. Keep the old raw-number fallback only for legacy callers
+        // that do not carry property metadata.
+        if !has_property_match_name(params, "ADBE Geometry2-0008")
+            && !has_param(params, "rotation")
+            && !has_param(params, "Rotation")
+            && !has_param(params, "0007")
+            && !has_param(params, "ADBE Geometry2-0007")
+        {
+            transform.rotation = scalar_param(params, &["0008"], time, 0.0);
+        }
         transform.skew = scalar_param(
             params,
             &["skew", "Skew", "0006", "ADBE Geometry2-0005"],
@@ -403,7 +420,7 @@ fn transform_canvas(
 }
 
 fn scale_param(params: &Value, time: f64) -> Option<(f32, f32)> {
-    if let Some(point) = point_param(params, &["scale", "Scale"]) {
+    if let Some(point) = point_param_at(params, &["scale", "Scale"], time) {
         return Some(point);
     }
     let width_scale = scalar_param_opt(
@@ -738,11 +755,14 @@ fn geometry_probe_points(input: &Canvas) -> Vec<[u32; 2]> {
     points
 }
 
-fn point_param(params: &Value, names: &[&str]) -> Option<(f32, f32)> {
+fn point_param_at(params: &Value, names: &[&str], time: f64) -> Option<(f32, f32)> {
     for name in names {
         let Some(raw_value) = params.get(*name) else {
             continue;
         };
+        if let Some(keyframes) = raw_value.get("keyframes").and_then(Value::as_array) {
+            return evaluate_point_keyframes(keyframes, time);
+        }
         let Some(value) = nested_value(raw_value) else {
             continue;
         };
@@ -759,6 +779,57 @@ fn point_param(params: &Value, names: &[&str]) -> Option<(f32, f32)> {
         }
     }
     None
+}
+
+fn evaluate_point_keyframes(keyframes: &[Value], time: f64) -> Option<(f32, f32)> {
+    let point_at = |key: &Value| {
+        let value = key.get("v").or_else(|| key.get("value"))?;
+        let values = value.as_array()?;
+        Some((
+            values.first()?.as_f64()? as f32,
+            values.get(1)?.as_f64()? as f32,
+        ))
+    };
+    let time_at = |key: &Value| {
+        key.get("t")
+            .or_else(|| key.get("time"))
+            .and_then(Value::as_f64)
+    };
+    let ease_at = |key: &Value| {
+        let ease = key.get("ease")?;
+        Some(CubicBezier::new(
+            ease.get("x1")?.as_f64()? as f32,
+            ease.get("y1")?.as_f64()? as f32,
+            ease.get("x2")?.as_f64()? as f32,
+            ease.get("y2")?.as_f64()? as f32,
+        ))
+    };
+
+    let first = keyframes.first()?;
+    if time <= time_at(first)? {
+        return point_at(first);
+    }
+    for pair in keyframes.windows(2) {
+        let start = time_at(&pair[0])?;
+        let end = time_at(&pair[1])?;
+        if time > end {
+            continue;
+        }
+        let from = point_at(&pair[0])?;
+        let to = point_at(&pair[1])?;
+        if end <= start {
+            return Some(from);
+        }
+        let linear = ((time - start) / (end - start)).clamp(0.0, 1.0) as f32;
+        let progress = ease_at(&pair[0])
+            .map(|ease| ease.ease(linear))
+            .unwrap_or(linear);
+        return Some((
+            from.0 + (to.0 - from.0) * progress,
+            from.1 + (to.1 - from.1) * progress,
+        ));
+    }
+    keyframes.last().and_then(point_at)
 }
 
 fn scalar_param(params: &Value, names: &[&str], time: f64, default: f32) -> f32 {
@@ -781,6 +852,17 @@ fn nested_value(value: &Value) -> Option<&Value> {
 
 fn has_param(params: &Value, name: &str) -> bool {
     params.get(name).is_some()
+}
+
+fn has_property_match_name(params: &Value, match_name: &str) -> bool {
+    params.as_object().is_some_and(|properties| {
+        properties.values().any(|property| {
+            property
+                .get("match_name")
+                .and_then(Value::as_str)
+                .is_some_and(|name| name == match_name)
+        })
+    })
 }
 
 fn nearly_eq(left: f32, right: f32) -> bool {
@@ -820,6 +902,32 @@ mod tests {
 
         assert_eq!(output.pixel(2, 0), [10, 20, 30, 255]);
         assert_eq!(output.pixel(1, 0), [0, 0, 0, 0]);
+    }
+
+    #[test]
+    fn point_params_sample_long_form_keyframes_with_cubic_ease() {
+        let input = Canvas::transparent(10, 10);
+        let params = json!({
+            "anchor": {
+                "keyframes": [
+                    {
+                        "time": 0.0,
+                        "value": [1.0, 2.0],
+                        "ease": {
+                            "x1": 1.0 / 3.0,
+                            "y1": 0.0,
+                            "x2": 2.0 / 3.0,
+                            "y2": 1.0
+                        }
+                    },
+                    {"time": 1.0, "value": [5.0, 6.0]}
+                ]
+            }
+        });
+
+        let sampled = Geometry2Params::from_json(&input, &params, 0.25);
+        assert!((sampled.anchor.0 - 1.625).abs() < 1.0e-5);
+        assert!((sampled.anchor.1 - 2.625).abs() < 1.0e-5);
     }
 
     #[test]
@@ -955,7 +1063,27 @@ mod tests {
     }
 
     #[test]
-    fn ae_property_dump_indices_map_skew_axis_rotation_and_ignore_opacity_slot() {
+    fn jsx_opacity_slot_does_not_become_a_hundred_degree_rotation() {
+        let input = Canvas::transparent(1080, 1960);
+        let params = Geometry2Params::from_json(
+            &input,
+            &json!({
+                "0001": { "match_name": "ADBE Geometry2-0001", "value": [540, 960] },
+                "0002": { "match_name": "ADBE Geometry2-0002", "value": [540, 960] },
+                "0003": { "match_name": "ADBE Geometry2-0003", "value": 85 },
+                "0004": { "match_name": "ADBE Geometry2-0004", "value": 100 },
+                "0008": { "match_name": "ADBE Geometry2-0008", "value": 100 },
+                "0011": { "match_name": "ADBE Geometry2-0011", "value": 1 }
+            }),
+            0.0,
+        );
+
+        assert_eq!(params.rotation, 0.0);
+        assert_eq!(params.scale, (100.0, 100.0));
+    }
+
+    #[test]
+    fn ae_property_dump_indices_preserve_explicit_rotation_and_ignore_opacity_slot() {
         let input = Canvas::transparent(512, 512);
         let params = Geometry2Params::from_json(
             &input,
@@ -976,7 +1104,7 @@ mod tests {
         assert_eq!(params.scale, (90.0, 120.0));
         assert_eq!(params.skew, 14.0);
         assert_eq!(params.skew_axis, 35.0);
-        assert_eq!(params.rotation, 72.0);
+        assert_eq!(params.rotation, 35.0);
     }
 
     #[test]

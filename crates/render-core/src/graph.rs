@@ -92,6 +92,7 @@ mod tests {
             duration: 1.0,
             composition: composition.to_string(),
             collapse_transformations: false,
+            blend_mode: render_ir::BlendMode::Normal,
             transform: Transform2D::default(),
             effects: Vec::new(),
         }
@@ -102,6 +103,7 @@ mod tests {
             id: id.to_string(),
             start: 0.0,
             duration: 1.0,
+            blend_mode: render_ir::BlendMode::Normal,
             color: [255, 255, 255, 255],
             rect: Rect {
                 x: 0.0,

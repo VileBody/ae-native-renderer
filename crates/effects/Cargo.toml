@@ -8,3 +8,5 @@ license.workspace = true
 anyhow.workspace = true
 serde_json.workspace = true
 raster-cpu = { path = "../raster-cpu" }
+transform-math = { path = "../transform-math" }
+rayon.workspace = true

@@ -1,0 +1,7 @@
+{
+  "schema": "blast.bot-render.v1", "caseId": "scenes_type_1", "subtitles_mode": "scenes_3rd",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 2.0}, "effectStyleIds": ["txt_soft_v1"],
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 2.0}, "scenes": [
+    {"id": 1, "type": "TYPE_1", "words": ["делятся", "ночью", "со", "мной"], "start": 0.2, "end": 1.7, "lines": [["делятся", "ночью"], ["со", "мной"]], "word_timings": [{"word": "делятся", "start": 0.2, "end": 0.52}, {"word": "ночью", "start": 0.52, "end": 0.86}, {"word": "со", "start": 0.86, "end": 1.15}, {"word": "мной", "start": 1.15, "end": 1.7}]}
+  ]}
+}

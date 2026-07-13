@@ -10,5 +10,6 @@ fontdue.workspace = true
 rustybuzz.workspace = true
 ttf-parser.workspace = true
 serde.workspace = true
+rayon.workspace = true
 transform-math = { path = "../transform-math" }
 raster-cpu = { path = "../raster-cpu" }

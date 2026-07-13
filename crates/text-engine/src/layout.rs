@@ -9,12 +9,47 @@ use crate::{
     load_font_with_telemetry, FontResolutionSource, FontResolutionTelemetry, GlyphInstance,
 };
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextJustification {
+    Left,
+    #[default]
+    Center,
+    Full,
+}
+
 #[derive(Debug, Clone)]
 pub struct TextLayoutRequest {
     pub text: String,
     pub font_id: String,
     pub font_size: f32,
+    /// Sparse TextDocument face overrides keyed by Unicode scalar index.
+    pub font_overrides: Vec<(usize, String)>,
+    /// Sparse TextDocument font-size overrides keyed by Unicode scalar index.
+    pub font_size_overrides: Vec<(usize, f32)>,
+    /// After Effects tracking units (1/1000 em).
+    pub tracking: f32,
+    /// Explicit After Effects line spacing in layer pixels.
+    pub leading: Option<f32>,
+    pub center_source_rect_y: bool,
+    pub justification: TextJustification,
     pub box_rect: Option<[f32; 4]>,
+}
+
+pub fn font_override_for_char(req: &TextLayoutRequest, char_index: usize) -> Option<&str> {
+    req.font_overrides
+        .iter()
+        .find(|(index, font)| *index == char_index && !font.trim().is_empty())
+        .map(|(_, font)| font.as_str())
+}
+
+fn font_size_for_char(req: &TextLayoutRequest, char_index: usize) -> f32 {
+    req.font_size_overrides
+        .iter()
+        .find(|(index, _)| *index == char_index)
+        .map(|(_, font_size)| *font_size)
+        .filter(|font_size| font_size.is_finite() && *font_size > 0.0)
+        .unwrap_or(req.font_size)
 }
 
 #[derive(Debug, Clone)]
@@ -28,6 +63,12 @@ pub struct TextLayoutTelemetry {
     pub font_resolution: FontResolutionTelemetry,
     pub text_box_rect: [f32; 4],
     pub line_height: f32,
+    pub tracking: f32,
+    pub tracking_px: f32,
+    pub leading: Option<f32>,
+    pub center_source_rect_y: bool,
+    pub source_rect_center_offset_y: f32,
+    pub justification: TextJustification,
     pub source_rect_union: Option<[f32; 4]>,
     pub line_boxes: Vec<LineLayoutTelemetry>,
     pub glyphs: Vec<GlyphLayoutTelemetry>,
@@ -96,26 +137,52 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
     let mut glyphs = Vec::new();
     let mut telemetry_glyphs = Vec::new();
     let mut telemetry_line_boxes = Vec::new();
-    let line_height = req.font_size;
-    let origin_x = req.box_rect.map(|r| r[0]).unwrap_or(0.0);
+    let line_height = effective_line_height(req.leading, req.font_size, req.font_size);
+    let tracking_px = tracking_to_px(req.tracking, req.font_size);
     let origin_y = req.box_rect.map(|r| r[1]).unwrap_or(0.0);
     let mut word_index = 0usize;
     let mut char_offset = 0usize;
     let mut seen_word = false;
 
     for (line_index, line) in req.text.split('\n').enumerate() {
-        let mut x = origin_x;
+        let char_count = line.chars().count();
         let baseline = origin_y + req.font_size + line_index as f32 * line_height;
         let y = baseline - req.font_size;
-        let line_width = line
+        let intrinsic_line_width = line
             .chars()
-            .map(|ch| stub_glyph_advance(ch, req.font_size))
+            .enumerate()
+            .map(|(local_index, ch)| {
+                let font_size = font_size_for_char(req, char_offset + local_index);
+                stub_glyph_advance(ch, font_size)
+                    + if local_index + 1 < char_count {
+                        tracking_to_px(req.tracking, font_size)
+                    } else {
+                        0.0
+                    }
+            })
             .sum();
+        let whitespace_count = line.chars().filter(|ch| ch.is_whitespace()).count();
+        let justify_per_space = full_justify_per_space(
+            req.justification,
+            intrinsic_line_width,
+            box_rect[2],
+            whitespace_count,
+        );
+        let line_width = justified_line_width(
+            req.justification,
+            intrinsic_line_width,
+            box_rect[2],
+            whitespace_count,
+        );
+        // Keep the stub's historical left-origin behavior; the real layout applies alignment.
+        let line_origin_x = box_rect[0];
+        let mut x = line_origin_x;
         let mut line_glyph_bbox = None;
         let mut glyph_count = 0usize;
         let mut in_word = false;
 
         for (local_index, ch) in line.chars().enumerate() {
+            let font_size = font_size_for_char(req, char_offset + local_index);
             let is_word_char = !ch.is_whitespace();
             if is_word_char && !in_word {
                 if seen_word {
@@ -128,7 +195,12 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
             }
 
             let char_index = char_offset + local_index;
-            let advance = stub_glyph_advance(ch, req.font_size);
+            let advance = stub_glyph_advance(ch, font_size)
+                + if ch.is_whitespace() {
+                    justify_per_space
+                } else {
+                    0.0
+                };
             let glyph_run_index = glyphs.len();
             let glyph = GlyphInstance {
                 glyph_id: ch as u32,
@@ -138,7 +210,7 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
                 x,
                 y,
                 advance,
-                bbox: [x, y, advance, req.font_size],
+                bbox: [x, baseline - font_size, advance, font_size],
             };
             line_glyph_bbox = Some(union_optional_bbox(line_glyph_bbox, glyph.bbox));
             glyph_count += 1;
@@ -151,7 +223,7 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
                 font_postscript_name: font_resolution.resolved_postscript_name.clone(),
                 font_fallback: font_resolution.fallback,
                 font_resolution_source: font_resolution.source.clone(),
-                font_size: req.font_size,
+                font_size,
                 font_units_per_em: None,
                 font_glyph_id: glyph.glyph_id,
                 glyph_run_index,
@@ -179,35 +251,47 @@ pub fn layout_text_stub(req: &TextLayoutRequest) -> TextLayoutResult {
             });
             glyphs.push(glyph);
             x += advance;
+            if local_index + 1 < char_count {
+                x += tracking_to_px(req.tracking, font_size);
+            }
         }
 
         telemetry_line_boxes.push(line_layout_telemetry(
             line_index,
             char_offset,
-            char_offset + line.chars().count(),
+            char_offset + char_count,
             baseline,
-            origin_x,
+            line_origin_x,
             line_width,
             line_height,
             glyph_count,
             line_glyph_bbox,
             box_rect,
         ));
-        char_offset += line.chars().count() + 1;
+        char_offset += char_count + 1;
     }
     let source_rect_union = union_source_rect(&telemetry_glyphs);
 
-    TextLayoutResult {
-        glyphs,
-        telemetry: TextLayoutTelemetry {
-            font_resolution,
-            text_box_rect: box_rect,
-            line_height,
-            source_rect_union,
-            line_boxes: telemetry_line_boxes,
-            glyphs: telemetry_glyphs,
+    finish_layout(
+        TextLayoutResult {
+            glyphs,
+            telemetry: TextLayoutTelemetry {
+                font_resolution,
+                text_box_rect: box_rect,
+                line_height,
+                tracking: req.tracking,
+                tracking_px,
+                leading: req.leading,
+                center_source_rect_y: req.center_source_rect_y,
+                source_rect_center_offset_y: 0.0,
+                justification: req.justification,
+                source_rect_union,
+                line_boxes: telemetry_line_boxes,
+                glyphs: telemetry_glyphs,
+            },
         },
-    }
+        req,
+    )
 }
 
 fn layout_with_font(
@@ -225,7 +309,12 @@ fn layout_with_font(
     let box_rect = req.box_rect.unwrap_or([0.0, 0.0, f32::MAX, f32::MAX]);
     let lines: Vec<&str> = req.text.split('\n').collect();
     let lines = if lines.is_empty() { vec![""] } else { lines };
-    let line_height = font_line_height(font, req.font_size);
+    let line_height = effective_line_height(
+        req.leading,
+        req.font_size,
+        font_line_height(font, req.font_size),
+    );
+    let tracking_px = tracking_to_px(req.tracking, req.font_size);
     let mut baseline = first_baseline(box_rect, line_height, lines.len());
     let mut glyphs = Vec::new();
     let mut telemetry_glyphs = Vec::new();
@@ -236,24 +325,68 @@ fn layout_with_font(
     let mut seen_word = false;
 
     for (line_index, line) in lines.iter().enumerate() {
-        let render_line_width = measure_line_fontdue(font, line, req.font_size);
-        let metric_line_width =
-            measure_line_with_face(font, cooltype_face.as_ref(), line, req.font_size);
-        let source_rect_metrics = metric_bytes.as_deref().and_then(|bytes| {
-            source_rect_line_metrics(bytes, cooltype_face.as_ref(), line, req.font_size)
+        let line_char_count = line.chars().count();
+        let whitespace_count = line.chars().filter(|ch| ch.is_whitespace()).count();
+        let has_font_size_override = line.chars().enumerate().any(|(local_index, _)| {
+            font_size_for_char(req, char_offset + local_index) != req.font_size
         });
-        let telemetry_line_width = source_rect_metrics
+        let render_intrinsic_width = measure_line_fontdue_styled(font, line, char_offset, req);
+        let metric_intrinsic_width =
+            measure_line_with_face_styled(font, cooltype_face.as_ref(), line, char_offset, req);
+        let source_rect_metrics = (!has_font_size_override
+            && req.justification != TextJustification::Full)
+            .then(|| {
+                metric_bytes.as_deref().and_then(|bytes| {
+                    source_rect_line_metrics(
+                        bytes,
+                        cooltype_face.as_ref(),
+                        line,
+                        req.font_size,
+                        tracking_px,
+                    )
+                })
+            })
+            .flatten();
+        let telemetry_intrinsic_width = source_rect_metrics
             .as_ref()
             .map(|metrics| metrics.line.width)
-            .unwrap_or(metric_line_width);
-        let render_line_origin_x = line_start_x(box_rect, render_line_width);
-        let metric_line_origin_x = line_start_x(box_rect, telemetry_line_width);
+            .unwrap_or(metric_intrinsic_width);
+        let render_justify_per_space = full_justify_per_space(
+            req.justification,
+            render_intrinsic_width,
+            box_rect[2],
+            whitespace_count,
+        );
+        let metric_justify_per_space = full_justify_per_space(
+            req.justification,
+            metric_intrinsic_width,
+            box_rect[2],
+            whitespace_count,
+        );
+        let render_line_width = justified_line_width(
+            req.justification,
+            render_intrinsic_width,
+            box_rect[2],
+            whitespace_count,
+        );
+        let telemetry_line_width = justified_line_width(
+            req.justification,
+            telemetry_intrinsic_width,
+            box_rect[2],
+            whitespace_count,
+        );
+        let render_line_origin_x =
+            justified_line_start_x(box_rect, render_line_width, req.justification);
+        let metric_line_origin_x =
+            justified_line_start_x(box_rect, telemetry_line_width, req.justification);
         let mut render_pen_x = render_line_origin_x;
-        let mut metric_pen_x = line_start_x(box_rect, metric_line_width);
+        let mut metric_pen_x =
+            justified_line_start_x(box_rect, metric_intrinsic_width, req.justification);
         let mut line_glyph_bbox = None;
         let mut glyph_count = 0usize;
 
         for (local_index, ch) in line.chars().enumerate() {
+            let font_size = font_size_for_char(req, char_offset + local_index);
             let is_word_char = !ch.is_whitespace();
             if is_word_char && !in_word {
                 if seen_word {
@@ -269,19 +402,18 @@ fn layout_with_font(
                 font,
                 cooltype_face.as_ref(),
                 ch,
-                req.font_size,
+                font_size,
                 metric_pen_x,
                 baseline,
             );
-            let render_advance = glyph_advance(font, ch, req.font_size);
-            let render_bbox = glyph_bbox(
-                font,
-                ch,
-                req.font_size,
-                render_pen_x,
-                baseline,
-                render_advance,
-            );
+            let render_advance = glyph_advance(font, ch, font_size)
+                + if ch.is_whitespace() {
+                    render_justify_per_space
+                } else {
+                    0.0
+                };
+            let render_bbox =
+                glyph_bbox(font, ch, font_size, render_pen_x, baseline, render_advance);
             let font_glyph_id = metrics.font_glyph_id;
             let bbox = metrics.bbox;
             let telemetry_bbox = source_rect_metrics
@@ -298,7 +430,16 @@ fn layout_with_font(
                     ])
                 })
                 .unwrap_or(bbox);
-            let telemetry_advance = telemetry_bbox[2].max(0.0);
+            let telemetry_advance = if req.justification == TextJustification::Full {
+                metrics.advance
+                    + if ch.is_whitespace() {
+                        metric_justify_per_space
+                    } else {
+                        0.0
+                    }
+            } else {
+                telemetry_bbox[2].max(0.0)
+            };
             let bbox_center = glyph_bbox_center(telemetry_bbox);
             let glyph_run_index = glyphs.len();
             let glyph = GlyphInstance {
@@ -321,7 +462,7 @@ fn layout_with_font(
                 font_postscript_name: font_resolution.resolved_postscript_name.clone(),
                 font_fallback: font_resolution.fallback,
                 font_resolution_source: font_resolution.source.clone(),
-                font_size: req.font_size,
+                font_size,
                 font_units_per_em: metrics.font_units_per_em,
                 font_glyph_id,
                 glyph_run_index,
@@ -350,12 +491,20 @@ fn layout_with_font(
             glyphs.push(glyph);
             render_pen_x += render_advance;
             metric_pen_x += metrics.advance;
+            if ch.is_whitespace() {
+                metric_pen_x += metric_justify_per_space;
+            }
+            if local_index + 1 < line_char_count {
+                let tracking_px = tracking_to_px(req.tracking, font_size);
+                render_pen_x += tracking_px;
+                metric_pen_x += tracking_px;
+            }
         }
 
         telemetry_line_boxes.push(line_layout_telemetry(
             line_index,
             char_offset,
-            char_offset + line.chars().count(),
+            char_offset + line_char_count,
             baseline,
             metric_line_origin_x,
             telemetry_line_width,
@@ -364,38 +513,78 @@ fn layout_with_font(
             line_glyph_bbox,
             box_rect,
         ));
-        char_offset += line.chars().count() + 1;
+        char_offset += line_char_count + 1;
         in_word = false;
         baseline += line_height;
     }
     let source_rect_union = union_source_rect(&telemetry_glyphs);
 
-    TextLayoutResult {
-        glyphs,
-        telemetry: TextLayoutTelemetry {
-            font_resolution,
-            text_box_rect: box_rect,
-            line_height,
-            source_rect_union,
-            line_boxes: telemetry_line_boxes,
-            glyphs: telemetry_glyphs,
+    finish_layout(
+        TextLayoutResult {
+            glyphs,
+            telemetry: TextLayoutTelemetry {
+                font_resolution,
+                text_box_rect: box_rect,
+                line_height,
+                tracking: req.tracking,
+                tracking_px,
+                leading: req.leading,
+                center_source_rect_y: req.center_source_rect_y,
+                source_rect_center_offset_y: 0.0,
+                justification: req.justification,
+                source_rect_union,
+                line_boxes: telemetry_line_boxes,
+                glyphs: telemetry_glyphs,
+            },
         },
-    }
+        req,
+    )
 }
 
 pub(crate) fn font_line_height(_font: &Font, font_size: f32) -> f32 {
     font_size * 1.2
 }
 
-fn measure_line_with_face(font: &Font, face: Option<&Face<'_>>, line: &str, font_size: f32) -> f32 {
+fn measure_line_fontdue_styled(
+    font: &Font,
+    line: &str,
+    char_offset: usize,
+    req: &TextLayoutRequest,
+) -> f32 {
+    let char_count = line.chars().count();
     line.chars()
-        .map(|ch| glyph_advance_with_face(font, face, ch, font_size))
+        .enumerate()
+        .map(|(local_index, ch)| {
+            let font_size = font_size_for_char(req, char_offset + local_index);
+            glyph_advance(font, ch, font_size)
+                + if local_index + 1 < char_count {
+                    tracking_to_px(req.tracking, font_size)
+                } else {
+                    0.0
+                }
+        })
         .sum()
 }
 
-fn measure_line_fontdue(font: &Font, line: &str, font_size: f32) -> f32 {
+fn measure_line_with_face_styled(
+    font: &Font,
+    face: Option<&Face<'_>>,
+    line: &str,
+    char_offset: usize,
+    req: &TextLayoutRequest,
+) -> f32 {
+    let char_count = line.chars().count();
     line.chars()
-        .map(|ch| glyph_advance(font, ch, font_size))
+        .enumerate()
+        .map(|(local_index, ch)| {
+            let font_size = font_size_for_char(req, char_offset + local_index);
+            glyph_advance_with_face(font, face, ch, font_size)
+                + if local_index + 1 < char_count {
+                    tracking_to_px(req.tracking, font_size)
+                } else {
+                    0.0
+                }
+        })
         .sum()
 }
 
@@ -404,15 +593,16 @@ fn source_rect_line_metrics(
     face: Option<&Face<'_>>,
     line: &str,
     font_size: f32,
+    tracking_px: f32,
 ) -> Option<SourceRectLineMetrics> {
     let face = face?;
-    let line_measure = measure_source_rect(font_bytes, face, line, font_size)?;
+    let line_measure = measure_source_rect(font_bytes, face, line, font_size, tracking_px)?;
     let char_count = line.chars().count();
     let mut prefix_widths = Vec::with_capacity(char_count + 1);
     prefix_widths.push(0.0);
     for end in 1..=char_count {
         let prefix = line.chars().take(end).collect::<String>();
-        let width = measure_source_rect(font_bytes, face, &prefix, font_size)
+        let width = measure_source_rect(font_bytes, face, &prefix, font_size, tracking_px)
             .map(|measure| measure.width)
             .unwrap_or(0.0);
         prefix_widths.push(width);
@@ -428,6 +618,7 @@ fn measure_source_rect(
     face: &Face<'_>,
     text: &str,
     font_size: f32,
+    tracking_px: f32,
 ) -> Option<SourceRectMeasure> {
     let buzz_face = BuzzFace::from_slice(font_bytes, 0)?;
     let units_per_em = face.units_per_em() as f32;
@@ -445,7 +636,8 @@ fn measure_source_rect(
     let mut max_x = f32::NEG_INFINITY;
     let mut max_y = f32::NEG_INFINITY;
 
-    for (info, position) in glyphs.glyph_infos().iter().zip(glyphs.glyph_positions()) {
+    let positions = glyphs.glyph_positions();
+    for (index, (info, position)) in glyphs.glyph_infos().iter().zip(positions).enumerate() {
         let glyph_id = GlyphId(info.glyph_id as u16);
         if let Some(rect) = face.glyph_bounding_box(glyph_id) {
             let bbox = ttf_rect_to_scaled_cooltype_bbox(rect, scale);
@@ -461,6 +653,9 @@ fn measure_source_rect(
             max_y = max_y.max(y1);
         }
         pen_x += position.x_advance as f32 * scale;
+        if index + 1 < positions.len() {
+            pen_x += tracking_px;
+        }
     }
 
     if min_x.is_finite() && min_y.is_finite() && max_x.is_finite() && max_y.is_finite() {
@@ -485,6 +680,107 @@ pub(crate) fn first_baseline(box_rect: [f32; 4], line_height: f32, line_count: u
 
 pub(crate) fn line_start_x(box_rect: [f32; 4], line_width: f32) -> f32 {
     box_rect[0] + (box_rect[2] - line_width) * 0.5
+}
+
+fn justified_line_start_x(
+    box_rect: [f32; 4],
+    line_width: f32,
+    justification: TextJustification,
+) -> f32 {
+    match justification {
+        TextJustification::Center => line_start_x(box_rect, line_width),
+        TextJustification::Left | TextJustification::Full => box_rect[0],
+    }
+}
+
+fn full_justify_per_space(
+    justification: TextJustification,
+    intrinsic_width: f32,
+    target_width: f32,
+    whitespace_count: usize,
+) -> f32 {
+    if justification != TextJustification::Full
+        || whitespace_count == 0
+        || !target_width.is_finite()
+    {
+        return 0.0;
+    }
+    (target_width - intrinsic_width).max(0.0) / whitespace_count as f32
+}
+
+fn justified_line_width(
+    justification: TextJustification,
+    intrinsic_width: f32,
+    target_width: f32,
+    whitespace_count: usize,
+) -> f32 {
+    intrinsic_width
+        + full_justify_per_space(
+            justification,
+            intrinsic_width,
+            target_width,
+            whitespace_count,
+        ) * whitespace_count as f32
+}
+
+pub fn tracking_to_px(tracking: f32, font_size: f32) -> f32 {
+    if tracking.is_finite() && font_size.is_finite() {
+        tracking * font_size / 1000.0
+    } else {
+        0.0
+    }
+}
+
+fn effective_line_height(leading: Option<f32>, font_size: f32, fallback: f32) -> f32 {
+    leading
+        .filter(|value| value.is_finite() && *value > 0.0)
+        .unwrap_or(fallback.max(font_size * 0.01))
+}
+
+fn finish_layout(mut result: TextLayoutResult, req: &TextLayoutRequest) -> TextLayoutResult {
+    let Some(box_rect) = req.box_rect else {
+        return result;
+    };
+    let Some(source_rect) = result.telemetry.source_rect_union else {
+        return result;
+    };
+    if !req.center_source_rect_y {
+        return result;
+    }
+    let offset_y = box_rect[1] + box_rect[3] * 0.5 - (source_rect[1] + source_rect[3] * 0.5);
+    if !offset_y.is_finite() {
+        return result;
+    }
+
+    for glyph in &mut result.glyphs {
+        glyph.y += offset_y;
+        glyph.bbox[1] += offset_y;
+    }
+    for glyph in &mut result.telemetry.glyphs {
+        glyph.bbox[1] += offset_y;
+        glyph.cooltype_bbox_minmax[1] += offset_y;
+        glyph.cooltype_bbox_minmax[3] += offset_y;
+        glyph.bbox_center[1] += offset_y;
+        glyph.bbox_normalized = normalize_bbox_to_text_box(glyph.bbox, box_rect);
+        glyph.bbox_center_normalized = normalize_point_to_text_box(glyph.bbox_center, box_rect);
+        glyph.baseline += offset_y;
+    }
+    for line in &mut result.telemetry.line_boxes {
+        line.baseline += offset_y;
+        line.line_box[1] += offset_y;
+        line.line_box_normalized = normalize_bbox_to_text_box(line.line_box, box_rect);
+        if let Some(glyph_bbox) = &mut line.glyph_bbox {
+            glyph_bbox[1] += offset_y;
+        }
+        line.glyph_bbox_normalized = line
+            .glyph_bbox
+            .map(|bbox| normalize_bbox_to_text_box(bbox, box_rect));
+    }
+    if let Some(source_rect) = &mut result.telemetry.source_rect_union {
+        source_rect[1] += offset_y;
+    }
+    result.telemetry.source_rect_center_offset_y = offset_y;
+    result
 }
 
 fn stub_glyph_advance(ch: char, font_size: f32) -> f32 {
@@ -818,12 +1114,23 @@ mod tests {
         path.exists().then_some(path)
     }
 
+    fn arial_narrow_fixture() -> Option<PathBuf> {
+        let path = PathBuf::from("/System/Library/Fonts/Supplemental/Arial Narrow.ttf");
+        path.exists().then_some(path)
+    }
+
     #[test]
     fn stub_keeps_source_indices_across_lines() {
         let layout = layout_text_stub(&TextLayoutRequest {
             text: "AB\nC".to_string(),
             font_id: "missing".to_string(),
             font_size: 10.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
             box_rect: Some([0.0, 0.0, 100.0, 40.0]),
         });
 
@@ -844,6 +1151,12 @@ mod tests {
             text: "A".to_string(),
             font_id: "missing".to_string(),
             font_size: 20.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
             box_rect: Some([10.0, 20.0, 100.0, 50.0]),
         });
         let glyph = &layout.telemetry.glyphs[0];
@@ -871,11 +1184,114 @@ mod tests {
     }
 
     #[test]
+    fn ae_tracking_and_explicit_leading_drive_stub_glyph_positions() {
+        let layout = layout_text_stub(&TextLayoutRequest {
+            text: "ABC\nDEF".to_string(),
+            font_id: "missing".to_string(),
+            font_size: 100.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: -20.0,
+            leading: Some(104.0),
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
+            box_rect: Some([0.0, 0.0, 400.0, 400.0]),
+        });
+
+        assert_approx(layout.telemetry.tracking_px, -2.0);
+        assert_eq!(layout.telemetry.leading, Some(104.0));
+        assert_approx(layout.telemetry.line_height, 104.0);
+        assert_approx(layout.telemetry.line_boxes[0].line_width, 176.0);
+        assert_approx(layout.glyphs[1].x - layout.glyphs[0].x, 58.0);
+        assert_approx(layout.glyphs[2].x - layout.glyphs[1].x, 58.0);
+        assert_approx(
+            layout.telemetry.line_boxes[1].baseline - layout.telemetry.line_boxes[0].baseline,
+            104.0,
+        );
+    }
+
+    #[test]
+    fn full_justification_distributes_real_remaining_width_across_spaces() {
+        let layout = layout_text_stub(&TextLayoutRequest {
+            text: "A B".to_string(),
+            font_id: "missing".to_string(),
+            font_size: 10.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Full,
+            box_rect: Some([0.0, 0.0, 100.0, 20.0]),
+        });
+
+        assert_eq!(layout.telemetry.justification, TextJustification::Full);
+        assert_approx(layout.telemetry.line_boxes[0].line_width, 100.0);
+        assert_approx(layout.glyphs[0].x, 0.0);
+        assert_approx(layout.glyphs[2].x, 94.0);
+    }
+
+    #[test]
+    fn source_rect_centering_uses_measured_bounds_instead_of_a_fixed_nudge() {
+        let layout = layout_text_stub(&TextLayoutRequest {
+            text: "A".to_string(),
+            font_id: "missing".to_string(),
+            font_size: 20.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: true,
+            justification: TextJustification::Center,
+            box_rect: Some([10.0, 20.0, 100.0, 50.0]),
+        });
+        let source_rect = layout.telemetry.source_rect_union.unwrap();
+
+        assert_approx(source_rect[1] + source_rect[3] * 0.5, 45.0);
+        assert_approx(layout.telemetry.source_rect_center_offset_y, 15.0);
+        assert_approx(layout.glyphs[0].bbox[1], 35.0);
+    }
+
+    #[test]
+    fn brat_arial_source_rect_semantics_explain_vertical_center_correction() {
+        let Some(path) = arial_narrow_fixture() else {
+            return;
+        };
+        let layout = layout_text(&TextLayoutRequest {
+            text: "дома темно\nи холодная\nночь и\nя даже".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 130.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: -20.0,
+            leading: Some(130.0),
+            center_source_rect_y: true,
+            justification: TextJustification::Full,
+            box_rect: Some([0.0, 0.0, 864.0, 960.0]),
+        })
+        .unwrap();
+        let source_rect = layout.telemetry.source_rect_union.unwrap();
+        let effective_offset = layout.telemetry.source_rect_center_offset_y * 0.8;
+
+        assert_approx(source_rect[1] + source_rect[3] * 0.5, 480.0);
+        assert!(
+            (15.0..25.0).contains(&effective_offset),
+            "expected the scaled Arial sourceRect correction near 20px, got {effective_offset}"
+        );
+    }
+
+    #[test]
     fn real_layout_reports_words_lines_and_bounds() {
         let layout = layout_text(&TextLayoutRequest {
             text: "Hi all\nYo".to_string(),
             font_id: "DejaVu Sans".to_string(),
             font_size: 18.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
             box_rect: Some([0.0, 0.0, 240.0, 80.0]),
         })
         .unwrap();
@@ -918,6 +1334,12 @@ mod tests {
             text: "A\nB".to_string(),
             font_id: path.display().to_string(),
             font_size,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
             box_rect: Some([0.0, 0.0, 100.0, 80.0]),
         })
         .unwrap();
@@ -925,6 +1347,35 @@ mod tests {
         assert_approx(layout.telemetry.line_height, font_size * 1.2);
         assert_approx(layout.telemetry.line_boxes[0].baseline, 28.0);
         assert_approx(layout.telemetry.line_boxes[1].baseline, 52.0);
+    }
+
+    #[test]
+    fn styled_font_size_override_changes_glyph_size_and_centered_line_width() {
+        let Some(path) = point_light_fixture() else {
+            return;
+        };
+        let layout = layout_text(&TextLayoutRequest {
+            text: "BASE\nV IV".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 80.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: vec![(5, 120.0), (7, 120.0), (8, 120.0)],
+            tracking: -50.0,
+            leading: Some(114.0),
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
+            box_rect: Some([0.0, 0.0, 1080.0, 228.0]),
+        })
+        .unwrap();
+
+        let second_line = &layout.telemetry.glyphs[4..];
+        assert_eq!(second_line[0].font_size, 120.0);
+        assert_eq!(second_line[1].font_size, 80.0);
+        assert_eq!(second_line[2].font_size, 120.0);
+        assert_eq!(second_line[3].font_size, 120.0);
+        assert!(
+            layout.telemetry.line_boxes[1].line_width > layout.telemetry.line_boxes[0].line_width
+        );
     }
 
     #[test]
@@ -948,6 +1399,12 @@ mod tests {
             text: "Point".to_string(),
             font_id,
             font_size: 28.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
             box_rect: Some([0.0, 0.0, 180.0, 60.0]),
         })
         .unwrap();
@@ -992,6 +1449,12 @@ mod tests {
             text: "W".to_string(),
             font_id: path.display().to_string(),
             font_size: 58.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
             box_rect: Some([0.0, 0.0, 512.0, 512.0]),
         })
         .unwrap();
@@ -1021,6 +1484,12 @@ mod tests {
             text: "WORD REVEAL\nMONTSERRAT TEST".to_string(),
             font_id: path.display().to_string(),
             font_size: 58.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
             box_rect: Some([0.0, 0.0, 512.0, 512.0]),
         })
         .unwrap();
@@ -1044,6 +1513,12 @@ mod tests {
             text: "GLYPH MOTION".to_string(),
             font_id: path.display().to_string(),
             font_size: 74.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: TextJustification::Center,
             box_rect: Some([0.0, 0.0, 512.0, 512.0]),
         })
         .unwrap();

@@ -8,14 +8,70 @@ use std::path::Path;
 pub struct GeneratedPayload {
     #[serde(default, rename = "payloadVersion", alias = "payload_version")]
     pub payload_version: Option<String>,
-    #[serde(rename = "projectSpec")]
+    #[serde(rename = "projectSpec", alias = "project")]
     pub project_spec: ProjectSpec,
-    #[serde(rename = "compsSpec")]
+    #[serde(rename = "compsSpec", alias = "comps")]
     pub comps_spec: Vec<CompSpec>,
     #[serde(default)]
     pub footage_layers: Vec<PayloadLayer>,
     #[serde(default)]
     pub text_layers: Vec<PayloadLayer>,
+    #[serde(default, rename = "visualOps", alias = "visual_ops")]
+    pub visual_ops: Vec<VisualOperation>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualOperation {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(rename = "type", alias = "kind", alias = "op")]
+    pub kind: String,
+    #[serde(default)]
+    pub target: VisualOperationTarget,
+    #[serde(default)]
+    pub timing: VisualOperationTiming,
+    #[serde(default = "empty_object")]
+    pub params: Value,
+    #[serde(default)]
+    pub assets: Vec<VisualOperationAsset>,
+    #[serde(default = "default_required")]
+    pub required: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VisualOperationTarget {
+    #[serde(default)]
+    pub composition: Option<String>,
+    #[serde(default)]
+    pub layer: Option<String>,
+    #[serde(default)]
+    pub place: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct VisualOperationTiming {
+    #[serde(default)]
+    pub start: Option<f64>,
+    #[serde(default)]
+    pub duration: Option<f64>,
+    #[serde(default)]
+    pub end: Option<f64>,
+    #[serde(default)]
+    pub anchor: Option<String>,
+    #[serde(default)]
+    pub offset: Option<f64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VisualOperationAsset {
+    pub role: String,
+    pub path: String,
+    #[serde(default)]
+    pub optional: bool,
+}
+
+fn default_required() -> bool {
+    true
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -24,6 +80,8 @@ pub struct ProjectSpec {
     pub main_comp_name: String,
     #[serde(default, rename = "subtitlesMode", alias = "subtitles_mode")]
     pub subtitles_mode: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -43,15 +101,20 @@ pub struct CompSpec {
     pub display_start_time: Option<f64>,
     #[serde(default, rename = "bgColor", alias = "bg_color")]
     pub bg_color: Option<[f32; 3]>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PayloadLayer {
     pub name: String,
-    #[serde(rename = "type")]
+    #[serde(rename = "type", alias = "kind")]
     pub kind: String,
+    #[serde(alias = "inPoint")]
     pub in_point: f64,
+    #[serde(alias = "outPoint")]
     pub out_point: f64,
+    #[serde(alias = "zIndex")]
     pub z_index: i32,
     #[serde(default)]
     pub text: String,
@@ -61,10 +124,12 @@ pub struct PayloadLayer {
     pub props: BTreeMap<String, PropertySpec>,
     #[serde(default)]
     pub effects: BTreeMap<String, BTreeMap<String, PropertySpec>>,
-    #[serde(default)]
+    #[serde(default = "empty_object")]
     pub text_data: Value,
-    #[serde(default)]
+    #[serde(default = "empty_object")]
     pub source_rect: Value,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -77,6 +142,8 @@ pub struct PropertySpec {
     pub keyframes: Vec<KeyframeSpec>,
     #[serde(default)]
     pub expression: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -92,6 +159,12 @@ pub struct KeyframeSpec {
     pub ease_in: Vec<Value>,
     #[serde(default)]
     pub ease_out: Vec<Value>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+fn empty_object() -> Value {
+    json!({})
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -100,6 +173,8 @@ pub enum CapabilityStatus {
     Supported,
     Ignored,
     Approximate,
+    #[serde(rename = "not_implemented")]
+    NotImplemented,
     Unsupported,
 }
 
@@ -122,6 +197,7 @@ pub struct PayloadSummary {
     pub duration: f64,
     pub footage_layers: usize,
     pub text_layers: usize,
+    pub visual_ops: usize,
     pub total_layers: usize,
 }
 
@@ -135,6 +211,7 @@ pub struct PayloadValidationReport {
     pub effects: BTreeMap<String, usize>,
     pub expressions: BTreeMap<String, usize>,
     pub keyframed_properties: BTreeMap<String, usize>,
+    pub visual_operations: BTreeMap<String, usize>,
     pub findings: Vec<CapabilityFinding>,
     pub errors: Vec<String>,
 }
@@ -156,9 +233,12 @@ pub struct PayloadImportDiagnostics {
 
 impl PayloadValidationReport {
     pub fn has_unsupported(&self) -> bool {
-        self.findings
-            .iter()
-            .any(|finding| finding.status == CapabilityStatus::Unsupported)
+        self.findings.iter().any(|finding| {
+            matches!(
+                finding.status,
+                CapabilityStatus::NotImplemented | CapabilityStatus::Unsupported
+            )
+        })
     }
 }
 
@@ -174,6 +254,7 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
     let mut effects = BTreeMap::new();
     let mut expressions = BTreeMap::new();
     let mut keyframed_properties = BTreeMap::new();
+    let mut visual_operations = BTreeMap::new();
 
     let main_comp = payload
         .comps_spec
@@ -189,6 +270,7 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
             payload.project_spec.main_comp_name
         ));
     }
+    classify_color_management(&payload.project_spec, &mut findings);
 
     for comp in &payload.comps_spec {
         if comp.w == 0 || comp.h == 0 {
@@ -279,6 +361,22 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
         }
     }
 
+    for operation in &payload.visual_ops {
+        let kind = operation.kind.trim();
+        if kind.is_empty() {
+            errors.push("visualOps[].type is required".to_string());
+            continue;
+        }
+        *visual_operations.entry(kind.to_string()).or_insert(0) += 1;
+        let (status, detail) = visual_operation_status(operation);
+        findings.push(CapabilityFinding {
+            status,
+            feature: format!("visual_op.{kind}"),
+            layer: operation.id.clone(),
+            detail: detail.to_string(),
+        });
+    }
+
     let summary = main_comp.map(|comp| PayloadSummary {
         payload_version: payload.payload_version.clone(),
         main_comp: comp.name.clone(),
@@ -288,12 +386,16 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
         duration: comp.dur,
         footage_layers: payload.footage_layers.len(),
         text_layers: payload.text_layers.len(),
+        visual_ops: payload.visual_ops.len(),
         total_layers: payload.footage_layers.len() + payload.text_layers.len(),
     });
 
-    let has_unsupported = findings
-        .iter()
-        .any(|finding| finding.status == CapabilityStatus::Unsupported);
+    let has_unsupported = findings.iter().any(|finding| {
+        matches!(
+            finding.status,
+            CapabilityStatus::NotImplemented | CapabilityStatus::Unsupported
+        )
+    });
     let ok = errors.is_empty() && (!strict || !has_unsupported);
 
     PayloadValidationReport {
@@ -304,9 +406,51 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
         effects,
         expressions,
         keyframed_properties,
+        visual_operations,
         findings,
         errors,
     }
+}
+
+fn classify_color_management(project: &ProjectSpec, findings: &mut Vec<CapabilityFinding>) {
+    let Some(settings) = project.extra.get("colorManagement") else {
+        return;
+    };
+    let working_space = settings
+        .get("workingSpace")
+        .and_then(Value::as_str)
+        .unwrap_or("none")
+        .to_ascii_lowercase();
+    let output_space = settings
+        .get("outputSpace")
+        .and_then(Value::as_str)
+        .unwrap_or("srgb")
+        .to_ascii_lowercase();
+    let linear_blending = settings
+        .get("linearBlending")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let supported = matches!(working_space.as_str(), "none" | "srgb")
+        && output_space == "srgb"
+        && !linear_blending;
+    findings.push(CapabilityFinding {
+        status: if supported {
+            CapabilityStatus::Supported
+        } else {
+            CapabilityStatus::NotImplemented
+        },
+        feature: "project.color_management".to_string(),
+        layer: None,
+        detail: if supported {
+            format!(
+                "native color contract workingSpace={working_space}, linearBlending=false, outputSpace=srgb"
+            )
+        } else {
+            format!(
+                "native v1 supports workingSpace none|srgb with linearBlending=false and outputSpace=srgb; requested workingSpace={working_space}, linearBlending={linear_blending}, outputSpace={output_space}"
+            )
+        },
+    });
 }
 
 pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<PayloadImportResult> {
@@ -378,6 +522,18 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
             continue;
         }
 
+        if layer.kind == "precomp" && dynamic_subtitle_replaces_precomp(payload, layer) {
+            diagnostics.skipped_layers += 1;
+            diagnostics.findings.push(CapabilityFinding {
+                status: CapabilityStatus::Approximate,
+                feature: "import.replace_dynamic_subtitle_precomp".to_string(),
+                layer: Some(layer.name.clone()),
+                detail: "empty JSX subtitle placeholder was replaced by lowered visualOps layers"
+                    .to_string(),
+            });
+            continue;
+        }
+
         if layer.kind == "precomp"
             && precomp_source_name(layer)
                 .is_some_and(|name| precomp_has_text_children(payload, name))
@@ -396,10 +552,10 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         if layer.kind == "footage" && is_audio_layer(layer) {
             diagnostics.skipped_layers += 1;
             diagnostics.findings.push(CapabilityFinding {
-                status: CapabilityStatus::Ignored,
+                status: CapabilityStatus::NotImplemented,
                 feature: "import.skip_audio".to_string(),
                 layer: Some(layer.name.clone()),
-                detail: "audio is recognized but not part of the current render IR import"
+                detail: "required audio is recognized but native mux/envelope lowering is not implemented"
                     .to_string(),
             });
             continue;
@@ -421,6 +577,16 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
             }
         }
     }
+
+    let lowered = crate::visual_lowering::lower_visual_operations(payload, main_comp);
+    diagnostics.imported_layers += lowered.layers.len();
+    diagnostics.findings.extend(lowered.findings);
+    layer_items.extend(
+        lowered
+            .layers
+            .into_iter()
+            .map(|lowered| (lowered.sort_key, lowered.layer)),
+    );
 
     layer_items.sort_by_key(|(sort_key, _)| *sort_key);
     let layers = layer_items
@@ -471,6 +637,18 @@ fn precomp_has_text_children(payload: &GeneratedPayload, comp_name: &str) -> boo
         matches!(layer.kind.as_str(), "text" | "adjustment")
             && layer_target_comp(layer) == Some(comp_name)
     })
+}
+
+fn dynamic_subtitle_replaces_precomp(payload: &GeneratedPayload, layer: &PayloadLayer) -> bool {
+    let is_subtitle_placeholder =
+        layer.name == "Текст" || precomp_source_name(layer).is_some_and(|name| name == "Текст");
+    is_subtitle_placeholder
+        && payload.visual_ops.iter().any(|operation| {
+            matches!(
+                operation.kind.as_str(),
+                "subtitle.brat.v1" | "subtitle.trendy.v1"
+            )
+        })
 }
 
 fn import_flattened_text_layer(
@@ -525,6 +703,35 @@ fn import_layer(
     let effects = effects_of(layer);
 
     match layer.kind.as_str() {
+        "solid" => {
+            let source = layer.text_data.get("solid_source").unwrap_or(&Value::Null);
+            let color = color_value_to_rgba(source.get("color_rgb01"), [0, 0, 0, 255]);
+            let width = source
+                .get("width")
+                .and_then(Value::as_f64)
+                .unwrap_or(1080.0)
+                .max(1.0) as f32;
+            let height = source
+                .get("height")
+                .and_then(Value::as_f64)
+                .unwrap_or(1920.0)
+                .max(1.0) as f32;
+            Some(render_ir::Layer::Solid {
+                id,
+                start,
+                duration,
+                blend_mode: layer_blend_mode(layer),
+                color,
+                rect: render_ir::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: width,
+                    h: height,
+                },
+                transform,
+                effects,
+            })
+        }
         "footage" => {
             let asset_id = format!("video_{:04}", *asset_index);
             *asset_index += 1;
@@ -539,6 +746,7 @@ fn import_layer(
                 duration,
                 source: asset_id,
                 source_start: footage_source_start(layer),
+                blend_mode: layer_blend_mode(layer),
                 transform,
                 effects,
             })
@@ -555,6 +763,7 @@ fn import_layer(
                 work_area_duration: None,
                 display_start_time: None,
                 bg_color: None,
+                extra: BTreeMap::new(),
             };
             Some(import_text_layer(
                 layer,
@@ -579,6 +788,7 @@ fn import_layer(
                 .pointer("/layer_meta/collapseTransformation")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            blend_mode: layer_blend_mode(layer),
             transform,
             effects,
         }),
@@ -600,34 +810,90 @@ fn import_text_layer(
     comp: &CompSpec,
 ) -> render_ir::Layer {
     let text_base = &layer.text_data["text_base"];
+    let text = normalize_ae_line_breaks(&layer.text);
     let font_size = text_base
         .get("fontSize")
         .and_then(Value::as_f64)
         .unwrap_or(64.0) as f32;
+    let leading = text_base
+        .get("leading")
+        .and_then(Value::as_f64)
+        .map(|value| value as f32);
+    let char_styles = text_char_styles(&layer.text_data);
     render_ir::Layer::Text {
         id: layer_id(layer),
         start,
         duration,
-        text: layer.text.clone(),
+        text: text.clone(),
         font: text_base
             .get("font")
             .and_then(Value::as_str)
             .unwrap_or("default")
             .to_string(),
         fontSize: font_size,
+        char_styles,
+        blend_mode: layer_blend_mode(layer),
+        tracking: text_base
+            .get("tracking")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.0) as f32,
+        leading,
+        // `applyFinalTextLayoutPass` in the production JSX measures
+        // `sourceRectAtTime`, then centers the layer anchor on that real glyph
+        // bounds before placing it at the composition centre. Preserve that
+        // point-text contract instead of centering the synthetic raster box.
+        center_source_rect_y: true,
+        justification: render_ir::TextJustification::Center,
         fill: color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255]),
-        box_: Some(text_box_for(&transform, font_size, comp)),
+        box_: Some(text_box_for(&transform, font_size, leading, &text, comp)),
         transform,
         text_animators: text_animators_of(layer),
         effects: effects_of(layer),
     }
 }
 
+fn text_char_styles(text_data: &Value) -> Vec<render_ir::TextCharStyle> {
+    text_data
+        .get("char_styles_ungrouped")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|style| {
+            let index = style.get("i")?.as_u64()? as usize;
+            let font_size = style
+                .get("fontSize")
+                .and_then(Value::as_f64)
+                .map(|value| value as f32)
+                .filter(|value| value.is_finite() && *value > 0.0);
+            let font = style
+                .get("font")
+                .or_else(|| style.get("fontFamily"))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|font| !font.is_empty())
+                .map(ToOwned::to_owned);
+            (font.is_some() || font_size.is_some()).then_some(render_ir::TextCharStyle {
+                index,
+                font,
+                font_size,
+            })
+        })
+        .collect()
+}
+
+fn normalize_ae_line_breaks(text: &str) -> String {
+    text.replace("\r\n", "\n").replace('\r', "\n")
+}
+
 fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
     let (status, detail) = match layer.kind.as_str() {
+        "solid" => (
+            CapabilityStatus::Supported,
+            "solid layers are imported with color, bounds, timing, transform, and effects",
+        ),
         "footage" if is_audio_layer(layer) => (
-            CapabilityStatus::Ignored,
-            "audio layers are recognized but ignored until audio mux support",
+            CapabilityStatus::NotImplemented,
+            "audio layers require native mux and envelope support before output is complete",
         ),
         "footage" => (
             CapabilityStatus::Supported,
@@ -785,6 +1051,29 @@ fn layer_motion_blur(layer: &PayloadLayer) -> bool {
         .unwrap_or(false)
 }
 
+fn layer_blend_mode(layer: &PayloadLayer) -> render_ir::BlendMode {
+    if layer
+        .text_data
+        .pointer("/layer_meta/blendingMode")
+        .or_else(|| layer.text_data.pointer("/layer_meta/blend_mode"))
+        .and_then(Value::as_str)
+        .is_some_and(|value| value.eq_ignore_ascii_case("screen"))
+    {
+        return render_ir::BlendMode::Screen;
+    }
+    let value = layer.text_data.pointer("/layer_meta/blendingModeCode");
+    let code = value.and_then(|value| {
+        value
+            .as_i64()
+            .or_else(|| value.as_str().and_then(|text| text.parse().ok()))
+    });
+    match code {
+        Some(5220) => render_ir::BlendMode::Add,
+        Some(5233) => render_ir::BlendMode::Difference,
+        _ => render_ir::BlendMode::Normal,
+    }
+}
+
 fn ir_layer_motion_blur_enabled(layer: &render_ir::Layer) -> bool {
     match layer {
         render_ir::Layer::Solid { transform, .. }
@@ -804,9 +1093,15 @@ fn flattened_sort_key(parent: &PayloadLayer, child: &PayloadLayer) -> i64 {
 }
 
 fn normalize_effect_name(effect_name: &str) -> &str {
-    effect_name
+    let name = effect_name
         .split_once(':')
-        .map_or(effect_name, |(_, name)| name)
+        .map_or(effect_name, |(_, name)| name);
+    match name {
+        // Sapphire's drop shadow is lowered to the native shadow kernel. Its
+        // parameter IDs are handled by DropShadowParams as an approximation.
+        "S_DropShadow" => "ADBE Drop Shadow",
+        _ => name,
+    }
 }
 
 fn transform_of(layer: &PayloadLayer) -> render_ir::Transform2D {
@@ -1355,9 +1650,13 @@ fn color_component_to_u8(value: f64) -> u8 {
 fn text_box_for(
     transform: &render_ir::Transform2D,
     font_size: f32,
+    leading: Option<f32>,
+    text: &str,
     comp: &CompSpec,
 ) -> render_ir::Rect {
-    let height = (font_size * 2.0).max(1.0);
+    let line_count = text.lines().count().max(1) as f32;
+    let line_height = leading.unwrap_or(font_size * 1.2).max(font_size);
+    let height = (line_height * line_count).max(font_size * 2.0).max(1.0);
     render_ir::Rect {
         x: transform.anchor[0] - transform.position[0],
         y: transform.anchor[1] - height / 2.0,
@@ -1371,10 +1670,20 @@ fn effect_status(effect_name: &str) -> CapabilityStatus {
         "ADBE Drop Shadow"
         | "ADBE Glo2"
         | "ADBE Box Blur2"
+        | "ADBE Gaussian Blur 2"
         | "ADBE Geometry2"
+        | "ADBE Invert"
+        | "ADBE Motion Blur"
+        | "ADBE Optics Compensation"
         | "ADBE Posterize Time"
         | "ADBE Minimax"
-        | "ADBE Turbulent Displace" => CapabilityStatus::Approximate,
+        | "ADBE Turbulent Displace"
+        | "CC Image Wipe"
+        | "ANR Analog Glitch"
+        | "ANR F3 Stylize"
+        | "ANR Shape Overlay"
+        | "ANR Vertical Gradient"
+        | "ANR Text Paint" => CapabilityStatus::Approximate,
         _ => CapabilityStatus::Unsupported,
     }
 }
@@ -1384,13 +1693,269 @@ fn effect_detail(effect_name: &str) -> &'static str {
         "ADBE Drop Shadow" => "implemented as an approximate text/canvas shadow",
         "ADBE Glo2" => "implemented as an approximate alpha/luminance glow",
         "ADBE Box Blur2" => "implemented as an approximate RGBA box blur",
+        "ADBE Gaussian Blur 2" => "implemented as an approximate AE-style Gaussian blur",
         "ADBE Geometry2" => "implemented as an approximate canvas transform",
+        "ADBE Motion Blur" => "implemented as a native directional premultiplied blur",
+        "ADBE Optics Compensation" => {
+            "implemented as a native radial distortion with premultiplied sampling"
+        }
+        "ADBE Invert" => "implemented for AE RGB, HLS, YIQ, alpha, and component channels",
+        "CC Image Wipe" => "implemented for the production Brat luminance/coverage gradient path",
         "ADBE Posterize Time" => concat!(
             "implemented as temporal quantization in render-core; ",
             "canvas stage is pass-through"
         ),
         "ADBE Minimax" => "implemented as an approximate alpha/RGBA minimax",
         "ADBE Turbulent Displace" => "implemented as an approximate deterministic displacement",
+        "ANR Analog Glitch" => "native approximation of the production analog-glitch stack",
+        "ANR F3 Stylize" => "native extract/xerox/neon/old-camera approximation",
+        "ANR Shape Overlay" => "native procedural F2/F4 vector overlay",
+        "ANR Vertical Gradient" => "native approximation of the production Sapphire gradient",
+        "ANR Text Paint" => "native fill/stroke paint marker consumed during text rasterization",
         _ => "unknown effect is unsupported",
+    }
+}
+
+fn visual_operation_status(operation: &VisualOperation) -> (CapabilityStatus, &'static str) {
+    match operation.kind.as_str() {
+        "subtitle.brat.v1" => (
+            CapabilityStatus::Approximate,
+            "native glyph tracking, leading, full justification, Difference/Add, Minimax, Gaussian Blur, shadow, and BPM Image Wipe are lowered; flattened precomp and final pixel parity remain approximate",
+        ),
+        "subtitle.trendy.v1" => (
+            CapabilityStatus::Approximate,
+            "tracking 7->-1, unified fill/stroke TextDocument, fit, gradient, shadow, and analog stack are lowered; proprietary Sapphire pixel parity remains approximate",
+        ),
+        "subtitle.bot.impulse_2nd.v1"
+        | "subtitle.bot.scenes_3rd.v1"
+        | "subtitle.bot.scenes_3rd_single_step.v1"
+        | "subtitle.bot.template_4th.v1"
+        | "subtitle.bot.legacy_blocks.v1" => (
+            CapabilityStatus::Approximate,
+            "bot planner segments lower directly to native text/reveal layers; source family typography and AE effect-stack parity remain approximate",
+        ),
+        "style.semantic.v1" => (
+            CapabilityStatus::Approximate,
+            "frozen bot semantic style IDs lower to deterministic native effect-stack approximations",
+        ),
+        "hook.f3.effect.v1" if f3_is_flash_on_cuts_only(operation) => (
+            CapabilityStatus::Approximate,
+            "flash_on_cuts is lowered to native timed Add solids with AE opacity timing",
+        ),
+        "hook.f3.effect.v1" if f3_is_analog_only(operation) => (
+            CapabilityStatus::Approximate,
+            "analog_glitch is lowered to native posterize, red tone, wave, calibrated highlight-selective 4x8 CRT grid, and glow stages",
+        ),
+        "hook.f3.effect.v1" if f3_all_effects_are_native(operation) => (
+            CapabilityStatus::Approximate,
+            "all requested active F3 ids lower to deterministic native Rust primitives; final AE pixel parity remains approximate",
+        ),
+        "hook.f1.sound.v1" => (
+            CapabilityStatus::Approximate,
+            "native drop-light visual chain is lowered; supplied audio is promoted after local multi-track mux verification",
+        ),
+        "hook.f2.object.v1" => (
+            CapabilityStatus::Approximate,
+            "square, ellipse, rhomb, star1, and star2 lower to native procedural overlays with a drop-light chain",
+        ),
+        "hook.f4.motion.v1" => (
+            CapabilityStatus::Approximate,
+            "head, pinch, holdfinger, tap, and swipe lower to native procedural gesture overlays",
+        ),
+        "hook.f5.cognition.v1" => (
+            CapabilityStatus::Approximate,
+            "native light and supplied word-timed subtitle clone are lowered; local tts_audio is promoted after mux verification",
+        ),
+        "hook.f3.effect.v1" => (
+            CapabilityStatus::NotImplemented,
+            "one or more requested F3 ids are not part of the active native palette",
+        ),
+        _ => (
+            CapabilityStatus::Unsupported,
+            "unknown visual operation; it is preserved in diagnostics and never silently dropped",
+        ),
+    }
+}
+
+fn f3_is_flash_on_cuts_only(operation: &VisualOperation) -> bool {
+    let Some(ids) = operation
+        .params
+        .get("detected_effect_ids")
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    !ids.is_empty() && ids.iter().all(|id| id.as_str() == Some("flash_on_cuts"))
+}
+
+fn f3_is_analog_only(operation: &VisualOperation) -> bool {
+    let Some(ids) = operation
+        .params
+        .get("detected_effect_ids")
+        .and_then(Value::as_array)
+    else {
+        return false;
+    };
+    !ids.is_empty() && ids.iter().all(|id| id.as_str() == Some("analog_glitch"))
+}
+
+fn f3_all_effects_are_native(operation: &VisualOperation) -> bool {
+    let ids = f3_effect_ids(operation);
+    !ids.is_empty()
+        && ids.iter().all(|id| {
+            matches!(
+                id.as_str(),
+                "hook_light"
+                    | "shutter_effect"
+                    | "flash_slow_shutter"
+                    | "negative_zoom"
+                    | "snap_wipe"
+                    | "minimax"
+                    | "invert_flash"
+                    | "extract_flash"
+                    | "flash_on_cuts"
+                    | "layer_shake"
+                    | "xerox"
+                    | "analog_glitch"
+                    | "neon_extract"
+                    | "old_camera"
+            )
+        })
+}
+
+fn f3_effect_ids(operation: &VisualOperation) -> Vec<String> {
+    let mut ids = operation
+        .params
+        .get("detected_effect_ids")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    for key in ["hook", "transition", "extra", "effect", "device"] {
+        let Some(value) = operation.params.get(key) else {
+            continue;
+        };
+        match value {
+            Value::String(value) => ids.push(value.clone()),
+            Value::Array(values) => {
+                ids.extend(values.iter().filter_map(Value::as_str).map(str::to_string))
+            }
+            Value::Object(value) => {
+                if let Some(id) = value
+                    .get("id")
+                    .or_else(|| value.get("name"))
+                    .and_then(Value::as_str)
+                {
+                    ids.push(id.to_string());
+                }
+            }
+            _ => {}
+        }
+    }
+    ids.sort();
+    ids.dedup();
+    ids
+}
+
+#[cfg(test)]
+mod color_management_tests {
+    use super::*;
+    use serde_json::json;
+
+    fn project(settings: Value) -> ProjectSpec {
+        ProjectSpec {
+            main_comp_name: "Comp 1".to_string(),
+            subtitles_mode: None,
+            extra: BTreeMap::from([("colorManagement".to_string(), settings)]),
+        }
+    }
+
+    #[test]
+    fn unmanaged_srgb_output_is_supported() {
+        let mut findings = Vec::new();
+        classify_color_management(
+            &project(json!({
+                "workingSpace":"none",
+                "linearBlending":false,
+                "outputSpace":"srgb"
+            })),
+            &mut findings,
+        );
+        assert!(matches!(findings[0].status, CapabilityStatus::Supported));
+    }
+
+    #[test]
+    fn wide_gamut_or_linear_blending_stays_explicit() {
+        let mut findings = Vec::new();
+        classify_color_management(
+            &project(json!({
+                "workingSpace":"acescg",
+                "linearBlending":true,
+                "outputSpace":"display-p3"
+            })),
+            &mut findings,
+        );
+        assert!(matches!(
+            findings[0].status,
+            CapabilityStatus::NotImplemented
+        ));
+    }
+
+    #[test]
+    fn jsx_carriage_returns_become_layout_line_breaks() {
+        assert_eq!(
+            normalize_ae_line_breaks("FIRST\rSECOND\r\nTHIRD"),
+            "FIRST\nSECOND\nTHIRD"
+        );
+    }
+
+    #[test]
+    fn text_document_font_size_overrides_keep_ae_indices_across_line_breaks() {
+        let styles = text_char_styles(&json!({
+            "char_styles_ungrouped": [
+                {"i": 0, "font": "Point-SemiBold"},
+                {"i": 10, "fontSize": 120},
+                {"i": 12, "fontSize": 120},
+                {"i": 13, "fontSize": 120}
+            ]
+        }));
+        assert_eq!(
+            styles
+                .iter()
+                .map(|style| (style.index, style.font.as_deref(), style.font_size))
+                .collect::<Vec<_>>(),
+            vec![
+                (0, Some("Point-SemiBold"), None),
+                (10, None, Some(120.0)),
+                (12, None, Some(120.0)),
+                (13, None, Some(120.0))
+            ]
+        );
+    }
+
+    #[test]
+    fn text_box_keeps_every_explicit_line_inside_the_raster() {
+        let transform = render_ir::Transform2D {
+            anchor: [540.0, 960.0],
+            position: [540.0, 980.0],
+            ..render_ir::Transform2D::default()
+        };
+        let comp = CompSpec {
+            name: "Comp 1".to_string(),
+            w: 1080,
+            h: 1960,
+            fps: 24.0,
+            dur: 1.0,
+            pixel_aspect: None,
+            work_area_start: None,
+            work_area_duration: None,
+            display_start_time: None,
+            bg_color: None,
+            extra: BTreeMap::new(),
+        };
+        let rect = text_box_for(&transform, 80.0, Some(114.0), "FIRST\nSECOND", &comp);
+        assert_eq!(rect.h, 228.0);
     }
 }

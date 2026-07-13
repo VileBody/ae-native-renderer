@@ -3512,6 +3512,7 @@ impl<'a> CaseBuilder<'a> {
             duration,
             source: source.to_string(),
             source_start,
+            blend_mode: render_ir::BlendMode::Normal,
             transform,
             effects,
         });
@@ -3539,6 +3540,12 @@ impl<'a> CaseBuilder<'a> {
             text: text.to_string(),
             font,
             fontSize: font_size,
+            char_styles: Vec::new(),
+            blend_mode: render_ir::BlendMode::Normal,
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: render_ir::TextJustification::Center,
             fill: [255, 255, 255, 255],
             box_: Some(Rect {
                 x: 0.0,
@@ -3587,6 +3594,12 @@ impl<'a> CaseBuilder<'a> {
             text: "COLLAPSE".to_string(),
             font: font_montserrat(self.pack_root),
             fontSize: 48.0,
+            char_styles: Vec::new(),
+            blend_mode: render_ir::BlendMode::Normal,
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: render_ir::TextJustification::Center,
             fill: [255, 255, 255, 255],
             box_: Some(Rect {
                 x: 0.0,
@@ -3609,6 +3622,7 @@ impl<'a> CaseBuilder<'a> {
             duration: self.manifest.composition.case_duration_seconds,
             composition: "GPH_010_child_text".to_string(),
             collapse_transformations: false,
+            blend_mode: render_ir::BlendMode::Normal,
             transform: precomp_transform(150.0, 256.0, 180.0),
             effects: Vec::new(),
         });
@@ -3618,6 +3632,7 @@ impl<'a> CaseBuilder<'a> {
             duration: self.manifest.composition.case_duration_seconds,
             composition: "GPH_010_child_text".to_string(),
             collapse_transformations: true,
+            blend_mode: render_ir::BlendMode::Normal,
             transform: precomp_transform(362.0, 256.0, 180.0),
             effects: Vec::new(),
         });
@@ -3878,6 +3893,7 @@ mod tests {
             text_selector_weights: Vec::new(),
             position_expressions: Vec::new(),
             collapse: Vec::new(),
+            capture_effect_debug: true,
         }
     }
 

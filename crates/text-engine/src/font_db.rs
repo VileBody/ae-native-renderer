@@ -153,6 +153,10 @@ fn known_fixture_font_paths(font_id: &str) -> Vec<PathBuf> {
     let normalized = normalized_font_name(font_id);
     let file_names: &[&str] = match normalized.as_str() {
         "pointlight" | "point" => &["Point-Light.ttf"],
+        "pointsemibold" => &["PointSemiBold.otf"],
+        "arialnarrow" => &["Arial Narrow.ttf", "ArialNarrow.ttf"],
+        "arialnarrowbold" => &["Arial Narrow Bold.ttf", "ArialNarrow-Bold.ttf"],
+        "montserratbold" => &["Montserrat-Bold.ttf"],
         "montserratbolditalic" => &["Montserrat-BoldItalic.ttf", "Montserrat-Italic[wght].ttf"],
         "montserratitalic" | "montserrat" => {
             &["Montserrat-Italic[wght].ttf", "Montserrat-BoldItalic.ttf"]
@@ -160,15 +164,20 @@ fn known_fixture_font_paths(font_id: &str) -> Vec<PathBuf> {
         _ => return Vec::new(),
     };
 
-    [
+    let mut roots = vec![
         PathBuf::from("fixtures/ae_conformance_pack/assets/fonts"),
         PathBuf::from("assets/fonts"),
         PathBuf::from("/work/fixtures/ae_conformance_pack/assets/fonts"),
         PathBuf::from("/app/fixtures/ae_conformance_pack/assets/fonts"),
-    ]
-    .into_iter()
-    .flat_map(|base| file_names.iter().map(move |file_name| base.join(file_name)))
-    .collect()
+        PathBuf::from("/System/Library/Fonts/Supplemental"),
+    ];
+    if let Some(home) = std::env::var_os("HOME") {
+        roots.push(PathBuf::from(home).join("Library/Fonts"));
+    }
+    roots
+        .into_iter()
+        .flat_map(|base| file_names.iter().map(move |file_name| base.join(file_name)))
+        .collect()
 }
 
 fn known_fixture_exact_match(font_id: &str, path: &Path) -> bool {
@@ -183,6 +192,7 @@ fn known_fixture_exact_match(font_id: &str, path: &Path) -> bool {
         (requested.as_str(), file_stem.as_str()),
         ("pointlight", "pointlight")
             | ("point", "pointlight")
+            | ("pointsemibold", "pointsemibold")
             | ("montserratbolditalic", "montserratbolditalic")
             | ("montserratitalic", "montserratitalicwght")
             | ("montserrat", "montserratitalicwght")
@@ -397,5 +407,13 @@ mod tests {
         if let Some(postscript_name) = resolution.resolved_postscript_name {
             assert_eq!(postscript_name, "Montserrat-BoldItalic");
         }
+    }
+
+    #[test]
+    fn point_semibold_searches_the_user_font_directory() {
+        let candidates = known_fixture_font_paths("Point-SemiBold");
+        assert!(candidates
+            .iter()
+            .any(|path| { path.ends_with(Path::new("Library/Fonts/PointSemiBold.otf")) }));
     }
 }

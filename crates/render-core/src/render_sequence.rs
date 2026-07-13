@@ -1,9 +1,10 @@
 use crate::layer_eval::{
-    render_frame_with_footage_traced, CheckerboardFootageProvider, EffectTiming, FootageProvider,
-    FrameRenderTrace, KeyframeTraceRecord, LayerTiming, MotionBlurTrace, SourceFrameQuantization,
-    TemporalTraceRecord,
+    render_frame_with_footage_profiled_runtime, CheckerboardFootageProvider, EffectRuntime,
+    EffectTiming, FootageProvider, FrameRenderTrace, KeyframeTraceRecord, LayerTiming,
+    MotionBlurTrace, SourceFrameQuantization, TemporalTraceRecord,
 };
 use raster_cpu::Canvas;
+use rayon::prelude::*;
 use render_ir::{EffectSpec, Layer, Scene, Transform2D};
 use serde_json::{json, Map, Value};
 use sha2::{Digest, Sha256};
@@ -12,6 +13,7 @@ use std::fs::{self, File};
 use std::io::Write;
 use std::path::Path;
 use std::process::Command;
+use std::sync::Mutex;
 use std::time::Instant;
 
 pub fn render_png_sequence(scene: &Scene, out_dir: impl AsRef<Path>) -> anyhow::Result<()> {
@@ -24,6 +26,47 @@ pub fn render_png_sequence_with_footage(
     out_dir: impl AsRef<Path>,
     footage: &mut dyn FootageProvider,
 ) -> anyhow::Result<()> {
+    render_png_sequence_with_footage_options(
+        scene,
+        out_dir,
+        footage,
+        RenderSequenceOptions::png_sequence(),
+    )
+}
+
+pub fn render_png_sequence_with_footage_production(
+    scene: &Scene,
+    out_dir: impl AsRef<Path>,
+    footage: &mut dyn FootageProvider,
+) -> anyhow::Result<()> {
+    render_png_sequence_with_footage_options(
+        scene,
+        out_dir,
+        footage,
+        RenderSequenceOptions::png_sequence_production(),
+    )
+}
+
+pub fn render_png_frames_with_footage(
+    scene: &Scene,
+    out_dir: impl AsRef<Path>,
+    footage: &mut dyn FootageProvider,
+    frames: &[u32],
+) -> anyhow::Result<()> {
+    render_png_sequence_with_footage_options(
+        scene,
+        out_dir,
+        footage,
+        RenderSequenceOptions::png_frames(frames),
+    )
+}
+
+fn render_png_sequence_with_footage_options(
+    scene: &Scene,
+    out_dir: impl AsRef<Path>,
+    footage: &mut dyn FootageProvider,
+    options: RenderSequenceOptions,
+) -> anyhow::Result<()> {
     let out_dir = out_dir.as_ref();
     let frames_dir = out_dir.join("frames");
     fs::create_dir_all(&frames_dir)?;
@@ -32,7 +75,7 @@ pub fn render_png_sequence_with_footage(
         scene,
         out_dir,
         footage,
-        RenderSequenceOptions::png_sequence(),
+        options,
         |frame, _time, canvas| {
             let path = frames_dir.join(format!("frame_{frame:06}.png"));
             canvas.save_png(path)?;
@@ -49,6 +92,8 @@ pub struct RenderSequenceOptions {
     output_mode: Option<String>,
     output_backend: Option<String>,
     frame_write_timing_key: String,
+    selected_frames: Option<Vec<u32>>,
+    capture_effect_debug: bool,
 }
 
 impl RenderSequenceOptions {
@@ -58,6 +103,28 @@ impl RenderSequenceOptions {
             output_mode: None,
             output_backend: None,
             frame_write_timing_key: "save_ms".to_string(),
+            selected_frames: None,
+            capture_effect_debug: true,
+        }
+    }
+
+    pub fn png_frames(frames: &[u32]) -> Self {
+        let selected_frames = frames
+            .iter()
+            .copied()
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect();
+        Self {
+            selected_frames: Some(selected_frames),
+            ..Self::png_sequence()
+        }
+    }
+
+    pub fn png_sequence_production() -> Self {
+        Self {
+            capture_effect_debug: false,
+            ..Self::png_sequence()
         }
     }
 
@@ -67,6 +134,8 @@ impl RenderSequenceOptions {
             output_mode: Some("video_sink".to_string()),
             output_backend: Some(backend.into()),
             frame_write_timing_key: "write_ms".to_string(),
+            selected_frames: None,
+            capture_effect_debug: false,
         }
     }
 }
@@ -74,6 +143,13 @@ impl RenderSequenceOptions {
 #[derive(Debug, Clone, Default)]
 pub struct RenderFrameOutput {
     pub path: Option<String>,
+}
+
+struct RenderedFrame {
+    frame: u32,
+    canvas: Canvas,
+    trace: FrameRenderTrace,
+    render_ms: f64,
 }
 
 impl RenderFrameOutput {
@@ -95,15 +171,29 @@ where
     F: FnMut(u32, f64, &Canvas) -> anyhow::Result<RenderFrameOutput>,
 {
     crate::graph::validate_graph(scene)?;
+    let frame_count = (scene.composition.duration * scene.composition.fps).ceil() as u32;
+    if let Some(frame) = options
+        .selected_frames
+        .as_deref()
+        .and_then(|frames| frames.iter().copied().find(|frame| *frame >= frame_count))
+    {
+        anyhow::bail!(
+            "selected frame {frame} is out of range for composition '{}' with {frame_count} frames",
+            scene.composition.id
+        );
+    }
+    let rendered_frame_count = options
+        .selected_frames
+        .as_ref()
+        .map_or(u64::from(frame_count), |frames| frames.len() as u64);
     let out_dir = out_dir.as_ref();
     fs::create_dir_all(out_dir)?;
 
-    let frame_count = (scene.composition.duration * scene.composition.fps).ceil() as u32;
     let feature_summary = scene_feature_summary(scene);
     let scene_hash = scene_hash(scene)?;
     let asset_hashes = asset_hashes(scene)?;
     let render_started = Instant::now();
-    let mut frame_timings = Vec::with_capacity(frame_count as usize);
+    let mut frame_timings = Vec::with_capacity(rendered_frame_count as usize);
     let mut layer_profile = BTreeMap::<String, LayerTimingAggregate>::new();
     let mut effect_profile = BTreeMap::<String, EffectTimingAggregate>::new();
     let mut log = File::create(out_dir.join("render-log.jsonl"))?;
@@ -112,76 +202,94 @@ where
     let mut text_telemetry_log = File::create(out_dir.join("text_telemetry.jsonl"))?;
     let mut expression_telemetry_log = File::create(out_dir.join("expression_telemetry.jsonl"))?;
     let mut collapse_telemetry_log = File::create(out_dir.join("collapse_telemetry.jsonl"))?;
-    write_json_line(
-        &mut log,
-        &json!({
-            "event": "render.start",
-            "renderer": renderer_info(),
-            "scene_hash": scene_hash.clone(),
-            "frames": frame_count,
-            "fps": scene.composition.fps,
-            "feature_counts": feature_counts_json(&feature_summary.counts),
-            "asset_hashes": asset_hashes.clone(),
-            "approximate": feature_summary.approximate.clone(),
-            "unsupported": feature_summary.unsupported.clone(),
-            "output": render_output_json(&options)
-        }),
-    )?;
+    let mut start_event = json!({
+        "event": "render.start",
+        "renderer": renderer_info(),
+        "scene_hash": scene_hash.clone(),
+        "frames": frame_count,
+        "fps": scene.composition.fps,
+        "feature_counts": feature_counts_json(&feature_summary.counts),
+        "asset_hashes": asset_hashes.clone(),
+        "approximate": feature_summary.approximate.clone(),
+        "unsupported": feature_summary.unsupported.clone(),
+        "output": render_output_json(&options)
+    });
+    if let Some(frames) = &options.selected_frames {
+        let event = start_event
+            .as_object_mut()
+            .expect("render.start event must be an object");
+        event.insert("rendered_frames".to_string(), json!(rendered_frame_count));
+        event.insert("selected_frames".to_string(), json!(frames));
+    }
+    write_json_line(&mut log, &start_event)?;
+    let frames = match &options.selected_frames {
+        Some(frames) => frames.clone(),
+        None => (0..frame_count).collect(),
+    };
+    let workers = frame_parallel_workers(scene, options.capture_effect_debug);
+    let mut sequential_runtime = EffectRuntime::default();
+    let lane_runtimes = (0..workers)
+        .map(|_| Mutex::new(EffectRuntime::default()))
+        .collect::<Vec<_>>();
 
-    for frame in 0..frame_count {
-        let frame_started = Instant::now();
-        let frame_render_started = Instant::now();
-        let (canvas, trace) = render_frame_with_footage_traced(scene, frame, footage)?;
-        let render_ms = elapsed_ms(frame_render_started);
-        let time = frame as f64 / scene.composition.fps;
-        let write_started = Instant::now();
-        let frame_output = on_frame(frame, time, &canvas)?;
-        let write_ms = elapsed_ms(write_started);
-        let frame_total_ms = elapsed_ms(frame_started);
-        let frame_timing = frame_timing_json(
+    for batch in frames.chunks(workers) {
+        let rendered = if workers > 1 {
+            match footage.prefetch_frames(batch)? {
+                Some(prefetched) => batch
+                    .par_iter()
+                    .enumerate()
+                    .map(|(lane, &frame)| {
+                        let frame_render_started = Instant::now();
+                        let mut batch_footage = prefetched.clone();
+                        let mut runtime = lane_runtimes[lane].lock().map_err(|_| {
+                            anyhow::anyhow!("frame lane runtime mutex was poisoned")
+                        })?;
+                        let (canvas, trace) = render_frame_with_footage_profiled_runtime(
+                            scene,
+                            frame,
+                            &mut batch_footage,
+                            &mut runtime,
+                            options.capture_effect_debug,
+                        )?;
+                        Ok(RenderedFrame {
+                            frame,
+                            canvas,
+                            trace,
+                            render_ms: elapsed_ms(frame_render_started),
+                        })
+                    })
+                    .collect::<anyhow::Result<Vec<_>>>()?,
+                None => render_batch_sequential(
+                    scene,
+                    batch,
+                    footage,
+                    &mut sequential_runtime,
+                    options.capture_effect_debug,
+                )?,
+            }
+        } else {
+            render_batch_sequential(
+                scene,
+                batch,
+                footage,
+                &mut sequential_runtime,
+                options.capture_effect_debug,
+            )?
+        };
+
+        for RenderedFrame {
             frame,
-            time,
+            canvas,
+            trace,
             render_ms,
-            &options.frame_write_timing_key,
-            write_ms,
-            frame_total_ms,
-            frame_output.path.as_deref(),
-        );
-        frame_timings.push(frame_timing.clone());
-        record_profile(&trace, &mut layer_profile, &mut effect_profile);
-        write_adjustment_effect_trace_lines(&mut adjustment_effects_log, &trace)?;
-        write_temporal_trace_lines(&mut temporal_telemetry_log, &trace)?;
-        write_trace_value_lines(
-            &mut text_telemetry_log,
-            trace.frame,
-            trace.time,
-            "text.layout",
-            &trace.text_layouts,
-        )?;
-        write_trace_value_lines(
-            &mut text_telemetry_log,
-            trace.frame,
-            trace.time,
-            "text.selector_weights",
-            &trace.text_selector_weights,
-        )?;
-        write_trace_value_lines(
-            &mut expression_telemetry_log,
-            trace.frame,
-            trace.time,
-            "expression.position",
-            &trace.position_expressions,
-        )?;
-        write_trace_value_lines(
-            &mut collapse_telemetry_log,
-            trace.frame,
-            trace.time,
-            "collapse",
-            &trace.collapse,
-        )?;
-        write_json_line(
-            &mut log,
-            &frame_log_json(
+        } in rendered
+        {
+            let time = frame as f64 / scene.composition.fps;
+            let write_started = Instant::now();
+            let frame_output = on_frame(frame, time, &canvas)?;
+            let write_ms = elapsed_ms(write_started);
+            let frame_total_ms = render_ms + write_ms;
+            let frame_timing = frame_timing_json(
                 frame,
                 time,
                 render_ms,
@@ -189,9 +297,53 @@ where
                 write_ms,
                 frame_total_ms,
                 frame_output.path.as_deref(),
-                &trace,
-            ),
-        )?;
+            );
+            frame_timings.push(frame_timing.clone());
+            record_profile(&trace, &mut layer_profile, &mut effect_profile);
+            write_adjustment_effect_trace_lines(&mut adjustment_effects_log, &trace)?;
+            write_temporal_trace_lines(&mut temporal_telemetry_log, &trace)?;
+            write_trace_value_lines(
+                &mut text_telemetry_log,
+                trace.frame,
+                trace.time,
+                "text.layout",
+                &trace.text_layouts,
+            )?;
+            write_trace_value_lines(
+                &mut text_telemetry_log,
+                trace.frame,
+                trace.time,
+                "text.selector_weights",
+                &trace.text_selector_weights,
+            )?;
+            write_trace_value_lines(
+                &mut expression_telemetry_log,
+                trace.frame,
+                trace.time,
+                "expression.position",
+                &trace.position_expressions,
+            )?;
+            write_trace_value_lines(
+                &mut collapse_telemetry_log,
+                trace.frame,
+                trace.time,
+                "collapse",
+                &trace.collapse,
+            )?;
+            write_json_line(
+                &mut log,
+                &frame_log_json(
+                    frame,
+                    time,
+                    render_ms,
+                    &options.frame_write_timing_key,
+                    write_ms,
+                    frame_total_ms,
+                    frame_output.path.as_deref(),
+                    &trace,
+                ),
+            )?;
+        }
     }
 
     let total_render_ms = elapsed_ms(render_started);
@@ -213,26 +365,101 @@ where
         out_dir.join("manifest.json"),
         serde_json::to_string_pretty(&manifest)?,
     )?;
-    write_json_line(
-        &mut log,
-        &json!({
-            "event": "render.done",
-            "frames": frame_count,
-            "duration_ms": total_render_ms,
-            "manifest": "manifest.json"
-        }),
-    )?;
+    let mut done_event = json!({
+        "event": "render.done",
+        "frames": rendered_frame_count,
+        "duration_ms": total_render_ms,
+        "manifest": "manifest.json"
+    });
+    if let Some(frames) = &options.selected_frames {
+        let event = done_event
+            .as_object_mut()
+            .expect("render.done event must be an object");
+        event.insert("composition_frames".to_string(), json!(frame_count));
+        event.insert("selected_frames".to_string(), json!(frames));
+    }
+    write_json_line(&mut log, &done_event)?;
     Ok(())
+}
+
+fn render_batch_sequential(
+    scene: &Scene,
+    frames: &[u32],
+    footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
+    capture_effect_debug: bool,
+) -> anyhow::Result<Vec<RenderedFrame>> {
+    frames
+        .iter()
+        .copied()
+        .map(|frame| {
+            let frame_render_started = Instant::now();
+            let (canvas, trace) = render_frame_with_footage_profiled_runtime(
+                scene,
+                frame,
+                footage,
+                runtime,
+                capture_effect_debug,
+            )?;
+            Ok(RenderedFrame {
+                frame,
+                canvas,
+                trace,
+                render_ms: elapsed_ms(frame_render_started),
+            })
+        })
+        .collect()
+}
+
+fn frame_parallel_workers(scene: &Scene, capture_effect_debug: bool) -> usize {
+    if capture_effect_debug {
+        return 1;
+    }
+    let cpu_workers = std::thread::available_parallelism()
+        .map(usize::from)
+        .unwrap_or(1)
+        .clamp(1, 8);
+    let requested = std::env::var("AE_RENDER_FRAME_WORKERS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(cpu_workers);
+    let budget_mib = std::env::var("AE_RENDER_MEMORY_BUDGET_MIB")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|value| *value >= 256)
+        .unwrap_or(1536);
+    let frame_bytes = scene.composition.width as usize * scene.composition.height as usize * 4;
+    // Production Trendy needs roughly forty RGBA-frame equivalents per lane once its float
+    // effect workspaces, prefetch snapshots, and allocator high-water marks are included.
+    // This deliberately admits three 1080p lanes under the 1.5 GiB gate instead of letting
+    // four lanes overcommit memory.
+    let lane_bytes = frame_bytes.saturating_mul(40) + 32 * 1024 * 1024;
+    let soft_budget = budget_mib * 1024 * 1024 * 94 / 100;
+    let available = soft_budget.saturating_sub(64 * 1024 * 1024);
+    let memory_workers = (available / lane_bytes.max(1)).max(1);
+    requested.min(cpu_workers).min(memory_workers).max(1)
 }
 
 fn render_output_json(options: &RenderSequenceOptions) -> Value {
     let mut output = Map::new();
     output.insert("target".to_string(), json!(options.output));
+    output.insert(
+        "telemetry".to_string(),
+        json!(if options.capture_effect_debug {
+            "full"
+        } else {
+            "production"
+        }),
+    );
     if let Some(mode) = &options.output_mode {
         output.insert("mode".to_string(), json!(mode));
     }
     if let Some(backend) = &options.output_backend {
         output.insert("backend".to_string(), json!(backend));
+    }
+    if let Some(frames) = &options.selected_frames {
+        output.insert("selected_frames".to_string(), json!(frames));
     }
     Value::Object(output)
 }
@@ -305,6 +532,10 @@ fn render_manifest_json(
     manifest.insert("fps".to_string(), json!(scene.composition.fps));
     manifest.insert("duration".to_string(), json!(scene.composition.duration));
     manifest.insert("frames".to_string(), json!(frame_count));
+    if let Some(frames) = &options.selected_frames {
+        manifest.insert("rendered_frames".to_string(), json!(frame_timings.len()));
+        manifest.insert("selected_frames".to_string(), json!(frames));
+    }
     manifest.insert("scene_hash".to_string(), json!(scene_hash));
     manifest.insert("layers".to_string(), json!(scene.layers.len()));
     manifest.insert("assets".to_string(), json!(scene.assets.len()));
@@ -853,9 +1084,10 @@ fn collect_collapse_features(scene: &Scene, approximate: &mut BTreeSet<String>) 
 }
 
 fn is_supported_effect(match_name: &str) -> bool {
-    effects::EffectRegistry::known_match_names()
-        .iter()
-        .any(|known| *known == match_name)
+    match_name == render_ir::TEXT_PAINT_MATCH_NAME
+        || effects::EffectRegistry::known_match_names()
+            .iter()
+            .any(|known| *known == match_name)
 }
 
 fn layer_kind(layer: &Layer) -> &'static str {
@@ -1033,6 +1265,7 @@ mod tests {
                 id: "solid".to_string(),
                 start: 0.0,
                 duration: 1.0,
+                blend_mode: render_ir::BlendMode::Normal,
                 color: [255, 0, 0, 255],
                 rect: Rect {
                     x: 0.0,
@@ -1132,6 +1365,7 @@ mod tests {
             text_selector_weights: Vec::new(),
             position_expressions: Vec::new(),
             collapse: Vec::new(),
+            capture_effect_debug: true,
         };
         let path = std::env::temp_dir().join(format!(
             "ae_native_adjustment_effects_{}_{}.jsonl",
@@ -1156,5 +1390,15 @@ mod tests {
         assert_eq!(record["output_hash"].as_str(), Some("output"));
         assert_eq!(record["posterize"]["frame_rate"].as_f64(), Some(6.0));
         let _ = std::fs::remove_file(path);
+    }
+
+    #[test]
+    fn production_sequence_keeps_timings_without_expensive_effect_debug() {
+        let development = RenderSequenceOptions::png_sequence();
+        let production = RenderSequenceOptions::png_sequence_production();
+
+        assert!(development.capture_effect_debug);
+        assert!(!production.capture_effect_debug);
+        assert_eq!(render_output_json(&production)["telemetry"], "production");
     }
 }

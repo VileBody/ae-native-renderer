@@ -1,0 +1,7 @@
+{
+  "schema": "blast.bot-render.v1", "caseId": "scenes_type_6", "subtitles_mode": "scenes_3rd_single_step",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 2.3}, "effectStyleIds": ["txt_punch_v1"],
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 2.3}, "scenes": [
+    {"id": 6, "type": "TYPE_6", "words": ["но", "я", "въебал", "каждый", "профиль"], "start": 0.2, "end": 2.0, "lines": [["но", "я", "въебал"], ["каждый", "профиль"]], "word_timings": [{"word": "но", "start": 0.2, "end": 0.48}, {"word": "я", "start": 0.48, "end": 0.75}, {"word": "въебал", "start": 0.75, "end": 1.12}, {"word": "каждый", "start": 1.12, "end": 1.52}, {"word": "профиль", "start": 1.52, "end": 2.0}]}
+  ]}
+}

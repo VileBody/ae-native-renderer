@@ -1263,6 +1263,7 @@ mod tests {
             duration: 1.0,
             composition: composition.to_string(),
             collapse_transformations,
+            blend_mode: render_ir::BlendMode::Normal,
             transform: Transform2D::default(),
             effects: Vec::new(),
         }
@@ -1273,6 +1274,7 @@ mod tests {
             id: id.to_string(),
             start: 0.0,
             duration: 1.0,
+            blend_mode: render_ir::BlendMode::Normal,
             color: [255, 255, 255, 255],
             rect: Rect {
                 x: 0.0,
@@ -1304,6 +1306,12 @@ mod tests {
             text: "hello".to_string(),
             font: "default".to_string(),
             fontSize: 12.0,
+            char_styles: Vec::new(),
+            blend_mode: render_ir::BlendMode::Normal,
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: render_ir::TextJustification::Center,
             fill: [255, 255, 255, 255],
             box_: None,
             transform: Transform2D::default(),
@@ -1319,6 +1327,7 @@ mod tests {
             duration: 1.0,
             source: "asset".to_string(),
             source_start: 0.0,
+            blend_mode: render_ir::BlendMode::Normal,
             transform: Transform2D::default(),
             effects: Vec::new(),
         }

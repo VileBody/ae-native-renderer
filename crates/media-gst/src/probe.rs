@@ -11,6 +11,10 @@ pub struct MediaProbe {
     pub fps: Option<f64>,
     pub duration: Option<f64>,
     pub pixel_format: Option<String>,
+    #[serde(default)]
+    pub video_codec: Option<String>,
+    #[serde(default)]
+    pub audio_codec: Option<String>,
     pub audio_sample_rate: Option<u32>,
     pub audio_channels: Option<u16>,
     pub audio_duration: Option<f64>,
@@ -89,6 +93,12 @@ pub fn probe(path: impl AsRef<Path>) -> anyhow::Result<MediaProbe> {
         duration: video_duration.or(audio_duration).or(format_duration),
         pixel_format: video
             .and_then(|stream| stream["pix_fmt"].as_str())
+            .map(str::to_string),
+        video_codec: video
+            .and_then(|stream| stream["codec_name"].as_str())
+            .map(str::to_string),
+        audio_codec: audio
+            .and_then(|stream| stream["codec_name"].as_str())
             .map(str::to_string),
         audio_sample_rate: audio
             .and_then(|stream| stream["sample_rate"].as_str())

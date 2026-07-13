@@ -1,0 +1,11 @@
+{
+  "schema": "blast.bot-render.v1",
+  "caseId": "scenes_type_5_stress",
+  "subtitles_mode": "scenes_3rd",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 3.9},
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 3.9}, "scenes": [{
+    "id": "5-stress", "type": "TYPE_5", "words": ["я", "не", "верю", "твоим", "глазам"], "start": 0.16, "end": 3.42,
+    "lines": [["я", "не", "верю"], ["твоим", "глазам"]],
+    "word_timings": [{"word": "я", "start": 0.16, "end": 0.70}, {"word": "не", "start": 0.70, "end": 1.18}, {"word": "верю", "start": 1.18, "end": 1.74}, {"word": "твоим", "start": 1.74, "end": 2.36}, {"word": "глазам", "start": 2.36, "end": 3.12}]
+  }]}
+}

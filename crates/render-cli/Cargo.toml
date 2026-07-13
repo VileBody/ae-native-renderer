@@ -13,6 +13,7 @@ anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 tracing.workspace = true
 tracing-subscriber.workspace = true
 render-ir = { path = "../render-ir" }
@@ -22,3 +23,4 @@ effects = { path = "../effects" }
 ae-bridge = { path = "../ae-bridge" }
 raster-cpu = { path = "../raster-cpu" }
 testkit = { path = "../testkit" }
+fontdue.workspace = true

@@ -1,13 +1,40 @@
-use raster_cpu::Canvas;
+use raster_cpu::{composite_normal, Canvas};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::sync::{Arc, Mutex, OnceLock};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, Tag};
 
-use crate::{layout_text, load_font_with_telemetry, TextLayoutRequest, TextLayoutResult};
+use crate::{
+    font_override_for_char, layout_text, load_font_with_telemetry, TextLayoutRequest,
+    TextLayoutResult,
+};
 
 const OUTLINE_COVERAGE_SUPERSAMPLE: u32 = 16;
+// Full-frame Rayon passes regress memory-bound 1080p renders on Apple Silicon.
+// Keep UHD and larger canvases eligible while leaving production 1080p serial.
+const PARALLEL_TEXT_PIXEL_THRESHOLD: usize = 8_000_000;
+const FONTDUE_COVERAGE_CACHE_CAPACITY: usize = 2_048;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct TextPaintStyle {
+    pub fill: [u8; 4],
+    pub stroke_color: Option<[u8; 4]>,
+    pub stroke_width: f32,
+    pub stroke_over_fill: bool,
+}
+
+impl TextPaintStyle {
+    pub fn fill(fill: [u8; 4]) -> Self {
+        Self {
+            fill,
+            stroke_color: None,
+            stroke_width: 0.0,
+            stroke_over_fill: false,
+        }
+    }
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct TextRasterTrace {
@@ -82,6 +109,16 @@ pub fn rasterize_text(
     Ok(rasterize_text_with_layout(req, &layout, width, height, color)?.0)
 }
 
+pub fn rasterize_text_with_paint(
+    req: &TextLayoutRequest,
+    width: u32,
+    height: u32,
+    paint: TextPaintStyle,
+) -> anyhow::Result<Canvas> {
+    let layout = layout_text(req)?;
+    Ok(rasterize_text_with_layout_and_paint(req, &layout, width, height, paint)?.0)
+}
+
 pub fn rasterize_text_with_layout(
     req: &TextLayoutRequest,
     layout: &TextLayoutResult,
@@ -89,46 +126,87 @@ pub fn rasterize_text_with_layout(
     height: u32,
     color: [u8; 4],
 ) -> anyhow::Result<(Canvas, TextRasterTrace)> {
+    rasterize_text_with_layout_and_paint(req, layout, width, height, TextPaintStyle::fill(color))
+}
+
+pub fn rasterize_text_with_layout_and_paint(
+    req: &TextLayoutRequest,
+    layout: &TextLayoutResult,
+    width: u32,
+    height: u32,
+    paint: TextPaintStyle,
+) -> anyhow::Result<(Canvas, TextRasterTrace)> {
     let (font, font_resolution) = load_font_with_telemetry(&req.font_id)?;
-    let font_bytes = font_resolution
-        .resolved_path
-        .as_ref()
-        .and_then(|path| fs::read(path).ok());
-    let outline_face = font_bytes
-        .as_deref()
-        .and_then(|bytes| Face::parse(bytes, 0).ok());
-    let mut canvas = Canvas::transparent(width, height);
+    let mut fill_canvas = Canvas::transparent(width, height);
+    let mut coverage_mask = vec![0u8; width as usize * height as usize];
     let mut draw_chars = Vec::with_capacity(layout.glyphs.len());
     let chars = req.text.chars().collect::<Vec<_>>();
-    let fill_rgba = rgba_u8_to_f32(color);
-    let stroke_rgba = [0.0, 0.0, 0.0, 0.0];
+    let fill_rgba = rgba_u8_to_f32(paint.fill);
+    let stroke_rgba = paint
+        .stroke_color
+        .map(rgba_u8_to_f32)
+        .unwrap_or([0.0, 0.0, 0.0, 0.0]);
     let mut used_outline_backend = false;
-    let outline_font_key = font_resolution
-        .resolved_path
-        .as_ref()
-        .map(|path| path.display().to_string())
-        .unwrap_or_else(|| req.font_id.clone());
-
     for (run_index, glyph) in layout.glyphs.iter().enumerate() {
         let ch = chars.get(glyph.char_index).copied();
-        let glyph_id = glyph.glyph_id.min(u16::MAX as u32) as u16;
+        let glyph_font_id = font_override_for_char(req, glyph.char_index).unwrap_or(&req.font_id);
+        let (glyph_font, glyph_resolution) = if glyph_font_id == req.font_id {
+            (font.clone(), font_resolution.clone())
+        } else {
+            load_font_with_telemetry(glyph_font_id)?
+        };
+        let glyph_font_bytes = glyph_resolution
+            .resolved_path
+            .as_ref()
+            .and_then(|path| fs::read(path).ok());
+        let glyph_outline_face = glyph_font_bytes
+            .as_deref()
+            .and_then(|bytes| Face::parse(bytes, 0).ok());
+        // These faces expose missing stems in the recovered ARE scanline path.
+        // Fontdue preserves their complete Latin and Cyrillic contours.
+        let glyph_use_outline_backend = !matches!(
+            glyph_resolution.resolved_postscript_name.as_deref(),
+            Some("Montserrat-Bold") | Some("ArialNarrow")
+        );
+        let glyph_font_key = glyph_resolution
+            .resolved_path
+            .as_ref()
+            .map(|path| path.display().to_string())
+            .unwrap_or_else(|| glyph_font_id.to_string());
+        let glyph_id = ch
+            .map(|character| glyph_font.lookup_glyph_index(character))
+            .unwrap_or(glyph.glyph_id.min(u16::MAX as u32) as u16);
         let telemetry = layout.telemetry.glyphs.get(run_index);
+        let font_size = telemetry
+            .map(|telemetry| telemetry.font_size)
+            .filter(|font_size| font_size.is_finite() && *font_size > 0.0)
+            .unwrap_or(req.font_size);
         let baseline = telemetry
             .map(|telemetry| telemetry.baseline)
             .unwrap_or_else(|| glyph.bbox[1] + glyph.bbox[3]);
-        let coverage = outline_face
+        let coverage = glyph_outline_face
             .as_ref()
+            .filter(|_| glyph_use_outline_backend)
             .and_then(|face| {
                 outline_coverage(
                     face,
-                    &outline_font_key,
+                    &glyph_font_key,
                     glyph_id,
                     glyph.x,
                     baseline,
-                    req.font_size,
+                    font_size,
                 )
             })
-            .unwrap_or_else(|| fontdue_coverage(&font, glyph_id, glyph.x, baseline, req.font_size));
+            .unwrap_or_else(|| {
+                fontdue_coverage(
+                    &glyph_font,
+                    &glyph_font_key,
+                    glyph_id,
+                    glyph.x,
+                    baseline,
+                    font_size,
+                )
+            });
         used_outline_backend |= coverage.backend == "ttf_outline_are_scanline_16x";
         let clipped_bounds = clipped_bitmap_bounds(
             coverage.raster_x,
@@ -140,7 +218,7 @@ pub fn rasterize_text_with_layout(
         );
         let coverage_rows = coverage_row_spans(
             run_index,
-            glyph.glyph_id,
+            glyph_id as u32,
             coverage.raster_x,
             coverage.raster_y,
             coverage.width,
@@ -148,21 +226,23 @@ pub fn rasterize_text_with_layout(
             coverage.bitmap.as_ref(),
             clipped_bounds,
         );
-        let draw_fill = color[3] > 0;
-        let draw_stroke = false;
+        let draw_fill = paint.fill[3] > 0;
+        let draw_stroke = paint
+            .stroke_color
+            .is_some_and(|color| color[3] > 0 && paint.stroke_width > 0.0);
         let skip_reason =
-            draw_char_skip_reason(ch, glyph.glyph_id, draw_fill, draw_stroke, clipped_bounds);
+            draw_char_skip_reason(ch, glyph_id as u32, draw_fill, draw_stroke, clipped_bounds);
         let renderable = skip_reason.is_none();
         let will_draw = renderable && clipped_bounds.is_some();
         let plan = DrawCharPlan {
             glyph_run_index: run_index,
             char_index: glyph.char_index,
             character: ch.map(|ch| ch.to_string()).unwrap_or_default(),
-            glyph_id: glyph.glyph_id,
-            font_postscript_name: telemetry
-                .and_then(|telemetry| telemetry.font_postscript_name.clone()),
-            font_path: telemetry
-                .and_then(|telemetry| telemetry.font_path.as_ref())
+            glyph_id: glyph_id as u32,
+            font_postscript_name: glyph_resolution.resolved_postscript_name.clone(),
+            font_path: glyph_resolution
+                .resolved_path
+                .as_ref()
                 .map(|path| path.display().to_string()),
             metric_source: telemetry
                 .map(|telemetry| telemetry.metric_source.clone())
@@ -172,21 +252,11 @@ pub fn rasterize_text_with_layout(
             draw_fill,
             draw_stroke,
             skip_reason,
-            glyph_matrix: [
-                req.font_size,
-                0.0,
-                0.0,
-                0.0,
-                req.font_size,
-                0.0,
-                0.0,
-                0.0,
-                1.0,
-            ],
+            glyph_matrix: [font_size, 0.0, 0.0, 0.0, font_size, 0.0, 0.0, 0.0, 1.0],
             text_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, glyph.x, baseline, 1.0],
             fill_rgba,
             stroke_rgba,
-            stroke_width: 0.0,
+            stroke_width: paint.stroke_width.max(0.0),
             line_join: 0,
             miter_limit: 2.5,
             orientation: 0,
@@ -209,19 +279,49 @@ pub fn rasterize_text_with_layout(
             output_semantics: "recovered_txt_are_pf_pixel8_integer_source_over_v1".to_string(),
         };
         if will_draw {
-            blend_bitmap(
-                &mut canvas,
-                coverage.raster_x,
-                coverage.raster_y,
-                coverage.width,
-                coverage.height,
-                coverage.bitmap.as_ref(),
-                color,
-                clipped_bounds,
-            );
+            if draw_fill {
+                blend_bitmap(
+                    &mut fill_canvas,
+                    coverage.raster_x,
+                    coverage.raster_y,
+                    coverage.width,
+                    coverage.height,
+                    coverage.bitmap.as_ref(),
+                    paint.fill,
+                    clipped_bounds,
+                );
+            }
+            if draw_stroke {
+                merge_bitmap_mask(
+                    &mut coverage_mask,
+                    width,
+                    height,
+                    coverage.raster_x,
+                    coverage.raster_y,
+                    coverage.width,
+                    coverage.height,
+                    coverage.bitmap.as_ref(),
+                    clipped_bounds,
+                );
+            }
         }
         draw_chars.push(plan);
     }
+
+    let canvas = if let Some(stroke_color) = paint
+        .stroke_color
+        .filter(|color| color[3] > 0 && paint.stroke_width > 0.0)
+    {
+        compose_text_paint(
+            fill_canvas,
+            &coverage_mask,
+            stroke_color,
+            paint.stroke_width,
+            paint.stroke_over_fill,
+        )
+    } else {
+        fill_canvas
+    };
 
     Ok((
         canvas,
@@ -259,26 +359,136 @@ struct CoverageBitmap {
 
 fn fontdue_coverage(
     font: &fontdue::Font,
+    font_key: &str,
     glyph_id: u16,
     glyph_x: f32,
     baseline: f32,
     font_size: f32,
 ) -> CoverageBitmap {
-    let (metrics, bitmap) = font.rasterize_indexed(glyph_id, font_size);
-    let raster_x = glyph_x + metrics.xmin as f32;
-    let raster_y = baseline - metrics.ymin as f32 - metrics.height as f32;
-    let nonzero_pixels = bitmap.iter().filter(|alpha| **alpha > 0).count() as u32;
-    CoverageBitmap {
-        width: metrics.width,
-        height: metrics.height,
-        raster_x,
-        raster_y,
-        bitmap: Arc::new(bitmap),
-        backend: "fontdue_rasterize_indexed_fallback",
-        supersample: 1,
-        origin_source: "fontdue_metrics",
-        nonzero_pixels,
+    let key = FontdueCoverageKey {
+        font_key: font_key.to_string(),
+        glyph_id,
+        font_size_bits: font_size.to_bits(),
+    };
+    let cached = {
+        let mut cache = fontdue_coverage_cache()
+            .lock()
+            .expect("fontdue coverage cache poisoned");
+        cache.get(&key)
+    };
+    let mask = cached.unwrap_or_else(|| {
+        let (metrics, bitmap) = font.rasterize_indexed(glyph_id, font_size);
+        let mask = Arc::new(FontdueCoverageMask {
+            width: metrics.width,
+            height: metrics.height,
+            raster_x_offset: metrics.xmin as f32,
+            raster_y_offset: -metrics.ymin as f32 - metrics.height as f32,
+            nonzero_pixels: bitmap.iter().filter(|alpha| **alpha > 0).count() as u32,
+            bitmap: Arc::new(bitmap),
+        });
+        let mut cache = fontdue_coverage_cache()
+            .lock()
+            .expect("fontdue coverage cache poisoned");
+        cache.insert_or_get(key, mask)
+    });
+    mask.to_bitmap(glyph_x, baseline)
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+struct FontdueCoverageKey {
+    font_key: String,
+    glyph_id: u16,
+    font_size_bits: u32,
+}
+
+#[derive(Debug)]
+struct FontdueCoverageMask {
+    width: usize,
+    height: usize,
+    raster_x_offset: f32,
+    raster_y_offset: f32,
+    bitmap: Arc<Vec<u8>>,
+    nonzero_pixels: u32,
+}
+
+impl FontdueCoverageMask {
+    fn to_bitmap(&self, glyph_x: f32, baseline: f32) -> CoverageBitmap {
+        CoverageBitmap {
+            width: self.width,
+            height: self.height,
+            raster_x: glyph_x + self.raster_x_offset,
+            raster_y: baseline + self.raster_y_offset,
+            bitmap: self.bitmap.clone(),
+            backend: "fontdue_rasterize_indexed_fallback",
+            supersample: 1,
+            origin_source: "fontdue_metrics",
+            nonzero_pixels: self.nonzero_pixels,
+        }
     }
+}
+
+#[derive(Debug)]
+struct CachedFontdueCoverage {
+    mask: Arc<FontdueCoverageMask>,
+    last_used: u64,
+}
+
+#[derive(Debug)]
+struct FontdueCoverageCache {
+    entries: HashMap<FontdueCoverageKey, CachedFontdueCoverage>,
+    capacity: usize,
+    clock: u64,
+}
+
+impl FontdueCoverageCache {
+    fn new(capacity: usize) -> Self {
+        Self {
+            entries: HashMap::new(),
+            capacity: capacity.max(1),
+            clock: 0,
+        }
+    }
+
+    fn get(&mut self, key: &FontdueCoverageKey) -> Option<Arc<FontdueCoverageMask>> {
+        self.clock = self.clock.wrapping_add(1);
+        let entry = self.entries.get_mut(key)?;
+        entry.last_used = self.clock;
+        Some(entry.mask.clone())
+    }
+
+    fn insert_or_get(
+        &mut self,
+        key: FontdueCoverageKey,
+        mask: Arc<FontdueCoverageMask>,
+    ) -> Arc<FontdueCoverageMask> {
+        if let Some(existing) = self.get(&key) {
+            return existing;
+        }
+        if self.entries.len() >= self.capacity {
+            if let Some(lru_key) = self
+                .entries
+                .iter()
+                .min_by_key(|(_, entry)| entry.last_used)
+                .map(|(key, _)| key.clone())
+            {
+                self.entries.remove(&lru_key);
+            }
+        }
+        self.clock = self.clock.wrapping_add(1);
+        self.entries.insert(
+            key,
+            CachedFontdueCoverage {
+                mask: mask.clone(),
+                last_used: self.clock,
+            },
+        );
+        mask
+    }
+}
+
+fn fontdue_coverage_cache() -> &'static Mutex<FontdueCoverageCache> {
+    static CACHE: OnceLock<Mutex<FontdueCoverageCache>> = OnceLock::new();
+    CACHE.get_or_init(|| Mutex::new(FontdueCoverageCache::new(FONTDUE_COVERAGE_CACHE_CAPACITY)))
 }
 
 fn outline_coverage(
@@ -1330,6 +1540,166 @@ fn blend_bitmap(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
+fn merge_bitmap_mask(
+    mask: &mut [u8],
+    canvas_width: u32,
+    canvas_height: u32,
+    x: f32,
+    y: f32,
+    width: usize,
+    height: usize,
+    bitmap: &[u8],
+    clip: Option<[i32; 4]>,
+) {
+    let clip = clip.unwrap_or([0, 0, canvas_width as i32, canvas_height as i32]);
+    let origin_x = x.round() as i32;
+    let origin_y = y.round() as i32;
+    for by in 0..height {
+        for bx in 0..width {
+            let coverage = bitmap[by * width + bx];
+            if coverage == 0 {
+                continue;
+            }
+            let px = origin_x + bx as i32;
+            let py = origin_y + by as i32;
+            if px < clip[0]
+                || py < clip[1]
+                || px >= clip[2]
+                || py >= clip[3]
+                || px < 0
+                || py < 0
+                || px >= canvas_width as i32
+                || py >= canvas_height as i32
+            {
+                continue;
+            }
+            let index = py as usize * canvas_width as usize + px as usize;
+            mask[index] = mask[index].max(coverage);
+        }
+    }
+}
+
+fn compose_text_paint(
+    fill: Canvas,
+    coverage_mask: &[u8],
+    stroke_color: [u8; 4],
+    stroke_width: f32,
+    stroke_over_fill: bool,
+) -> Canvas {
+    let stroke_mask = centered_stroke_mask(
+        coverage_mask,
+        fill.width,
+        fill.height,
+        stroke_width.max(0.0),
+    );
+    let stroke = canvas_from_mask(fill.width, fill.height, &stroke_mask, stroke_color);
+    if stroke_over_fill {
+        let mut output = fill;
+        composite_normal(&mut output, &stroke, 100.0);
+        output
+    } else {
+        let mut output = stroke;
+        composite_normal(&mut output, &fill, 100.0);
+        output
+    }
+}
+
+fn centered_stroke_mask(mask: &[u8], width: u32, height: u32, stroke_width: f32) -> Vec<u8> {
+    if stroke_width <= 0.0 || width == 0 || height == 0 {
+        return vec![0; mask.len()];
+    }
+    centered_stroke_mask_with_mode(
+        mask,
+        width,
+        height,
+        stroke_width,
+        mask.len() >= PARALLEL_TEXT_PIXEL_THRESHOLD,
+    )
+}
+
+fn centered_stroke_mask_with_mode(
+    mask: &[u8],
+    width: u32,
+    height: u32,
+    stroke_width: f32,
+    parallel: bool,
+) -> Vec<u8> {
+    let half_width = stroke_width * 0.5;
+    let radius = half_width.ceil().max(1.0) as i32;
+    let sample_radius = half_width + 0.5;
+    let offsets = (-radius..=radius)
+        .flat_map(|dy| (-radius..=radius).map(move |dx| (dx, dy)))
+        .filter(|(dx, dy)| {
+            let distance = ((*dx * *dx + *dy * *dy) as f32).sqrt();
+            distance <= sample_radius
+        })
+        .collect::<Vec<_>>();
+    let mut ring = vec![0u8; mask.len()];
+    let row_width = width as usize;
+    if parallel {
+        ring.par_chunks_mut(row_width)
+            .enumerate()
+            .for_each(|(y, row)| fill_centered_stroke_row(row, y, mask, width, height, &offsets));
+    } else {
+        for (y, row) in ring.chunks_mut(row_width).enumerate() {
+            fill_centered_stroke_row(row, y, mask, width, height, &offsets);
+        }
+    }
+    ring
+}
+
+fn fill_centered_stroke_row(
+    row: &mut [u8],
+    y: usize,
+    mask: &[u8],
+    width: u32,
+    height: u32,
+    offsets: &[(i32, i32)],
+) {
+    let y = y as i32;
+    for (x, output) in row.iter_mut().enumerate() {
+        let x = x as i32;
+        let mut dilated = 0u8;
+        let mut eroded = u8::MAX;
+        for (dx, dy) in offsets {
+            let sx = x + dx;
+            let sy = y + dy;
+            let sample = if sx < 0 || sy < 0 || sx >= width as i32 || sy >= height as i32 {
+                0
+            } else {
+                mask[sy as usize * width as usize + sx as usize]
+            };
+            dilated = dilated.max(sample);
+            eroded = eroded.min(sample);
+        }
+        *output = dilated.saturating_sub(eroded);
+    }
+}
+
+fn canvas_from_mask(width: u32, height: u32, mask: &[u8], color: [u8; 4]) -> Canvas {
+    let mut canvas = Canvas::transparent(width, height);
+    if mask.len() >= PARALLEL_TEXT_PIXEL_THRESHOLD {
+        canvas
+            .data
+            .par_chunks_mut(4)
+            .zip(mask.par_iter().copied())
+            .for_each(|(pixel, coverage)| {
+                if coverage != 0 {
+                    pixel.copy_from_slice(&blend_text_pixel_ae_u8([0, 0, 0, 0], color, coverage));
+                }
+            });
+    } else {
+        for (pixel, coverage) in canvas.data.chunks_mut(4).zip(mask.iter().copied()) {
+            if coverage == 0 {
+                continue;
+            }
+            pixel.copy_from_slice(&blend_text_pixel_ae_u8([0, 0, 0, 0], color, coverage));
+        }
+    }
+    canvas
+}
+
 fn coverage_row_spans(
     glyph_run_index: usize,
     glyph_id: u32,
@@ -1520,13 +1890,26 @@ fn draw_char_skip_reason(
 mod tests {
     use super::*;
     use crate::{layout_text, TextLayoutRequest};
+    use rayon::ThreadPoolBuilder;
     use std::path::PathBuf;
+
+    #[test]
+    fn automatic_parallelism_starts_above_full_hd() {
+        assert!(1920usize * 1080 < PARALLEL_TEXT_PIXEL_THRESHOLD);
+        assert!(3840usize * 2160 >= PARALLEL_TEXT_PIXEL_THRESHOLD);
+    }
 
     fn request(text: &str) -> TextLayoutRequest {
         TextLayoutRequest {
             text: text.to_string(),
             font_id: "DejaVu Sans".to_string(),
             font_size: 24.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: crate::TextJustification::Center,
             box_rect: Some([0.0, 0.0, 200.0, 80.0]),
         }
     }
@@ -1534,6 +1917,16 @@ mod tests {
     fn montserrat_bolditalic_fixture() -> Option<PathBuf> {
         let path =
             PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Montserrat-BoldItalic.ttf");
+        path.exists().then_some(path)
+    }
+
+    fn montserrat_bold_fixture() -> Option<PathBuf> {
+        let path = PathBuf::from("fixtures/ae_conformance_pack/assets/fonts/Montserrat-Bold.ttf");
+        path.exists().then_some(path)
+    }
+
+    fn arial_narrow_fixture() -> Option<PathBuf> {
+        let path = PathBuf::from("/System/Library/Fonts/Supplemental/Arial Narrow.ttf");
         path.exists().then_some(path)
     }
 
@@ -1568,6 +1961,30 @@ mod tests {
     }
 
     #[test]
+    fn raster_origins_follow_ae_tracking_adjusted_layout_positions() {
+        let untracked = request("AB");
+        let mut tracked = untracked.clone();
+        tracked.tracking = -100.0;
+        let untracked_layout = layout_text(&untracked).unwrap();
+        let tracked_layout = layout_text(&tracked).unwrap();
+        let (_, trace) =
+            rasterize_text_with_layout(&tracked, &tracked_layout, 200, 80, [255, 255, 255, 255])
+                .unwrap();
+
+        let untracked_gap = untracked_layout.glyphs[1].x - untracked_layout.glyphs[0].x;
+        let tracked_gap = tracked_layout.glyphs[1].x - tracked_layout.glyphs[0].x;
+        assert!((tracked_gap - (untracked_gap - 2.4)).abs() < 0.001);
+        assert_eq!(
+            trace.draw_chars[0].glyph_origin[0],
+            tracked_layout.glyphs[0].x
+        );
+        assert_eq!(
+            trace.draw_chars[1].glyph_origin[0],
+            tracked_layout.glyphs[1].x
+        );
+    }
+
+    #[test]
     fn draw_char_trace_applies_fill_gate_before_raster_output() {
         let req = request("A");
         let layout = layout_text(&req).unwrap();
@@ -1592,6 +2009,12 @@ mod tests {
             text: "WA".to_string(),
             font_id: path.display().to_string(),
             font_size: 58.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: crate::TextJustification::Center,
             box_rect: Some([0.0, 0.0, 256.0, 128.0]),
         };
         let layout = layout_text(&req).unwrap();
@@ -1605,6 +2028,71 @@ mod tests {
                 && draw_char.coverage_nonzero_pixels > 0
                 && !draw_char.coverage_rows.is_empty()
         }));
+    }
+
+    #[test]
+    fn montserrat_bold_uses_complete_fontdue_glyphs() {
+        let Some(path) = montserrat_bold_fixture() else {
+            return;
+        };
+        let req = TextLayoutRequest {
+            text: "BABY".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 130.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: crate::TextJustification::Center,
+            box_rect: Some([0.0, 0.0, 972.0, 286.0]),
+        };
+        let layout = layout_text(&req).unwrap();
+        let (canvas, trace) =
+            rasterize_text_with_layout(&req, &layout, 972, 286, [255, 255, 255, 255]).unwrap();
+
+        assert_eq!(trace.coverage_backend, "fontdue_rasterize_indexed_fallback");
+        let first = &trace.draw_chars[0];
+        let [x0, y0, x1, y1] = first.clipped_bounds_i32.unwrap();
+        let left_quarter = x0 + (x1 - x0) / 4;
+        assert!((y0..y1).any(|y| {
+            let index = ((y as u32 * canvas.width + left_quarter as u32) * 4 + 3) as usize;
+            canvas.data[index] > 0
+        }));
+    }
+
+    #[test]
+    fn arial_narrow_uses_complete_fontdue_cyrillic_glyphs() {
+        let Some(path) = arial_narrow_fixture() else {
+            return;
+        };
+        let req = TextLayoutRequest {
+            text: "дома холодная".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 96.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: crate::TextJustification::Center,
+            box_rect: Some([0.0, 0.0, 972.0, 286.0]),
+        };
+        let layout = layout_text(&req).unwrap();
+        let (canvas, trace) =
+            rasterize_text_with_layout(&req, &layout, 972, 286, [255, 255, 255, 255]).unwrap();
+
+        assert_eq!(trace.coverage_backend, "fontdue_rasterize_indexed_fallback");
+        assert!(trace
+            .draw_chars
+            .iter()
+            .filter(|glyph| glyph.will_draw)
+            .all(
+                |glyph| glyph.coverage_backend == "fontdue_rasterize_indexed_fallback"
+                    && glyph.coverage_nonzero_pixels > 0
+                    && !glyph.coverage_rows.is_empty()
+            ));
+        assert!(canvas.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]
@@ -1740,6 +2228,239 @@ mod tests {
         assert_eq!(spans[1].start_x, 11);
         assert_eq!(spans[1].end_x, 13);
         assert_eq!(spans[1].coverage_hex.as_deref(), Some("ff01"));
+    }
+
+    #[test]
+    fn centered_stroke_mask_is_hollow() {
+        let mut mask = vec![0u8; 7 * 7];
+        for y in 2..=4 {
+            for x in 2..=4 {
+                mask[y * 7 + x] = 255;
+            }
+        }
+        let stroke = centered_stroke_mask(&mask, 7, 7, 2.0);
+        assert_eq!(
+            stroke[3 * 7 + 3],
+            0,
+            "stroke must not fill the glyph interior"
+        );
+        assert!(
+            stroke[3 * 7 + 1] > 0,
+            "stroke must expand outside the glyph"
+        );
+        assert!(
+            stroke[3 * 7 + 2] > 0,
+            "stroke must include the inner contour edge"
+        );
+    }
+
+    #[test]
+    fn stroke_under_fill_preserves_fill_center() {
+        let mut fill = Canvas::transparent(7, 7);
+        let mut mask = vec![0u8; 7 * 7];
+        for y in 2..=4 {
+            for x in 2..=4 {
+                fill.set_pixel(x, y, [255, 255, 255, 255]);
+                mask[y as usize * 7 + x as usize] = 255;
+            }
+        }
+        let painted = compose_text_paint(fill, &mask, [0, 0, 0, 255], 2.0, false);
+        assert_eq!(painted.pixel(3, 3), [255, 255, 255, 255]);
+        assert_eq!(painted.pixel(1, 3), [0, 0, 0, 255]);
+    }
+
+    #[test]
+    fn paint_raster_trace_reports_fill_and_stroke_in_one_pass() {
+        let req = request("A");
+        let layout = layout_text(&req).unwrap();
+        let (canvas, trace) = rasterize_text_with_layout_and_paint(
+            &req,
+            &layout,
+            200,
+            80,
+            TextPaintStyle {
+                fill: [255, 255, 255, 255],
+                stroke_color: Some([0, 0, 0, 255]),
+                stroke_width: 5.0,
+                stroke_over_fill: false,
+            },
+        )
+        .unwrap();
+        let glyph = trace
+            .draw_chars
+            .iter()
+            .find(|glyph| glyph.will_draw)
+            .expect("rendered glyph");
+        assert!(glyph.draw_fill);
+        assert!(glyph.draw_stroke);
+        assert_eq!(glyph.stroke_width, 5.0);
+        assert_eq!(trace.stroke_rgba, [0.0, 0.0, 0.0, 1.0]);
+        assert!(canvas.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
+    }
+
+    #[test]
+    fn fontdue_cache_reuses_bitmap_and_preserves_dynamic_origin() {
+        let Some(path) = montserrat_bold_fixture() else {
+            return;
+        };
+        let req = TextLayoutRequest {
+            text: "Ж".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 73.25,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: crate::TextJustification::Center,
+            box_rect: Some([0.0, 0.0, 256.0, 128.0]),
+        };
+        let layout = layout_text(&req).unwrap();
+        let (font, _) = crate::load_font_with_telemetry(&req.font_id).unwrap();
+        let glyph_id = layout.glyphs[0].glyph_id as u16;
+        let font_key = format!("fontdue-cache-origin-test:{}", path.display());
+        let (direct_metrics, direct_bitmap) = font.rasterize_indexed(glyph_id, req.font_size);
+        let first = fontdue_coverage(&font, &font_key, glyph_id, 12.25, 91.5, req.font_size);
+        let second = fontdue_coverage(&font, &font_key, glyph_id, 37.75, 140.0, req.font_size);
+
+        assert_eq!(first.width, direct_metrics.width);
+        assert_eq!(first.height, direct_metrics.height);
+        assert_eq!(first.bitmap.as_ref(), &direct_bitmap);
+        assert_eq!(
+            first.nonzero_pixels,
+            direct_bitmap.iter().filter(|alpha| **alpha > 0).count() as u32
+        );
+        assert_eq!(first.raster_x, 12.25 + direct_metrics.xmin as f32);
+        assert_eq!(
+            first.raster_y,
+            91.5 - direct_metrics.ymin as f32 - direct_metrics.height as f32
+        );
+        assert!(Arc::ptr_eq(&first.bitmap, &second.bitmap));
+        assert_eq!(first.width, second.width);
+        assert_eq!(first.height, second.height);
+        assert_eq!(first.nonzero_pixels, second.nonzero_pixels);
+        assert!((second.raster_x - first.raster_x - 25.5).abs() < f32::EPSILON);
+        assert!((second.raster_y - first.raster_y - 48.5).abs() < f32::EPSILON);
+    }
+
+    #[test]
+    fn repeated_fontdue_render_is_byte_exact_and_thread_safe() {
+        let Some(path) = montserrat_bold_fixture() else {
+            return;
+        };
+        let req = TextLayoutRequest {
+            text: "ТРЕНД".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 91.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            tracking: -55.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: crate::TextJustification::Center,
+            box_rect: Some([0.0, 0.0, 512.0, 192.0]),
+        };
+        let layout = layout_text(&req).unwrap();
+        let first = rasterize_text_with_layout_and_paint(
+            &req,
+            &layout,
+            512,
+            192,
+            TextPaintStyle::fill([255, 255, 255, 255]),
+        )
+        .unwrap();
+        let pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let renders = pool.install(|| {
+            (0..8)
+                .into_par_iter()
+                .map(|_| {
+                    rasterize_text_with_layout_and_paint(
+                        &req,
+                        &layout,
+                        512,
+                        192,
+                        TextPaintStyle::fill([255, 255, 255, 255]),
+                    )
+                    .unwrap()
+                })
+                .collect::<Vec<_>>()
+        });
+
+        let expected_origins = first
+            .1
+            .draw_chars
+            .iter()
+            .map(|glyph| {
+                (
+                    glyph.raster_origin,
+                    glyph.bitmap_size,
+                    glyph.coverage_nonzero_pixels,
+                )
+            })
+            .collect::<Vec<_>>();
+        for (canvas, trace) in renders {
+            assert_eq!(canvas.data, first.0.data);
+            let origins = trace
+                .draw_chars
+                .iter()
+                .map(|glyph| {
+                    (
+                        glyph.raster_origin,
+                        glyph.bitmap_size,
+                        glyph.coverage_nonzero_pixels,
+                    )
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(origins, expected_origins);
+        }
+    }
+
+    #[test]
+    fn fontdue_cache_is_bounded_and_evicts_least_recently_used() {
+        let mask = || {
+            Arc::new(FontdueCoverageMask {
+                width: 1,
+                height: 1,
+                raster_x_offset: 0.0,
+                raster_y_offset: 0.0,
+                bitmap: Arc::new(vec![255]),
+                nonzero_pixels: 1,
+            })
+        };
+        let key = |glyph_id| FontdueCoverageKey {
+            font_key: "bounded-test".to_string(),
+            glyph_id,
+            font_size_bits: 12.0_f32.to_bits(),
+        };
+        let mut cache = FontdueCoverageCache::new(2);
+        cache.insert_or_get(key(1), mask());
+        cache.insert_or_get(key(2), mask());
+        assert!(cache.get(&key(1)).is_some());
+        cache.insert_or_get(key(3), mask());
+
+        assert!(cache.get(&key(1)).is_some());
+        assert!(cache.get(&key(2)).is_none());
+        assert!(cache.get(&key(3)).is_some());
+        assert_eq!(cache.entries.len(), 2);
+    }
+
+    #[test]
+    fn parallel_stroke_mask_is_byte_exact_across_thread_counts() {
+        let width = 257;
+        let height = 131;
+        let mask = (0..width * height)
+            .map(|index| ((index * 37 + index / width * 19) % 256) as u8)
+            .collect::<Vec<_>>();
+        let expected = centered_stroke_mask_with_mode(&mask, width, height, 5.0, false);
+        let one_thread = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let four_threads = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let actual_one =
+            one_thread.install(|| centered_stroke_mask_with_mode(&mask, width, height, 5.0, true));
+        let actual_four = four_threads
+            .install(|| centered_stroke_mask_with_mode(&mask, width, height, 5.0, true));
+
+        assert_eq!(actual_one, expected);
+        assert_eq!(actual_four, expected);
     }
 
     fn row_nonzero_spans(row: &[u8]) -> Vec<(usize, usize, String)> {

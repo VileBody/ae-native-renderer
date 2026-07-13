@@ -1,0 +1,52 @@
+{
+  "schema": "ae-native-renderer.render-request.v1",
+  "requestId": "minimal-solid",
+  "action": "render",
+  "projectSpec": {
+    "mainCompName": "Comp 1",
+    "subtitlesMode": "legacy_blocks"
+  },
+  "compsSpec": [
+    {
+      "name": "Comp 1",
+      "w": 64,
+      "h": 64,
+      "fps": 24,
+      "dur": 0.125,
+      "bgColor": [0, 0, 0]
+    }
+  ],
+  "footage_layers": [
+    {
+      "name": "red-solid",
+      "type": "solid",
+      "in_point": 0,
+      "out_point": 0.125,
+      "z_index": 1,
+      "props": {},
+      "effects": {},
+      "text_data": {
+        "layer_meta": {
+          "comp_name_target": "Comp 1",
+          "enabled": true
+        },
+        "solid_source": {
+          "color_rgb01": [1, 0, 0],
+          "width": 64,
+          "height": 64
+        }
+      }
+    }
+  ],
+  "text_layers": [],
+  "visualOps": [],
+  "assetsSpec": {},
+  "outputSpec": {
+    "directory": "../../target/json_api_minimal",
+    "writeScene": true
+  },
+  "policy": {
+    "onUnsupported": "report",
+    "strict": false
+  }
+}

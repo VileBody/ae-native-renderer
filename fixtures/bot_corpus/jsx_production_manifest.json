@@ -1,0 +1,16 @@
+{
+  "schema": "ae-native-renderer.jsx-production-corpus.v1",
+  "fps": 24,
+  "cases": [
+    {"id": "type_2_italic_peak", "type": "TYPE_2", "job_id": "ea15818e2a81460ca3a15044e19e5584", "text": "НЕ РАЗМЫВАЕТ МОСТЫ ЖАЛОСТЬ", "states": ["entrance", "peak"], "requirements": ["focus word is italic only", "word reveal", "minimax/posterize/turbulent exit"]},
+    {"id": "type_2_long_focus", "type": "TYPE_2", "job_id": "9fb88c88b3af48779f7ed481e4e9f3ad", "text": "ЛУЧШИЙ ДЛЯ ЕЕ ПОДРУЖЕК", "states": ["entrance", "peak"], "requirements": ["different phrase geometry", "focus word is italic only", "word reveal"]},
+    {"id": "type_3_entrance", "type": "TYPE_3", "job_id": "9fb88c88b3af48779f7ed481e4e9f3ad", "text": "ДАЙ МНЕ ПОВОД", "states": ["entrance", "accumulation"], "requirements": ["accumulating phrase", "geometry profile", "blur tail"]},
+    {"id": "type_3_tail", "type": "TYPE_3", "job_id": "9fb88c88b3af48779f7ed481e4e9f3ad", "text": "ДАЙ МНЕ ПОВОД", "states": ["accumulation", "exit"], "requirements": ["same available production layer: peak and tail", "blur tail"]},
+    {"id": "type_4_red_hook", "type": "TYPE_4", "job_id": "fbca5929d7cd4b6e8f7c73366f54ab5f", "text": "АНГЕЛ ВОЗЬМИ", "states": ["entrance", "peak"], "requirements": ["crisp hook", "minimax entrance", "posterize/turbulent exit"]},
+    {"id": "type_4_short_hook", "type": "TYPE_4", "job_id": "9fb88c88b3af48779f7ed481e4e9f3ad", "text": "САМЫЙ СТОЙКИЙ", "states": ["entrance", "peak"], "requirements": ["different phrase geometry", "crisp hook", "effect stack"]},
+    {"id": "type_5_outline", "type": "TYPE_5", "job_id": "ea15818e2a81460ca3a15044e19e5584", "text": "ДЕЛЯТСЯ НОЧЬЮ СО МНОЙ", "states": ["outline", "fill_start"], "requirements": ["hollow stroke before fill", "independent outline/fill timing"]},
+    {"id": "type_5_fill_tail", "type": "TYPE_5", "job_id": "ea15818e2a81460ca3a15044e19e5584", "text": "ДЕЛЯТСЯ НОЧЬЮ СО МНОЙ", "states": ["peak", "exit"], "requirements": ["same available production layer: fill and tail", "shared blur tail"]},
+    {"id": "type_6_first_group", "type": "TYPE_6", "job_id": "fbca5929d7cd4b6e8f7c73366f54ab5f", "text": "ТЫЩА ВАРОВ FREE FOR PROFIT", "states": ["first_group", "second_group"], "requirements": ["first and second group reveal", "posterize/turbulent stack"]},
+    {"id": "type_6_exit", "type": "TYPE_6", "job_id": "fbca5929d7cd4b6e8f7c73366f54ab5f", "text": "ТЫЩА ВАРОВ FREE FOR PROFIT", "states": ["peak", "exit"], "requirements": ["same available production layer: peak and exit", "shared effect stack"]}
+  ]
+}

@@ -1,0 +1,7 @@
+{
+  "schema": "blast.bot-render.v1", "caseId": "scenes_type_2", "subtitles_mode": "scenes_3rd",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 2.0}, "effectStyleIds": ["txt_soft_v1"],
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 2.0}, "scenes": [
+    {"id": 2, "type": "TYPE_2", "words": ["я", "снова", "вижу", "тебя"], "start": 0.2, "end": 1.7, "lines": [["я", "снова"], ["вижу", "тебя"]], "focus_word": "снова", "focus_style": "italic", "word_timings": [{"word": "я", "start": 0.2, "end": 0.48}, {"word": "снова", "start": 0.48, "end": 0.84}, {"word": "вижу", "start": 0.84, "end": 1.22}, {"word": "тебя", "start": 1.22, "end": 1.7}]}
+  ]}
+}

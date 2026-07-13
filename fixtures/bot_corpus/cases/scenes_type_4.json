@@ -1,0 +1,7 @@
+{
+  "schema": "blast.bot-render.v1", "caseId": "scenes_type_4", "subtitles_mode": "scenes_3rd",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 1.8}, "effectStyleIds": ["txt_drop_v1"],
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 1.8}, "scenes": [
+    {"id": 4, "type": "TYPE_4", "words": ["ангел", "возьми"], "start": 0.18, "end": 1.5, "lines": [["ангел", "возьми"]], "focus_word": "ангел", "focus_style": "red", "word_timings": [{"word": "ангел", "start": 0.18, "end": 0.72}, {"word": "возьми", "start": 0.72, "end": 1.5}]}
+  ]}
+}

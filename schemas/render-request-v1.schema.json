@@ -1,0 +1,184 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ae-native-renderer.render-request.v1",
+  "title": "AE Native Renderer JSON Request v1",
+  "type": "object",
+  "required": ["schema", "action", "projectSpec", "compsSpec"],
+  "properties": {
+    "schema": {
+      "const": "ae-native-renderer.render-request.v1",
+      "default": "ae-native-renderer.render-request.v1"
+    },
+    "requestId": { "type": "string" },
+    "action": {
+      "enum": ["validate", "inspect", "render"],
+      "default": "render"
+    },
+    "payloadVersion": { "type": ["string", "null"] },
+    "projectSpec": {
+      "type": "object",
+      "required": ["mainCompName"],
+      "properties": {
+        "mainCompName": { "type": "string", "minLength": 1 },
+        "subtitlesMode": { "type": ["string", "null"] },
+        "colorManagement": {
+          "type": "object",
+          "properties": {
+            "workingSpace": { "type": "string", "default": "none" },
+            "linearBlending": { "type": "boolean", "default": false },
+            "outputSpace": { "type": "string", "default": "srgb" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": true
+    },
+    "compsSpec": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["name", "w", "h", "fps", "dur"],
+        "properties": {
+          "name": { "type": "string" },
+          "w": { "type": "integer", "minimum": 1 },
+          "h": { "type": "integer", "minimum": 1 },
+          "fps": { "type": "number", "exclusiveMinimum": 0 },
+          "dur": { "type": "number", "exclusiveMinimum": 0 },
+          "pixelAspect": { "type": "number", "exclusiveMinimum": 0 },
+          "bgColor": {
+            "type": "array",
+            "minItems": 3,
+            "maxItems": 3,
+            "items": { "type": "number" }
+          }
+        },
+        "additionalProperties": true
+      }
+    },
+    "footage_layers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/layer" },
+      "default": []
+    },
+    "text_layers": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/layer" },
+      "default": []
+    },
+    "visualOps": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/visualOperation" }
+    },
+    "assetsSpec": {
+      "type": "object",
+      "properties": {
+        "root": { "type": ["string", "null"] },
+        "jobArchive": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
+    },
+    "outputSpec": {
+      "type": "object",
+      "properties": {
+        "directory": { "type": "string", "default": "out" },
+        "video": { "type": ["string", "null"] },
+        "frames": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "integer", "minimum": 0 },
+          "description": "Exact source composition frame indices. Requests are sorted and deduplicated before rendering."
+        },
+        "writeScene": { "type": "boolean", "default": true }
+      },
+      "not": {
+        "required": ["video", "frames"],
+        "properties": {
+          "video": { "type": "string" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "policy": {
+      "type": "object",
+      "properties": {
+        "onUnsupported": {
+          "enum": ["report", "error"],
+          "default": "report"
+        },
+        "strict": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "layer": {
+      "type": "object",
+      "required": ["name", "type", "in_point", "out_point", "z_index"],
+      "properties": {
+        "name": { "type": "string" },
+        "type": {
+          "enum": ["solid", "footage", "text", "precomp", "adjustment"]
+        },
+        "in_point": { "type": "number" },
+        "out_point": { "type": "number" },
+        "z_index": { "type": "integer" },
+        "text": { "type": "string", "default": "" },
+        "adjustment_layer": { "type": "boolean", "default": false },
+        "props": { "type": "object", "default": {} },
+        "effects": { "type": "object", "default": {} },
+        "text_data": { "type": "object", "default": {} },
+        "source_rect": { "type": "object", "default": {} }
+      },
+      "additionalProperties": true
+    },
+    "visualOperation": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "id": { "type": ["string", "null"] },
+        "type": { "type": "string", "minLength": 1 },
+        "target": {
+          "type": "object",
+          "properties": {
+            "composition": { "type": ["string", "null"] },
+            "layer": { "type": ["string", "null"] },
+            "place": { "type": ["string", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "timing": {
+          "type": "object",
+          "properties": {
+            "start": { "type": ["number", "null"] },
+            "duration": { "type": ["number", "null"] },
+            "end": { "type": ["number", "null"] },
+            "anchor": { "type": ["string", "null"] },
+            "offset": { "type": ["number", "null"] }
+          },
+          "additionalProperties": false
+        },
+        "params": { "type": "object", "default": {} },
+        "assets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["role", "path"],
+            "properties": {
+              "role": {
+                "enum": ["audio", "tts_audio", "overlay", "matte"]
+              },
+              "path": { "type": "string" },
+              "optional": { "type": "boolean", "default": false }
+            },
+            "additionalProperties": false
+          }
+        },
+        "required": { "type": "boolean", "default": true }
+      },
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}

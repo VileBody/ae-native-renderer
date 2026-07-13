@@ -1,0 +1,11 @@
+{
+  "schema": "blast.bot-render.v1",
+  "caseId": "scenes_type_2_stress",
+  "subtitles_mode": "scenes_3rd",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 2.0},
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 2.0}, "scenes": [{
+    "id": "2-stress", "type": "TYPE_2", "words": ["и", "мне", "безумно", "жаль"], "start": 0.18, "end": 1.72,
+    "lines": [["и", "мне"], ["безумно", "жаль"]], "focus_word": "жаль", "focus_style": "italic",
+    "word_timings": [{"word": "и", "start": 0.18, "end": 0.46}, {"word": "мне", "start": 0.46, "end": 0.78}, {"word": "безумно", "start": 0.78, "end": 1.20}, {"word": "жаль", "start": 1.20, "end": 1.72}]
+  }]}
+}

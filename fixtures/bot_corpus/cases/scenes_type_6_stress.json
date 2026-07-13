@@ -1,0 +1,11 @@
+{
+  "schema": "blast.bot-render.v1",
+  "caseId": "scenes_type_6_stress",
+  "subtitles_mode": "scenes_3rd_single_step",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 2.0},
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 2.0}, "scenes": [{
+    "id": "6-stress", "type": "TYPE_6", "words": ["ты", "уже", "не", "мой"], "start": 0.18, "end": 1.72,
+    "lines": [["ты", "уже"], ["не", "мой"]],
+    "word_timings": [{"word": "ты", "start": 0.18, "end": 0.52}, {"word": "уже", "start": 0.52, "end": 0.86}, {"word": "не", "start": 0.86, "end": 1.22}, {"word": "мой", "start": 1.22, "end": 1.72}]
+  }]}
+}

@@ -10,7 +10,9 @@ use std::path::{Path, PathBuf};
 use std::time::Instant;
 
 mod conformance_pack;
+mod json_api;
 mod media_plan;
+mod raw_video_sink;
 
 #[derive(Parser, Debug)]
 #[command(name = "render-cli")]
@@ -23,6 +25,24 @@ struct Cli {
 #[derive(Subcommand, Debug)]
 enum Command {
     Doctor,
+    Json {
+        #[arg(long, default_value = "-")]
+        request: String,
+        #[arg(long)]
+        response: Option<PathBuf>,
+    },
+    ExtractJsxRequest {
+        #[arg(long)]
+        jsx: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
+    AdaptBotPayload {
+        #[arg(long)]
+        input: PathBuf,
+        #[arg(long)]
+        out: PathBuf,
+    },
     Probe {
         path: PathBuf,
     },
@@ -252,6 +272,26 @@ fn run() -> Result<(), CliExit> {
 
     match cli.command {
         Command::Doctor => doctor().map_err(CliExit::config),
+        Command::Json { request, response } => {
+            match json_api::run(&request, response.as_deref()).map_err(CliExit::config)? {
+                json_api::JsonApiExit::Success => Ok(()),
+                json_api::JsonApiExit::Config => Err(CliExit::config(anyhow::anyhow!(
+                    "JSON render request is invalid"
+                ))),
+                json_api::JsonApiExit::Render => Err(CliExit::render(anyhow::anyhow!(
+                    "JSON render request failed"
+                ))),
+                json_api::JsonApiExit::Unsupported => Err(CliExit::unsupported(anyhow::anyhow!(
+                    "JSON render request requires unsupported capabilities"
+                ))),
+            }
+        }
+        Command::ExtractJsxRequest { jsx, out } => {
+            extract_jsx_request(jsx, out).map_err(CliExit::config)
+        }
+        Command::AdaptBotPayload { input, out } => {
+            adapt_bot_payload(input, out).map_err(CliExit::config)
+        }
         Command::Probe { path } => probe(path).map_err(CliExit::config),
         Command::Validate { scene } => validate(scene).map_err(CliExit::config),
         Command::ValidatePayload { payload, strict } => {
@@ -724,6 +764,52 @@ fn validate_payload(payload_path: PathBuf, strict: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn extract_jsx_request(jsx: PathBuf, out: PathBuf) -> anyhow::Result<()> {
+    let payload = ae_bridge::load_payload_from_jsx(&jsx)?;
+    let mut request = serde_json::to_value(payload)?;
+    let object = request
+        .as_object_mut()
+        .context("extracted payload must serialize to a JSON object")?;
+    object.insert(
+        "schema".to_string(),
+        Value::String(json_api::REQUEST_SCHEMA.to_string()),
+    );
+    object.insert("action".to_string(), Value::String("validate".to_string()));
+    object.insert(
+        "policy".to_string(),
+        json!({ "onUnsupported": "report", "strict": false }),
+    );
+    object.insert(
+        "outputSpec".to_string(),
+        json!({ "directory": "out", "video": "result.mp4", "writeScene": true }),
+    );
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&out, serde_json::to_string_pretty(&request)? + "\n")?;
+    println!(
+        "extract-jsx-request.done jsx={} visual_ops={} out={}",
+        jsx.display(),
+        request["visualOps"].as_array().map_or(0, Vec::len),
+        out.display()
+    );
+    Ok(())
+}
+
+fn adapt_bot_payload(input: PathBuf, out: PathBuf) -> anyhow::Result<()> {
+    let source =
+        fs::read(&input).with_context(|| format!("read bot payload {}", input.display()))?;
+    let envelope: ae_bridge::BotRenderEnvelope = serde_json::from_slice(&source)
+        .with_context(|| format!("parse bot payload {}", input.display()))?;
+    let request = ae_bridge::adapt_bot_envelope(envelope).map_err(anyhow::Error::msg)?;
+    if let Some(parent) = out.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    fs::write(&out, serde_json::to_string_pretty(&request)?)?;
+    println!("bot-adapt.request={}", out.display());
+    Ok(())
+}
+
 fn import_payload(
     payload_path: PathBuf,
     out: PathBuf,
@@ -871,28 +957,21 @@ fn render(
 ) -> anyhow::Result<()> {
     let scene = render_ir::load_scene(&scene_path)?;
     if let Some(mp4_path) = mp4.as_ref().filter(|_| direct_mp4_enabled()) {
-        match render_direct_mp4(
+        render_video_output(
             &scene_path,
             &scene,
             &out,
             assets_root.clone(),
             job_archive.clone(),
             mp4_path,
-        )? {
-            DirectMp4Attempt::Rendered => {
-                println!(
-                    "render.done scene={} out={}",
-                    scene_path.display(),
-                    out.display()
-                );
-                return Ok(());
-            }
-            DirectMp4Attempt::Fallback { reason } => {
-                eprintln!(
-                    "render.warn direct MP4 path unavailable; falling back to PNG sequence path: {reason}"
-                );
-            }
-        }
+            true,
+        )?;
+        println!(
+            "render.done scene={} out={}",
+            scene_path.display(),
+            out.display()
+        );
+        return Ok(());
     }
 
     render_png_output(
@@ -902,6 +981,8 @@ fn render(
         assets_root,
         job_archive,
         mp4.as_deref(),
+        None,
+        true,
     )?;
     println!(
         "render.done scene={} out={}",
@@ -918,22 +999,49 @@ fn render_png_output(
     assets_root: Option<PathBuf>,
     job_archive: Option<PathBuf>,
     mp4: Option<&Path>,
+    selected_frames: Option<&[u32]>,
+    emit_progress: bool,
 ) -> anyhow::Result<()> {
+    if selected_frames.is_some() && mp4.is_some() {
+        anyhow::bail!(
+            "selected PNG frames cannot be combined with MP4 output; sparse frames are not a video sequence"
+        );
+    }
     let fps = scene.composition.fps;
     let strict_media = assets_root.is_some() || job_archive.is_some();
     let resolver = build_resolver(scene_path, assets_root, job_archive)?;
     let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
     std::fs::create_dir_all(out)?;
+    let frames_dir = out.join("frames");
+    if frames_dir.exists() {
+        std::fs::remove_dir_all(&frames_dir)?;
+    }
     let media_plan = media_plan::build_timeline_media_plan(scene)?;
     let prepare_report = footage.prepare(&media_plan)?;
-    write_media_plan(out, &media_plan, prepare_report)?;
-    render_core::render_png_sequence_with_footage(scene, out, &mut footage)?;
-    write_media_report(out, &footage)?;
+    footage.set_parallel_prefetch_plan(media_plan.clone());
+    write_media_plan(out, &media_plan, prepare_report, emit_progress)?;
+    if let Some(frames) = selected_frames {
+        render_core::render_png_frames_with_footage(scene, out, &mut footage, frames)?;
+    } else if mp4.is_some() {
+        render_core::render_png_sequence_with_footage_production(scene, out, &mut footage)?;
+    } else {
+        render_core::render_png_sequence_with_footage(scene, out, &mut footage)?;
+    }
+    write_media_report(out, &footage, emit_progress)?;
     if let Some(mp4) = mp4 {
-        let frames_dir = out.join("frames");
         let mux_report = encode_png_sequence_to_mp4(&frames_dir, fps, mp4)?;
-        write_mux_report(out, Some(&frames_dir), fps, mp4, "render", &mux_report)?;
-        println!("render.mp4={}", mp4.display());
+        write_mux_report(
+            out,
+            Some(&frames_dir),
+            fps,
+            mp4,
+            "render",
+            &mux_report,
+            emit_progress,
+        )?;
+        if emit_progress {
+            println!("render.mp4={}", mp4.display());
+        }
     }
     Ok(())
 }
@@ -943,6 +1051,43 @@ enum DirectMp4Attempt {
     Fallback { reason: String },
 }
 
+fn render_video_output(
+    scene_path: &Path,
+    scene: &render_ir::Scene,
+    out: &Path,
+    assets_root: Option<PathBuf>,
+    job_archive: Option<PathBuf>,
+    mp4: &Path,
+    emit_progress: bool,
+) -> anyhow::Result<()> {
+    match render_direct_mp4(
+        scene_path,
+        scene,
+        out,
+        assets_root.clone(),
+        job_archive.clone(),
+        mp4,
+        emit_progress,
+    )? {
+        DirectMp4Attempt::Rendered => Ok(()),
+        DirectMp4Attempt::Fallback { reason } => {
+            eprintln!(
+                "render.warn direct MP4 path unavailable; falling back to PNG sequence path: {reason}"
+            );
+            render_png_output(
+                scene_path,
+                scene,
+                out,
+                assets_root,
+                job_archive,
+                Some(mp4),
+                None,
+                emit_progress,
+            )
+        }
+    }
+}
+
 fn render_direct_mp4(
     scene_path: &Path,
     scene: &render_ir::Scene,
@@ -950,54 +1095,96 @@ fn render_direct_mp4(
     assets_root: Option<PathBuf>,
     job_archive: Option<PathBuf>,
     mp4: &Path,
+    emit_progress: bool,
 ) -> anyhow::Result<DirectMp4Attempt> {
     let requested = mux_backend();
-    if requested == MuxBackend::Ffmpeg {
-        return Ok(DirectMp4Attempt::Fallback {
-            reason: "AE_RENDER_MUX_BACKEND=ffmpeg has no direct VideoSink implementation"
-                .to_string(),
-        });
-    }
-
-    let fps = scene.composition.fps;
-    let direct_started = Instant::now();
-    let mut sink = match media_gst::GstMp4VideoSink::open(
-        mp4,
-        scene.composition.width,
-        scene.composition.height,
-        fps,
-    ) {
-        Ok(sink) => sink,
-        Err(err) if requested == MuxBackend::Auto => {
-            return Ok(DirectMp4Attempt::Fallback {
-                reason: format!("GStreamer MP4 sink failed to open: {err:#}"),
-            });
-        }
-        Err(err) => {
-            return Err(err).with_context(|| {
-                format!("failed to open GStreamer MP4 sink for {}", mp4.display())
-            });
-        }
+    let sink = match requested {
+        MuxBackend::Gstreamer => DirectVideoSink::open_gstreamer(
+            mp4,
+            scene.composition.width,
+            scene.composition.height,
+            scene.composition.fps,
+        )
+        .with_context(|| format!("failed to open GStreamer MP4 sink for {}", mp4.display()))?,
+        MuxBackend::Ffmpeg => DirectVideoSink::open_ffmpeg(
+            mp4,
+            scene.composition.width,
+            scene.composition.height,
+            scene.composition.fps,
+        )
+        .with_context(|| format!("failed to open ffmpeg MP4 sink for {}", mp4.display()))?,
+        MuxBackend::Auto => match DirectVideoSink::open_gstreamer(
+            mp4,
+            scene.composition.width,
+            scene.composition.height,
+            scene.composition.fps,
+        ) {
+            Ok(sink) => sink,
+            Err(gst_error) => {
+                eprintln!(
+                    "render.warn GStreamer direct sink failed for '{}'; retrying with ffmpeg rawvideo: {gst_error:#}",
+                    mp4.display()
+                );
+                match DirectVideoSink::open_ffmpeg(
+                    mp4,
+                    scene.composition.width,
+                    scene.composition.height,
+                    scene.composition.fps,
+                ) {
+                    Ok(sink) => sink,
+                    Err(ffmpeg_error) => {
+                        return Ok(DirectMp4Attempt::Fallback {
+                            reason: format!(
+                                "GStreamer failed: {gst_error:#}; ffmpeg rawvideo failed: {ffmpeg_error:#}"
+                            ),
+                        });
+                    }
+                }
+            }
+        },
     };
-
-    let strict_media = assets_root.is_some() || job_archive.is_some();
-    let resolver = build_resolver(scene_path, assets_root, job_archive)?;
-    let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
-    std::fs::create_dir_all(out)?;
-    let media_plan = media_plan::build_timeline_media_plan(scene)?;
-    let prepare_report = footage.prepare(&media_plan)?;
-    write_media_plan(out, &media_plan, prepare_report)?;
-
-    render_core::render_sequence_with_footage_callback(
+    render_direct_mp4_with_sink(
+        scene_path,
         scene,
         out,
-        &mut footage,
-        render_core::RenderSequenceOptions::video_sink(
-            mp4.display().to_string(),
-            "gstreamer-appsrc-mp4",
-        ),
-        |frame, time, canvas| {
-            sink.write_frame(
+        assets_root,
+        job_archive,
+        mp4,
+        requested,
+        sink,
+        emit_progress,
+    )?;
+    Ok(DirectMp4Attempt::Rendered)
+}
+
+enum DirectVideoSink {
+    Gstreamer(media_gst::GstMp4VideoSink),
+    Ffmpeg(raw_video_sink::FfmpegRawVideoSink),
+}
+
+impl DirectVideoSink {
+    fn open_gstreamer(output: &Path, width: u32, height: u32, fps: f64) -> anyhow::Result<Self> {
+        Ok(Self::Gstreamer(media_gst::GstMp4VideoSink::open(
+            output, width, height, fps,
+        )?))
+    }
+
+    fn open_ffmpeg(output: &Path, width: u32, height: u32, fps: f64) -> anyhow::Result<Self> {
+        Ok(Self::Ffmpeg(raw_video_sink::FfmpegRawVideoSink::open(
+            output, width, height, fps,
+        )?))
+    }
+
+    fn backend_name(&self) -> &'static str {
+        match self {
+            Self::Gstreamer(_) => "gstreamer-appsrc-mp4",
+            Self::Ffmpeg(_) => "ffmpeg-rawvideo-pipe",
+        }
+    }
+
+    fn write_canvas(&mut self, canvas: &raster_cpu::Canvas, time: f64) -> anyhow::Result<()> {
+        match self {
+            Self::Gstreamer(sink) => sink.write_frame(
                 &media_gst::VideoFrame {
                     width: canvas.width,
                     height: canvas.height,
@@ -1005,23 +1192,81 @@ fn render_direct_mp4(
                     rgba: canvas.data.clone(),
                 },
                 time,
-            )
-            .with_context(|| format!("failed to write frame {frame} to MP4 sink"))?;
+            ),
+            Self::Ffmpeg(sink) => sink.write_rgba(canvas.width, canvas.height, &canvas.data, time),
+        }
+    }
+
+    fn finish(&mut self) -> anyhow::Result<media_gst::VideoSinkManifest> {
+        match self {
+            Self::Gstreamer(sink) => sink.finish(),
+            Self::Ffmpeg(sink) => sink.finish(),
+        }
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn render_direct_mp4_with_sink(
+    scene_path: &Path,
+    scene: &render_ir::Scene,
+    out: &Path,
+    assets_root: Option<PathBuf>,
+    job_archive: Option<PathBuf>,
+    mp4: &Path,
+    requested: MuxBackend,
+    mut sink: DirectVideoSink,
+    emit_progress: bool,
+) -> anyhow::Result<()> {
+    let fps = scene.composition.fps;
+    let direct_started = Instant::now();
+    let sink_backend = sink.backend_name();
+
+    let strict_media = assets_root.is_some() || job_archive.is_some();
+    let resolver = build_resolver(scene_path, assets_root, job_archive)?;
+    let mut footage = CliFootageProvider::new(scene.assets.clone(), resolver, strict_media);
+    std::fs::create_dir_all(out)?;
+    let frames_dir = out.join("frames");
+    if frames_dir.exists() {
+        std::fs::remove_dir_all(&frames_dir)?;
+    }
+    let media_plan = media_plan::build_timeline_media_plan(scene)?;
+    let prepare_report = footage.prepare(&media_plan)?;
+    footage.set_parallel_prefetch_plan(media_plan.clone());
+    write_media_plan(out, &media_plan, prepare_report, emit_progress)?;
+
+    render_core::render_sequence_with_footage_callback(
+        scene,
+        out,
+        &mut footage,
+        render_core::RenderSequenceOptions::video_sink(mp4.display().to_string(), sink_backend),
+        |frame, time, canvas| {
+            sink.write_canvas(canvas, time)
+                .with_context(|| format!("failed to write frame {frame} to MP4 sink"))?;
             Ok(render_core::RenderFrameOutput::default())
         },
     )?;
 
     let sink_manifest = sink.finish()?;
-    write_media_report(out, &footage)?;
+    write_media_report(out, &footage, emit_progress)?;
     let mux_report = MuxEncodeReport {
         requested_backend: requested.name(),
         backend: sink_manifest.backend.clone(),
         elapsed_ms: elapsed_ms(direct_started),
         sink_manifest: Some(sink_manifest),
     };
-    write_mux_report(out, None, fps, mp4, "render-direct", &mux_report)?;
-    println!("render.mp4={}", mp4.display());
-    Ok(DirectMp4Attempt::Rendered)
+    write_mux_report(
+        out,
+        None,
+        fps,
+        mp4,
+        "render-direct",
+        &mux_report,
+        emit_progress,
+    )?;
+    if emit_progress {
+        println!("render.mp4={}", mp4.display());
+    }
+    Ok(())
 }
 
 fn mux(frames: PathBuf, out: PathBuf, fps: Option<f64>) -> anyhow::Result<()> {
@@ -1046,6 +1291,7 @@ fn mux(frames: PathBuf, out: PathBuf, fps: Option<f64>) -> anyhow::Result<()> {
         &out,
         "mux",
         &mux_report,
+        true,
     )?;
     println!(
         "mux.done frames={} fps={} out={}",
@@ -1591,6 +1837,7 @@ fn collect_findings(
         match finding.status {
             ae_bridge::CapabilityStatus::Approximate => approximate.push(item),
             ae_bridge::CapabilityStatus::Ignored => ignored.push(item),
+            ae_bridge::CapabilityStatus::NotImplemented => unsupported.push(item),
             ae_bridge::CapabilityStatus::Unsupported => unsupported.push(item),
             ae_bridge::CapabilityStatus::Supported => {}
         }
@@ -1786,6 +2033,7 @@ struct CliFootageProvider {
     missing_sources: HashSet<String>,
     strict_media: bool,
     prepare_report: Option<Value>,
+    parallel_prefetch_plan: Option<media_gst::TimelineMediaPlan>,
 }
 
 impl CliFootageProvider {
@@ -1808,7 +2056,12 @@ impl CliFootageProvider {
             missing_sources: HashSet::new(),
             strict_media,
             prepare_report: None,
+            parallel_prefetch_plan: None,
         }
+    }
+
+    fn set_parallel_prefetch_plan(&mut self, plan: media_gst::TimelineMediaPlan) {
+        self.parallel_prefetch_plan = Some(plan);
     }
 
     fn prepare(&mut self, plan: &media_gst::TimelineMediaPlan) -> anyhow::Result<Value> {
@@ -2012,10 +2265,12 @@ impl CliFootageProvider {
         self.source_paths.insert(source.to_string(), resolved_path);
         Ok(true)
     }
-}
 
-impl render_core::FootageProvider for CliFootageProvider {
-    fn frame_at(&mut self, source: &str, time: f64) -> anyhow::Result<Option<raster_cpu::Canvas>> {
+    fn frame_at_source(
+        &mut self,
+        source: &str,
+        time: f64,
+    ) -> anyhow::Result<Option<raster_cpu::Canvas>> {
         if !self.open_source(source)? {
             return Ok(None);
         }
@@ -2031,6 +2286,34 @@ impl render_core::FootageProvider for CliFootageProvider {
             decoded.height,
             decoded.rgba,
         )?))
+    }
+}
+
+impl render_core::FootageProvider for CliFootageProvider {
+    fn frame_at(&mut self, source: &str, time: f64) -> anyhow::Result<Option<raster_cpu::Canvas>> {
+        self.frame_at_source(source, time)
+    }
+
+    fn prefetch_frames(
+        &mut self,
+        frames: &[u32],
+    ) -> anyhow::Result<Option<render_core::PrefetchedFootageProvider>> {
+        let Some(plan) = self.parallel_prefetch_plan.clone() else {
+            return Ok(None);
+        };
+        let mut prefetched = render_core::PrefetchedFootageProvider::default();
+        for source in plan.sources {
+            for request in source
+                .requests
+                .iter()
+                .filter(|request| frames.binary_search(&request.render_frame).is_ok())
+            {
+                if let Some(frame) = self.frame_at_source(&source.asset_id, request.source_time)? {
+                    prefetched.insert(source.asset_id.clone(), request.source_time, frame);
+                }
+            }
+        }
+        Ok(Some(prefetched))
     }
 }
 
@@ -2094,6 +2377,7 @@ fn write_media_plan(
     out: &Path,
     plan: &media_gst::TimelineMediaPlan,
     prepare_report: Value,
+    emit_progress: bool,
 ) -> anyhow::Result<()> {
     let path = out.join("media-plan.json");
     fs::write(
@@ -2103,17 +2387,25 @@ fn write_media_plan(
             "prepare": prepare_report
         }))?,
     )?;
-    println!("render.media_plan={}", path.display());
+    if emit_progress {
+        println!("render.media_plan={}", path.display());
+    }
     Ok(())
 }
 
-fn write_media_report(out: &Path, footage: &CliFootageProvider) -> anyhow::Result<()> {
+fn write_media_report(
+    out: &Path,
+    footage: &CliFootageProvider,
+    emit_progress: bool,
+) -> anyhow::Result<()> {
     let path = out.join("media-report.json");
     fs::write(
         &path,
         serde_json::to_string_pretty(&footage.media_report())?,
     )?;
-    println!("render.media_report={}", path.display());
+    if emit_progress {
+        println!("render.media_report={}", path.display());
+    }
     Ok(())
 }
 
@@ -2221,6 +2513,7 @@ fn write_mux_report(
     out: &Path,
     mode: &str,
     report: &MuxEncodeReport,
+    emit_progress: bool,
 ) -> anyhow::Result<()> {
     fs::create_dir_all(report_dir)?;
     let path = report_dir.join("mux-report.json");
@@ -2248,7 +2541,9 @@ fn write_mux_report(
             "sink_manifest": report.sink_manifest
         }))?,
     )?;
-    println!("mux.report={}", path.display());
+    if emit_progress {
+        println!("mux.report={}", path.display());
+    }
     Ok(())
 }
 

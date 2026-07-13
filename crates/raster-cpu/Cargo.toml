@@ -7,4 +7,5 @@ license.workspace = true
 [dependencies]
 anyhow.workspace = true
 image.workspace = true
+rayon.workspace = true
 transform-math = { path = "../transform-math" }

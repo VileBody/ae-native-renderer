@@ -11,5 +11,6 @@ sha2.workspace = true
 render-ir = { path = "../render-ir" }
 raster-cpu = { path = "../raster-cpu" }
 transform-math = { path = "../transform-math" }
+rayon.workspace = true
 text-engine = { path = "../text-engine" }
 effects = { path = "../effects" }

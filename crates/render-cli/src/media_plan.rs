@@ -1,5 +1,6 @@
+use effects::posterize_time::PosterizeTimeParams;
 use media_gst::{FrameRequest, SourcePlan, TimelineMediaPlan};
-use render_ir::{Composition, CompositionNode, Layer, Scene};
+use render_ir::{Composition, CompositionNode, EffectSpec, Layer, Scene};
 use std::collections::{BTreeMap, HashMap};
 
 pub fn build_timeline_media_plan(scene: &Scene) -> anyhow::Result<TimelineMediaPlan> {
@@ -25,7 +26,7 @@ pub fn build_timeline_media_plan(scene: &Scene) -> anyhow::Result<TimelineMediaP
     for frame in 0..frame_count {
         let render_time = frame as f64 / scene.composition.fps;
         let mut stack = vec![scene.composition.id.clone()];
-        let requests = collect_layer_requests(
+        let requests = collect_rendered_layer_requests(
             &scene.composition,
             &scene.layers,
             &nodes,
@@ -54,6 +55,63 @@ pub fn build_timeline_media_plan(scene: &Scene) -> anyhow::Result<TimelineMediaP
         max_requests_per_frame,
         source_plans,
     ))
+}
+
+/// Mirrors the renderer's special Posterize Time adjustment routing. An adjustment layer
+/// samples every lower layer at its bucket time, which can differ from the output-frame time.
+/// Those source frames must be present in a parallel prefetch snapshot too.
+fn collect_rendered_layer_requests(
+    composition: &Composition,
+    layers: &[Layer],
+    nodes: &HashMap<&str, &CompositionNode>,
+    comp_time: f64,
+    render_frame: u32,
+    render_time: f64,
+    stack: &mut Vec<String>,
+    sources: &mut BTreeMap<String, Vec<FrameRequest>>,
+) -> anyhow::Result<usize> {
+    let mut requests = collect_layer_requests(
+        composition,
+        layers,
+        nodes,
+        comp_time,
+        render_frame,
+        render_time,
+        stack,
+        sources,
+    )?;
+
+    for (layer_index, layer) in layers.iter().enumerate() {
+        let Layer::Adjustment { effects, .. } = layer else {
+            continue;
+        };
+        if !layer.is_active(comp_time) {
+            continue;
+        }
+        let Some(lower_stack_time) = posterized_lower_stack_time(effects, comp_time) else {
+            continue;
+        };
+        requests += collect_rendered_layer_requests(
+            composition,
+            &layers[layer_index + 1..],
+            nodes,
+            lower_stack_time,
+            render_frame,
+            render_time,
+            stack,
+            sources,
+        )?;
+    }
+
+    Ok(requests)
+}
+
+fn posterized_lower_stack_time(effects: &[EffectSpec], comp_time: f64) -> Option<f64> {
+    let effect = effects
+        .iter()
+        .find(|effect| effect.match_name == "ADBE Posterize Time")?;
+    let bucket_time = PosterizeTimeParams::from_json(&effect.params).quantized_time(comp_time);
+    (bucket_time.to_bits() != comp_time.to_bits()).then_some(bucket_time)
 }
 
 fn collect_layer_requests(
@@ -170,6 +228,7 @@ mod tests {
                 duration: 1.0,
                 composition: "child".to_string(),
                 collapse_transformations: false,
+                blend_mode: render_ir::BlendMode::Normal,
                 transform: Transform2D::default(),
                 effects: Vec::new(),
             }],
@@ -188,6 +247,41 @@ mod tests {
     }
 
     #[test]
+    fn plans_posterize_adjustment_lower_stack_bucket_frames() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: comp("main", 24.0, 0.2),
+            compositions: Vec::new(),
+            assets: vec![video_asset("video_a")],
+            layers: vec![
+                Layer::Adjustment {
+                    id: "posterize".to_string(),
+                    start: 0.0,
+                    duration: 0.2,
+                    effects: vec![EffectSpec {
+                        match_name: "ADBE Posterize Time".to_string(),
+                        params: serde_json::json!({ "frameRate": 12.0 }),
+                    }],
+                },
+                footage("fg", 0.0, 0.2, "video_a", 10.0),
+            ],
+        };
+
+        let plan = build_timeline_media_plan(&scene).unwrap();
+        let source = plan.source_plan("video_a").unwrap();
+        let frame_one = source
+            .requests
+            .iter()
+            .filter(|request| request.render_frame == 1)
+            .collect::<Vec<_>>();
+
+        assert!(frame_one.iter().any(|request| request.source_time == 10.0));
+        assert!(frame_one
+            .iter()
+            .any(|request| (request.source_time - (10.0 + 1.0 / 24.0)).abs() < 1.0e-9));
+    }
+
+    #[test]
     fn rejects_precomp_cycles() {
         let scene = Scene {
             version: "test".to_string(),
@@ -200,6 +294,7 @@ mod tests {
                     duration: 1.0,
                     composition: "a".to_string(),
                     collapse_transformations: false,
+                    blend_mode: render_ir::BlendMode::Normal,
                     transform: Transform2D::default(),
                     effects: Vec::new(),
                 }],
@@ -211,6 +306,7 @@ mod tests {
                 duration: 1.0,
                 composition: "a".to_string(),
                 collapse_transformations: false,
+                blend_mode: render_ir::BlendMode::Normal,
                 transform: Transform2D::default(),
                 effects: Vec::new(),
             }],
@@ -239,6 +335,7 @@ mod tests {
             duration,
             source: source.to_string(),
             source_start,
+            blend_mode: render_ir::BlendMode::Normal,
             transform: Transform2D::default(),
             effects: Vec::new(),
         }

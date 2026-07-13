@@ -3,11 +3,15 @@ use crate::{
     param_bool_any, param_f32_any, param_rgba_any, Effect, EffectContext,
 };
 use raster_cpu::{composite_normal, Canvas};
+use rayon::prelude::*;
 use serde_json::Value;
 
 const DROP_SHADOW_SOFTNESS_DIVISOR: f32 = 2.71;
 const DROP_SHADOW_FLT_SOFTNESS_SCALE: f32 = 0.5;
 const DROP_SHADOW_SOFTNESS_ITERATIONS: u32 = 1;
+// Full-frame Rayon passes regress memory-bound 1080p renders on Apple Silicon.
+// Keep UHD and larger canvases eligible while leaving production 1080p serial.
+const PARALLEL_SHADOW_PIXEL_THRESHOLD: usize = 8_000_000;
 
 #[derive(Debug, Default)]
 pub struct DropShadow;
@@ -24,40 +28,19 @@ impl Effect for DropShadow {
         params: &Value,
     ) -> anyhow::Result<Canvas> {
         let params = DropShadowParams::from_json(params);
-        let color = params.color;
-        let opacity = normalize_opacity(params.opacity);
-        let distance = params.distance;
-        let softness = params.softness;
-        let shadow_only = params.shadow_only;
-        let (dx, dy) = drop_shadow_offset(params.direction_degrees, distance);
+        let resolved = resolve_drop_shadow_debug_params(params);
+        let mut shadow = raw_offset_shadow_canvas(input, params, resolved);
 
-        let mut shadow = Canvas::transparent(input.width, input.height);
-        for y in 0..input.height {
-            for x in 0..input.width {
-                let source = input.pixel(x, y);
-                if source[3] == 0 {
-                    continue;
-                }
-                let sx = x as i32 + dx;
-                let sy = y as i32 + dy;
-                if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
-                    continue;
-                }
-                let alpha = (source[3] as f32 * opacity).round().clamp(0.0, 255.0) as u8;
-                let existing = shadow.pixel(sx as u32, sy as u32);
-                if alpha > existing[3] {
-                    shadow.set_pixel(sx as u32, sy as u32, [color[0], color[1], color[2], alpha]);
-                }
-            }
+        if resolved.blur_radius > 0 {
+            shadow = blur_shadow_alpha_channel_only(
+                &shadow,
+                resolved.blur_radius,
+                resolved.blur_iterations,
+                params.color,
+            );
         }
 
-        let radius = drop_shadow_blur_radius(softness);
-        let iterations = drop_shadow_blur_iterations(softness);
-        if radius > 0 {
-            shadow = blur_shadow_alpha_channel_only(&shadow, radius, iterations, color);
-        }
-
-        if shadow_only {
+        if params.shadow_only {
             return Ok(shadow);
         }
 
@@ -80,11 +63,15 @@ pub(crate) struct DropShadowParams {
 impl DropShadowParams {
     pub(crate) fn from_json(params: &Value) -> Self {
         Self {
-            color: param_rgba_any(params, &["color", "Color", "0001"], [0, 0, 0, 255]),
-            opacity: param_f32_any(params, &["opacity", "Opacity", "0002"], 255.0),
-            direction_degrees: param_f32_any(params, &["direction", "Direction", "0003"], 135.0),
-            distance: param_f32_any(params, &["distance", "Distance", "0004"], 5.0),
-            softness: param_f32_any(params, &["softness", "Softness", "0005"], 0.0),
+            color: param_rgba_any(params, &["color", "Color", "0001", "0050"], [0, 0, 0, 255]),
+            opacity: param_f32_any(params, &["opacity", "Opacity", "0002", "0052"], 255.0),
+            direction_degrees: param_f32_any(
+                params,
+                &["direction", "Direction", "0003", "0054"],
+                135.0,
+            ),
+            distance: param_f32_any(params, &["distance", "Distance", "0004", "0053"], 5.0),
+            softness: param_f32_any(params, &["softness", "Softness", "0005", "0051"], 0.0),
             shadow_only: param_bool_any(params, &["shadowOnly", "Shadow Only", "0006"], false),
         }
     }
@@ -212,10 +199,14 @@ fn drop_shadow_blur_iterations(softness: f32) -> u32 {
 
 fn alpha_mask_canvas(input: &Canvas) -> Canvas {
     let mut mask = Canvas::transparent(input.width, input.height);
-    for y in 0..input.height {
-        for x in 0..input.width {
-            let alpha = input.pixel(x, y)[3];
-            mask.set_pixel(x, y, [alpha, alpha, alpha, alpha]);
+    if canvas_uses_parallel_pixels(input) {
+        mask.data
+            .par_chunks_mut(4)
+            .zip(input.data.par_chunks(4))
+            .for_each(|(output, source)| output.fill(source[3]));
+    } else {
+        for (output, source) in mask.data.chunks_mut(4).zip(input.data.chunks(4)) {
+            output.fill(source[3]);
         }
     }
     mask
@@ -228,10 +219,15 @@ fn blur_shadow_alpha_channel_only(
     color: [u8; 4],
 ) -> Canvas {
     let mut alpha_only = Canvas::transparent(shadow.width, shadow.height);
-    for y in 0..shadow.height {
-        for x in 0..shadow.width {
-            let alpha = shadow.pixel(x, y)[3];
-            alpha_only.set_pixel(x, y, [0, 0, 0, alpha]);
+    if canvas_uses_parallel_pixels(shadow) {
+        alpha_only
+            .data
+            .par_chunks_mut(4)
+            .zip(shadow.data.par_chunks(4))
+            .for_each(|(output, source)| output[3] = source[3]);
+    } else {
+        for (output, source) in alpha_only.data.chunks_mut(4).zip(shadow.data.chunks(4)) {
+            output[3] = source[3];
         }
     }
 
@@ -240,12 +236,15 @@ fn blur_shadow_alpha_channel_only(
         blurred_alpha = blur_canvas(&blurred_alpha, radius);
     }
     let mut output = Canvas::transparent(shadow.width, shadow.height);
-    for y in 0..shadow.height {
-        for x in 0..shadow.width {
-            let alpha = blurred_alpha.pixel(x, y)[3];
-            if alpha != 0 {
-                output.set_pixel(x, y, [color[0], color[1], color[2], alpha]);
-            }
+    if canvas_uses_parallel_pixels(shadow) {
+        output
+            .data
+            .par_chunks_mut(4)
+            .zip(blurred_alpha.data.par_chunks(4))
+            .for_each(|(output, source)| colorize_shadow_pixel(output, source[3], color));
+    } else {
+        for (output, source) in output.data.chunks_mut(4).zip(blurred_alpha.data.chunks(4)) {
+            colorize_shadow_pixel(output, source[3], color);
         }
     }
     output
@@ -257,31 +256,62 @@ fn raw_offset_shadow_canvas(
     resolved: DropShadowDebugParams,
 ) -> Canvas {
     let mut shadow = Canvas::transparent(input.width, input.height);
-    for y in 0..input.height {
-        for x in 0..input.width {
-            let source = input.pixel(x, y);
-            if source[3] == 0 {
-                continue;
-            }
-            let sx = x as i32 + resolved.dx;
-            let sy = y as i32 + resolved.dy;
-            if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
-                continue;
-            }
-            let alpha = (source[3] as f32 * resolved.opacity_normalized)
-                .round()
-                .clamp(0.0, 255.0) as u8;
-            let existing = shadow.pixel(sx as u32, sy as u32);
-            if alpha > existing[3] {
-                shadow.set_pixel(
-                    sx as u32,
-                    sy as u32,
-                    [params.color[0], params.color[1], params.color[2], alpha],
-                );
-            }
+    if canvas_uses_parallel_pixels(input) {
+        shadow
+            .data
+            .par_chunks_mut(4)
+            .enumerate()
+            .for_each(|(index, output)| {
+                write_offset_shadow_pixel(output, index, input, params, resolved)
+            });
+    } else {
+        for (index, output) in shadow.data.chunks_mut(4).enumerate() {
+            write_offset_shadow_pixel(output, index, input, params, resolved);
         }
     }
     shadow
+}
+
+fn write_offset_shadow_pixel(
+    output: &mut [u8],
+    destination_index: usize,
+    input: &Canvas,
+    params: DropShadowParams,
+    resolved: DropShadowDebugParams,
+) {
+    let width = input.width as usize;
+    let destination_x = (destination_index % width) as i32;
+    let destination_y = (destination_index / width) as i32;
+    let source_x = destination_x - resolved.dx;
+    let source_y = destination_y - resolved.dy;
+    if source_x < 0
+        || source_y < 0
+        || source_x >= input.width as i32
+        || source_y >= input.height as i32
+    {
+        return;
+    }
+    let source = input.pixel(source_x as u32, source_y as u32);
+    if source[3] == 0 {
+        return;
+    }
+    let alpha = (source[3] as f32 * resolved.opacity_normalized)
+        .round()
+        .clamp(0.0, 255.0) as u8;
+    if alpha == 0 {
+        return;
+    }
+    output.copy_from_slice(&[params.color[0], params.color[1], params.color[2], alpha]);
+}
+
+fn colorize_shadow_pixel(output: &mut [u8], alpha: u8, color: [u8; 4]) {
+    if alpha != 0 {
+        output.copy_from_slice(&[color[0], color[1], color[2], alpha]);
+    }
+}
+
+fn canvas_uses_parallel_pixels(canvas: &Canvas) -> bool {
+    canvas.width as usize * canvas.height as usize >= PARALLEL_SHADOW_PIXEL_THRESHOLD
 }
 
 fn normalize_opacity(value: f32) -> f32 {
@@ -291,7 +321,61 @@ fn normalize_opacity(value: f32) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rayon::ThreadPoolBuilder;
     use serde_json::json;
+
+    #[test]
+    fn automatic_parallelism_starts_above_full_hd() {
+        assert!(1920usize * 1080 < PARALLEL_SHADOW_PIXEL_THRESHOLD);
+        assert!(3840usize * 2160 >= PARALLEL_SHADOW_PIXEL_THRESHOLD);
+    }
+
+    fn patterned_canvas(width: u32, height: u32) -> Canvas {
+        let mut canvas = Canvas::transparent(width, height);
+        for (index, pixel) in canvas.data.chunks_mut(4).enumerate() {
+            let value = index as u32;
+            pixel.copy_from_slice(&[
+                value.wrapping_mul(11) as u8,
+                value.wrapping_mul(23).wrapping_add(7) as u8,
+                value.wrapping_mul(41).wrapping_add(13) as u8,
+                value.wrapping_mul(67).wrapping_add(29) as u8,
+            ]);
+        }
+        canvas
+    }
+
+    fn raw_offset_shadow_sequential_reference(
+        input: &Canvas,
+        params: DropShadowParams,
+        resolved: DropShadowDebugParams,
+    ) -> Canvas {
+        let mut shadow = Canvas::transparent(input.width, input.height);
+        for y in 0..input.height {
+            for x in 0..input.width {
+                let source = input.pixel(x, y);
+                if source[3] == 0 {
+                    continue;
+                }
+                let sx = x as i32 + resolved.dx;
+                let sy = y as i32 + resolved.dy;
+                if sx < 0 || sy < 0 || sx >= input.width as i32 || sy >= input.height as i32 {
+                    continue;
+                }
+                let alpha = (source[3] as f32 * resolved.opacity_normalized)
+                    .round()
+                    .clamp(0.0, 255.0) as u8;
+                let existing = shadow.pixel(sx as u32, sy as u32);
+                if alpha > existing[3] {
+                    shadow.set_pixel(
+                        sx as u32,
+                        sy as u32,
+                        [params.color[0], params.color[1], params.color[2], alpha],
+                    );
+                }
+            }
+        }
+        shadow
+    }
 
     #[test]
     fn drop_shadow_offsets_input_alpha() {
@@ -477,5 +561,75 @@ mod tests {
 
         assert_eq!(opaque_color_alpha.pixel(0, 0), [255, 0, 0, 100]);
         assert_eq!(half_color_alpha.pixel(0, 0), [255, 0, 0, 100]);
+    }
+
+    #[test]
+    fn sapphire_drop_shadow_params_lower_to_native_shadow_fields() {
+        let params = DropShadowParams::from_json(&json!({
+            "0050": [1.0, 0.5, 0.0, 1.0],
+            "0051": 8.0,
+            "0052": 60.0,
+            "0053": 0.0,
+            "0054": 0.0
+        }));
+        assert_eq!(params.color, [255, 128, 0, 255]);
+        assert_eq!(params.softness, 8.0);
+        assert_eq!(params.opacity, 60.0);
+        assert_eq!(params.distance, 0.0);
+        assert_eq!(params.direction_degrees, 0.0);
+    }
+
+    #[test]
+    fn parallel_offset_is_byte_exact_against_forward_reference() {
+        let input = patterned_canvas(257, 131);
+        let params = DropShadowParams {
+            color: [201, 103, 47, 128],
+            opacity: 113.0,
+            direction_degrees: 135.0,
+            distance: 19.0,
+            softness: 0.0,
+            shadow_only: true,
+        };
+        let resolved = resolve_drop_shadow_debug_params(params);
+        let expected = raw_offset_shadow_sequential_reference(&input, params, resolved);
+        let one_thread = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let four_threads = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let actual_one = one_thread.install(|| raw_offset_shadow_canvas(&input, params, resolved));
+        let actual_four =
+            four_threads.install(|| raw_offset_shadow_canvas(&input, params, resolved));
+
+        assert_eq!(actual_one.data, expected.data);
+        assert_eq!(actual_four.data, expected.data);
+    }
+
+    #[test]
+    fn full_shadow_is_deterministic_across_thread_counts() {
+        let input = patterned_canvas(257, 131);
+        let params = json!({
+            "color": [17, 29, 43, 255],
+            "opacity": 181,
+            "direction": 217,
+            "distance": 13,
+            "softness": 32,
+            "shadowOnly": false
+        });
+        let context = EffectContext {
+            time: 0.0,
+            fps: 24.0,
+        };
+        let one_thread = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let four_threads = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+        let actual_one = one_thread.install(|| {
+            DropShadow::default()
+                .render(&input, &context, &params)
+                .unwrap()
+        });
+        let actual_four = four_threads.install(|| {
+            DropShadow::default()
+                .render(&input, &context, &params)
+                .unwrap()
+        });
+
+        assert_eq!(actual_one.data, actual_four.data);
     }
 }

@@ -1,0 +1,15 @@
+{
+  "schema": "blast.bot-render.v1",
+  "caseId": "impulse_long_short",
+  "subtitles_mode": "impulse_2nd",
+  "composition": {"name": "Comp 1", "w": 1080, "h": 1920, "fps": 23.976, "dur": 2.4},
+  "cutTimes": [0.0, 1.15],
+  "effectStyleIds": ["txt_punch_v1"],
+  "subtitle_payload": {
+    "clip": {"start": 0.0, "end": 2.4},
+    "segments": [
+      {"text": "дай мне повод", "in": 0.15, "out": 1.12, "type": "long", "word_timings": [{"word": "дай", "start": 0.15, "end": 0.42}, {"word": "мне", "start": 0.42, "end": 0.7}, {"word": "повод", "start": 0.7, "end": 1.12}]},
+      {"text": "сейчас", "in": 1.15, "out": 2.15, "type": "short", "word_timings": [{"word": "сейчас", "start": 1.15, "end": 1.72}]}
+    ]
+  }
+}

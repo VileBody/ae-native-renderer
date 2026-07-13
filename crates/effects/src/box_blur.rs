@@ -1,8 +1,12 @@
 use crate::{param_f32_at, param_f32_at_any, Effect, EffectContext};
 use raster_cpu::Canvas;
+use rayon::prelude::*;
 use serde_json::Value;
 
 const EDGE_POLICY_CLIP_TO_LAYER_BOUNDS: &str = "clip_to_layer_bounds";
+// Full-frame Rayon passes regress memory-bound 1080p renders on Apple Silicon.
+// Keep UHD and larger canvases eligible while leaving production 1080p serial.
+const PARALLEL_BLUR_PIXEL_THRESHOLD: usize = 8_000_000;
 
 #[derive(Debug, Default)]
 pub struct BoxBlur2;
@@ -168,53 +172,146 @@ fn blur_pass_canvases(input: &Canvas, radius: u32) -> (Canvas, Canvas) {
         return (output.clone(), output);
     }
 
-    let mut horizontal = Canvas::transparent(input.width, input.height);
-    for y in 0..input.height {
-        let mut sum = [0_u32; 4];
-        let mut count = 0_u32;
-        let right = radius.min(input.width - 1);
-        for x in 0..=right {
-            add_pixel(&mut sum, input.pixel(x, y));
-            count += 1;
-        }
-        for x in 0..input.width {
-            horizontal.set_pixel(x, y, average_pixel(sum, count));
-            if x >= radius {
-                subtract_pixel(&mut sum, input.pixel(x - radius, y));
-                count -= 1;
-            }
-            let add_x = x + radius + 1;
-            if add_x < input.width {
-                add_pixel(&mut sum, input.pixel(add_x, y));
-                count += 1;
-            }
-        }
-    }
+    blur_pass_canvases_with_mode(
+        input,
+        radius,
+        input.width as usize * input.height as usize >= PARALLEL_BLUR_PIXEL_THRESHOLD,
+    )
+}
 
-    let mut output = Canvas::transparent(input.width, input.height);
-    for x in 0..input.width {
-        let mut sum = [0_u32; 4];
-        let mut count = 0_u32;
-        let bottom = radius.min(input.height - 1);
-        for y in 0..=bottom {
-            add_pixel(&mut sum, horizontal.pixel(x, y));
-            count += 1;
-        }
-        for y in 0..input.height {
-            output.set_pixel(x, y, average_pixel(sum, count));
-            if y >= radius {
-                subtract_pixel(&mut sum, horizontal.pixel(x, y - radius));
-                count -= 1;
-            }
-            let add_y = y + radius + 1;
-            if add_y < input.height {
-                add_pixel(&mut sum, horizontal.pixel(x, add_y));
-                count += 1;
-            }
-        }
-    }
-
+fn blur_pass_canvases_with_mode(input: &Canvas, radius: u32, parallel: bool) -> (Canvas, Canvas) {
+    let horizontal = horizontal_blur_pass(input, radius, parallel);
+    let output = vertical_blur_pass(&horizontal, radius, parallel);
     (horizontal, output)
+}
+
+fn horizontal_blur_pass(input: &Canvas, radius: u32, parallel: bool) -> Canvas {
+    let mut horizontal = Canvas::transparent(input.width, input.height);
+    let row_bytes = input.width as usize * 4;
+    if parallel {
+        horizontal
+            .data
+            .par_chunks_mut(row_bytes)
+            .zip(input.data.par_chunks(row_bytes))
+            .for_each(|(output_row, input_row)| {
+                fill_horizontal_blur_row(output_row, input_row, input.width, radius)
+            });
+    } else {
+        for (output_row, input_row) in horizontal
+            .data
+            .chunks_mut(row_bytes)
+            .zip(input.data.chunks(row_bytes))
+        {
+            fill_horizontal_blur_row(output_row, input_row, input.width, radius);
+        }
+    }
+    horizontal
+}
+
+fn fill_horizontal_blur_row(output: &mut [u8], input: &[u8], width: u32, radius: u32) {
+    let mut sum = [0_u32; 4];
+    let mut count = 0_u32;
+    let right = radius.min(width - 1);
+    for x in 0..=right {
+        add_pixel(&mut sum, row_pixel(input, x));
+        count += 1;
+    }
+    for x in 0..width {
+        let offset = x as usize * 4;
+        output[offset..offset + 4].copy_from_slice(&average_pixel(sum, count));
+        if x >= radius {
+            subtract_pixel(&mut sum, row_pixel(input, x - radius));
+            count -= 1;
+        }
+        let add_x = x + radius + 1;
+        if add_x < width {
+            add_pixel(&mut sum, row_pixel(input, add_x));
+            count += 1;
+        }
+    }
+}
+
+fn vertical_blur_pass(input: &Canvas, radius: u32, parallel: bool) -> Canvas {
+    let mut output = Canvas::transparent(input.width, input.height);
+    if !parallel {
+        for x in 0..input.width {
+            fill_vertical_blur_column(&mut output, input, x, radius);
+        }
+        return output;
+    }
+
+    let columns = (0..input.width)
+        .into_par_iter()
+        .map(|x| blurred_vertical_column(input, x, radius))
+        .collect::<Vec<_>>();
+    let row_bytes = input.width as usize * 4;
+    output
+        .data
+        .par_chunks_mut(row_bytes)
+        .enumerate()
+        .for_each(|(y, row)| {
+            for (x, column) in columns.iter().enumerate() {
+                row[x * 4..x * 4 + 4].copy_from_slice(&column[y * 4..y * 4 + 4]);
+            }
+        });
+    output
+}
+
+fn fill_vertical_blur_column(output: &mut Canvas, input: &Canvas, x: u32, radius: u32) {
+    let mut sum = [0_u32; 4];
+    let mut count = 0_u32;
+    let bottom = radius.min(input.height - 1);
+    for y in 0..=bottom {
+        add_pixel(&mut sum, input.pixel(x, y));
+        count += 1;
+    }
+    for y in 0..input.height {
+        output.set_pixel(x, y, average_pixel(sum, count));
+        if y >= radius {
+            subtract_pixel(&mut sum, input.pixel(x, y - radius));
+            count -= 1;
+        }
+        let add_y = y + radius + 1;
+        if add_y < input.height {
+            add_pixel(&mut sum, input.pixel(x, add_y));
+            count += 1;
+        }
+    }
+}
+
+fn blurred_vertical_column(input: &Canvas, x: u32, radius: u32) -> Vec<u8> {
+    let mut column = vec![0u8; input.height as usize * 4];
+    let mut sum = [0_u32; 4];
+    let mut count = 0_u32;
+    let bottom = radius.min(input.height - 1);
+    for y in 0..=bottom {
+        add_pixel(&mut sum, input.pixel(x, y));
+        count += 1;
+    }
+    for y in 0..input.height {
+        let offset = y as usize * 4;
+        column[offset..offset + 4].copy_from_slice(&average_pixel(sum, count));
+        if y >= radius {
+            subtract_pixel(&mut sum, input.pixel(x, y - radius));
+            count -= 1;
+        }
+        let add_y = y + radius + 1;
+        if add_y < input.height {
+            add_pixel(&mut sum, input.pixel(x, add_y));
+            count += 1;
+        }
+    }
+    column
+}
+
+fn row_pixel(row: &[u8], x: u32) -> [u8; 4] {
+    let offset = x as usize * 4;
+    [
+        row[offset],
+        row[offset + 1],
+        row[offset + 2],
+        row[offset + 3],
+    ]
 }
 
 pub(crate) fn blur_radius(value: f32) -> u32 {
@@ -301,6 +398,27 @@ fn average_pixel(sum: [u32; 4], count: u32) -> [u8; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use rayon::ThreadPoolBuilder;
+
+    #[test]
+    fn automatic_parallelism_starts_above_full_hd() {
+        assert!(1920usize * 1080 < PARALLEL_BLUR_PIXEL_THRESHOLD);
+        assert!(3840usize * 2160 >= PARALLEL_BLUR_PIXEL_THRESHOLD);
+    }
+
+    fn patterned_canvas(width: u32, height: u32) -> Canvas {
+        let mut canvas = Canvas::transparent(width, height);
+        for (index, pixel) in canvas.data.chunks_mut(4).enumerate() {
+            let value = index as u32;
+            pixel.copy_from_slice(&[
+                value.wrapping_mul(17) as u8,
+                value.wrapping_mul(29).wrapping_add(3) as u8,
+                value.wrapping_mul(43).wrapping_add(11) as u8,
+                value.wrapping_mul(61).wrapping_add(19) as u8,
+            ]);
+        }
+        canvas
+    }
 
     #[test]
     fn blur_spreads_alpha_to_neighbors() {
@@ -516,5 +634,41 @@ mod tests {
         assert_eq!(stats.alpha_sum, 319);
         assert_eq!(stats.alpha_min_nonzero, 64);
         assert_eq!(stats.alpha_max, 255);
+    }
+
+    #[test]
+    fn parallel_passes_are_byte_exact_against_sequential_and_thread_count() {
+        let input = patterned_canvas(257, 131);
+        let one_thread = ThreadPoolBuilder::new().num_threads(1).build().unwrap();
+        let four_threads = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
+
+        for radius in [1, 17, 64] {
+            let expected = blur_pass_canvases_with_mode(&input, radius, false);
+            let actual_one =
+                one_thread.install(|| blur_pass_canvases_with_mode(&input, radius, true));
+            let actual_four =
+                four_threads.install(|| blur_pass_canvases_with_mode(&input, radius, true));
+
+            assert_eq!(
+                actual_one.0.data, expected.0.data,
+                "horizontal radius {radius}"
+            );
+            assert_eq!(
+                actual_one.1.data, expected.1.data,
+                "vertical radius {radius}"
+            );
+            assert_eq!(
+                actual_four.0.data, expected.0.data,
+                "horizontal radius {radius}"
+            );
+            assert_eq!(
+                actual_four.1.data, expected.1.data,
+                "vertical radius {radius}"
+            );
+            assert_eq!(
+                actual_one.1.data, actual_four.1.data,
+                "thread-count radius {radius}"
+            );
+        }
     }
 }

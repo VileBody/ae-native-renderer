@@ -10,5 +10,5 @@ pub mod precomp;
 pub mod render_sequence;
 pub mod time;
 
-pub use layer_eval::FootageProvider;
+pub use layer_eval::{FootageProvider, PrefetchedFootageProvider};
 pub use render_sequence::*;

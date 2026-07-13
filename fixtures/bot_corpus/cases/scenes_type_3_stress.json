@@ -1,0 +1,11 @@
+{
+  "schema": "blast.bot-render.v1",
+  "caseId": "scenes_type_3_stress",
+  "subtitles_mode": "scenes_3rd",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 2.0},
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 2.0}, "scenes": [{
+    "id": "3-stress", "type": "TYPE_3", "words": ["я", "снова", "вижу", "свет"], "start": 0.16, "end": 1.78,
+    "lines": [["я", "снова", "вижу", "свет"]],
+    "word_timings": [{"word": "я", "start": 0.16, "end": 0.48}, {"word": "снова", "start": 0.48, "end": 0.82}, {"word": "вижу", "start": 0.82, "end": 1.16}, {"word": "свет", "start": 1.16, "end": 1.78}]
+  }]}
+}

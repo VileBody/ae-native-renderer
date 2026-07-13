@@ -1,0 +1,130 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ae-native-renderer.render-response.v1",
+  "title": "AE Native Renderer JSON Response v1",
+  "type": "object",
+  "required": [
+    "schema",
+    "request_id",
+    "request_schema",
+    "request_hash",
+    "action",
+    "status",
+    "ok",
+    "complete",
+    "capabilities",
+    "artifacts",
+    "errors",
+    "warnings"
+  ],
+  "properties": {
+    "schema": { "const": "ae-native-renderer.render-response.v1" },
+    "request_id": { "type": ["string", "null"] },
+    "request_schema": { "type": ["string", "null"] },
+    "request_hash": {
+      "type": ["string", "null"],
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "action": { "enum": ["validate", "inspect", "render"] },
+    "status": {
+      "enum": [
+        "validated",
+        "inspected",
+        "rendered",
+        "partial",
+        "unsupported",
+        "invalid",
+        "failed"
+      ]
+    },
+    "ok": { "type": "boolean" },
+    "complete": { "type": "boolean" },
+    "capabilities": { "$ref": "#/$defs/capabilityReport" },
+    "scene": { "$ref": "#/$defs/sceneSummary" },
+    "artifacts": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "render": { "$ref": "#/$defs/renderSummary" },
+    "errors": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "warnings": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "$defs": {
+    "capabilityItem": {
+      "type": "object",
+      "required": ["code", "required", "detail"],
+      "properties": {
+        "code": { "type": "string" },
+        "subject": { "type": "string" },
+        "required": { "type": "boolean" },
+        "detail": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "capabilityItems": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/capabilityItem" }
+    },
+    "capabilityReport": {
+      "type": "object",
+      "required": [
+        "complete",
+        "supported",
+        "approximate",
+        "ignored",
+        "not_implemented",
+        "unsupported"
+      ],
+      "properties": {
+        "complete": { "type": "boolean" },
+        "supported": { "$ref": "#/$defs/capabilityItems" },
+        "approximate": { "$ref": "#/$defs/capabilityItems" },
+        "ignored": { "$ref": "#/$defs/capabilityItems" },
+        "not_implemented": { "$ref": "#/$defs/capabilityItems" },
+        "unsupported": { "$ref": "#/$defs/capabilityItems" }
+      },
+      "additionalProperties": false
+    },
+    "sceneSummary": {
+      "type": "object",
+      "required": [
+        "composition",
+        "width",
+        "height",
+        "fps",
+        "duration",
+        "frame_count",
+        "layers",
+        "assets"
+      ],
+      "properties": {
+        "composition": { "type": "string" },
+        "width": { "type": "integer", "minimum": 1 },
+        "height": { "type": "integer", "minimum": 1 },
+        "fps": { "type": "number", "exclusiveMinimum": 0 },
+        "duration": { "type": "number", "exclusiveMinimum": 0 },
+        "frame_count": { "type": "integer", "minimum": 1 },
+        "layers": { "type": "integer", "minimum": 0 },
+        "assets": { "type": "integer", "minimum": 0 }
+      },
+      "additionalProperties": false
+    },
+    "renderSummary": {
+      "type": "object",
+      "required": ["elapsed_ms", "frames_directory"],
+      "properties": {
+        "elapsed_ms": { "type": "integer", "minimum": 0 },
+        "frames_directory": { "type": "string" },
+        "video": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

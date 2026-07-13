@@ -200,6 +200,36 @@ pub struct EffectSpec {
     pub params: serde_json::Value,
 }
 
+pub const TEXT_PAINT_MATCH_NAME: &str = "ANR Text Paint";
+
+/// Optional text paint extension carried in `Layer::Text.effects`, either as
+/// a standalone marker or in an effect's `params.text_paint` field.
+///
+/// Keeping paint as a typed marker effect preserves the v1 `fill: [u8; 4]`
+/// wire shape while allowing one text layer to render fill and stroke together.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct TextPaintSpec {
+    #[serde(default)]
+    pub fill: Option<[u8; 4]>,
+    #[serde(default)]
+    pub stroke_color: Option<[u8; 4]>,
+    #[serde(default)]
+    pub stroke_width: f32,
+    #[serde(default)]
+    pub stroke_over_fill: bool,
+}
+
+impl TextPaintSpec {
+    pub fn from_effect(effect: &EffectSpec) -> Option<Self> {
+        let value = if effect.match_name == TEXT_PAINT_MATCH_NAME {
+            &effect.params
+        } else {
+            effect.params.get("text_paint")?
+        };
+        serde_json::from_value(value.clone()).ok()
+    }
+}
+
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct TextAnimatorSpec {
     pub name: String,
@@ -294,6 +324,25 @@ pub struct TextWigglySelector {
     pub seed: u32,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum TextJustification {
+    Left,
+    #[default]
+    Center,
+    Full,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BlendMode {
+    #[default]
+    Normal,
+    Add,
+    Screen,
+    Difference,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(tag = "type")]
 pub enum TextExpressionSelector {
@@ -306,6 +355,16 @@ pub enum TextExpressionSelector {
         #[serde(default)]
         source: String,
     },
+    /// A text animator Tracking Amount property. This property is evaluated
+    /// before layout/raster; the enclosing range selector remains available
+    /// for future per-range tracking support.
+    #[serde(rename = "tracking_amount")]
+    TrackingAmount {
+        #[serde(default)]
+        value: f32,
+        #[serde(default)]
+        keyframes: Vec<ScalarKeyframe>,
+    },
 }
 
 #[allow(non_snake_case)]
@@ -317,6 +376,8 @@ pub enum Layer {
         id: String,
         start: f64,
         duration: f64,
+        #[serde(default)]
+        blend_mode: BlendMode,
         color: [u8; 4],
         rect: Rect,
         #[serde(default)]
@@ -333,6 +394,8 @@ pub enum Layer {
         #[serde(default)]
         source_start: f64,
         #[serde(default)]
+        blend_mode: BlendMode,
+        #[serde(default)]
         transform: Transform2D,
         #[serde(default)]
         effects: Vec<EffectSpec>,
@@ -346,6 +409,23 @@ pub enum Layer {
         font: String,
         #[allow(non_snake_case)]
         fontSize: f32,
+        /// Per-character TextDocument overrides recovered from After Effects.
+        /// Indices are Unicode scalar indices in the layer text, including explicit newlines.
+        #[serde(default)]
+        char_styles: Vec<TextCharStyle>,
+        #[serde(default)]
+        blend_mode: BlendMode,
+        /// After Effects tracking units (1/1000 em).
+        #[serde(default)]
+        tracking: f32,
+        /// Explicit After Effects line spacing in layer pixels.
+        #[serde(default)]
+        leading: Option<f32>,
+        /// Center the text vertically from its AE-style source rect instead of line boxes.
+        #[serde(default)]
+        center_source_rect_y: bool,
+        #[serde(default)]
+        justification: TextJustification,
         fill: [u8; 4],
         #[serde(rename = "box")]
         box_: Option<Rect>,
@@ -365,6 +445,8 @@ pub enum Layer {
         #[serde(default)]
         collapse_transformations: bool,
         #[serde(default)]
+        blend_mode: BlendMode,
+        #[serde(default)]
         transform: Transform2D,
         #[serde(default)]
         effects: Vec<EffectSpec>,
@@ -377,6 +459,16 @@ pub enum Layer {
         #[serde(default)]
         effects: Vec<EffectSpec>,
     },
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TextCharStyle {
+    pub index: usize,
+    /// Sparse TextDocument font override keyed by Unicode scalar index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub font_size: Option<f32>,
 }
 
 impl Layer {
@@ -410,8 +502,173 @@ impl Layer {
         }
     }
 
+    pub fn blend_mode(&self) -> BlendMode {
+        match self {
+            Layer::Solid { blend_mode, .. }
+            | Layer::Footage { blend_mode, .. }
+            | Layer::Text { blend_mode, .. }
+            | Layer::Precomp { blend_mode, .. } => *blend_mode,
+            Layer::Adjustment { .. } => BlendMode::Normal,
+        }
+    }
+
     pub fn is_active(&self, time: f64) -> bool {
         let (start, duration) = self.time_range();
         time >= start && time < start + duration
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{
+        BlendMode, Layer, ScalarKeyframe, TextAnimatorSpec, TextExpressionSelector, TextPaintSpec,
+        TEXT_PAINT_MATCH_NAME,
+    };
+
+    fn text_layer_json() -> serde_json::Value {
+        serde_json::json!({
+            "type": "text",
+            "id": "text",
+            "start": 0.0,
+            "duration": 1.0,
+            "text": "TRACK",
+            "font": "default",
+            "fontSize": 100.0,
+            "fill": [255, 255, 255, 255],
+            "box": null
+        })
+    }
+
+    #[test]
+    fn text_tracking_defaults_to_zero_and_round_trips_ae_units() {
+        let layer: Layer = serde_json::from_value(text_layer_json()).unwrap();
+        let Layer::Text {
+            tracking,
+            blend_mode,
+            ..
+        } = layer
+        else {
+            panic!("expected text layer");
+        };
+        assert_eq!(tracking, 0.0);
+        assert_eq!(blend_mode, BlendMode::Normal);
+
+        let mut json = text_layer_json();
+        json["tracking"] = serde_json::json!(-55.0);
+        let layer: Layer = serde_json::from_value(json).unwrap();
+        let Layer::Text {
+            tracking,
+            leading,
+            center_source_rect_y,
+            justification,
+            ..
+        } = &layer
+        else {
+            panic!("expected text layer");
+        };
+        assert_eq!(*tracking, -55.0);
+        assert_eq!(*leading, None);
+        assert!(!center_source_rect_y);
+        assert_eq!(*justification, super::TextJustification::Center);
+        assert_eq!(serde_json::to_value(layer).unwrap()["tracking"], -55.0);
+    }
+
+    #[test]
+    fn legacy_fill_json_and_typed_text_paint_coexist() {
+        let mut json = text_layer_json();
+        json["effects"] = serde_json::json!([{
+            "match_name": TEXT_PAINT_MATCH_NAME,
+            "params": {
+                "stroke_color": [0, 0, 0, 255],
+                "stroke_width": 5.0,
+                "stroke_over_fill": false
+            }
+        }]);
+        let layer: Layer = serde_json::from_value(json).unwrap();
+        let Layer::Text { fill, effects, .. } = &layer else {
+            panic!("expected text layer");
+        };
+        assert_eq!(*fill, [255, 255, 255, 255]);
+        let paint = effects
+            .iter()
+            .find_map(TextPaintSpec::from_effect)
+            .expect("text paint marker");
+        assert_eq!(paint.fill, None);
+        assert_eq!(paint.stroke_color, Some([0, 0, 0, 255]));
+        assert_eq!(paint.stroke_width, 5.0);
+        assert!(!paint.stroke_over_fill);
+    }
+
+    #[test]
+    fn tracking_amount_animator_round_trips_keyframes() {
+        let animator = TextAnimatorSpec {
+            name: "tracking".to_string(),
+            expression_selector: Some(TextExpressionSelector::TrackingAmount {
+                value: 7.0,
+                keyframes: vec![ScalarKeyframe {
+                    time: 1.0,
+                    value: -1.0,
+                    hold: false,
+                    approximate: false,
+                    ease: None,
+                }],
+            }),
+            ..TextAnimatorSpec::default()
+        };
+        let json = serde_json::to_value(&animator).unwrap();
+        assert_eq!(json["expression_selector"]["type"], "tracking_amount");
+        let decoded: TextAnimatorSpec = serde_json::from_value(json).unwrap();
+        let Some(TextExpressionSelector::TrackingAmount { value, keyframes }) =
+            decoded.expression_selector
+        else {
+            panic!("expected tracking amount");
+        };
+        assert_eq!(value, 7.0);
+        assert_eq!(keyframes[0].value, -1.0);
+    }
+
+    #[test]
+    fn blend_mode_defaults_and_round_trips_for_non_adjustment_layers() {
+        let layers = [
+            text_layer_json(),
+            serde_json::json!({
+                "type": "solid",
+                "id": "solid",
+                "start": 0.0,
+                "duration": 1.0,
+                "color": [255, 255, 255, 255],
+                "rect": {"x": 0.0, "y": 0.0, "w": 10.0, "h": 10.0}
+            }),
+            serde_json::json!({
+                "type": "footage",
+                "id": "footage",
+                "start": 0.0,
+                "duration": 1.0,
+                "source": "asset"
+            }),
+            serde_json::json!({
+                "type": "precomp",
+                "id": "precomp",
+                "start": 0.0,
+                "duration": 1.0,
+                "composition": "child"
+            }),
+        ];
+
+        for value in layers {
+            let layer: Layer = serde_json::from_value(value).unwrap();
+            assert_eq!(layer.blend_mode(), BlendMode::Normal);
+        }
+
+        let mut value = text_layer_json();
+        value["blend_mode"] = serde_json::json!("difference");
+        let layer: Layer = serde_json::from_value(value).unwrap();
+        assert_eq!(layer.blend_mode(), BlendMode::Difference);
+        assert_eq!(
+            serde_json::to_value(layer).unwrap()["blend_mode"],
+            "difference"
+        );
+        assert_eq!(serde_json::to_value(BlendMode::Add).unwrap(), "add");
+        assert_eq!(serde_json::to_value(BlendMode::Screen).unwrap(), "screen");
     }
 }

@@ -1,0 +1,7 @@
+{
+  "schema": "blast.bot-render.v1", "caseId": "scenes_type_3", "subtitles_mode": "scenes_3rd",
+  "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 2.0}, "effectStyleIds": ["txt_punch_v1"],
+  "subtitle_payload": {"clip": {"start": 0.0, "end": 2.0}, "scenes": [
+    {"id": 3, "type": "TYPE_3", "words": ["ты", "оставил", "след"], "start": 0.2, "end": 1.7, "lines": [["ты", "оставил", "след"]], "word_timings": [{"word": "ты", "start": 0.2, "end": 0.55}, {"word": "оставил", "start": 0.55, "end": 1.0}, {"word": "след", "start": 1.0, "end": 1.7}]}
+  ]}
+}
