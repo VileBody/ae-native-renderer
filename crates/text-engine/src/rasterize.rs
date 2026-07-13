@@ -7,8 +7,8 @@ use std::sync::{Arc, Mutex, OnceLock};
 use ttf_parser::{Face, GlyphId, OutlineBuilder, Tag};
 
 use crate::{
-    font_override_for_char, layout_text, load_font_with_telemetry, TextLayoutRequest,
-    TextLayoutResult,
+    faux_italic_for_char, font_override_for_char, layout_text, load_font_with_telemetry,
+    TextLayoutRequest, TextLayoutResult,
 };
 
 const OUTLINE_COVERAGE_SUPERSAMPLE: u32 = 16;
@@ -16,6 +16,7 @@ const OUTLINE_COVERAGE_SUPERSAMPLE: u32 = 16;
 // Keep UHD and larger canvases eligible while leaving production 1080p serial.
 const PARALLEL_TEXT_PIXEL_THRESHOLD: usize = 8_000_000;
 const FONTDUE_COVERAGE_CACHE_CAPACITY: usize = 2_048;
+const FAUX_ITALIC_SHEAR: f32 = 0.212_556_57; // tan(12deg), close to AE faux italic.
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct TextPaintStyle {
@@ -207,6 +208,9 @@ pub fn rasterize_text_with_layout_and_paint(
                     font_size,
                 )
             });
+        let coverage = faux_italic_for_char(req, glyph.char_index)
+            .then(|| shear_coverage(&coverage, FAUX_ITALIC_SHEAR))
+            .unwrap_or(coverage);
         used_outline_backend |= coverage.backend == "ttf_outline_are_scanline_16x";
         let clipped_bounds = clipped_bitmap_bounds(
             coverage.raster_x,
@@ -355,6 +359,43 @@ struct CoverageBitmap {
     supersample: u32,
     origin_source: &'static str,
     nonzero_pixels: u32,
+}
+
+fn shear_coverage(coverage: &CoverageBitmap, shear: f32) -> CoverageBitmap {
+    if coverage.width == 0 || coverage.height == 0 || !shear.is_finite() || shear <= 0.0 {
+        return CoverageBitmap {
+            width: coverage.width,
+            height: coverage.height,
+            raster_x: coverage.raster_x,
+            raster_y: coverage.raster_y,
+            bitmap: coverage.bitmap.clone(),
+            backend: coverage.backend,
+            supersample: coverage.supersample,
+            origin_source: coverage.origin_source,
+            nonzero_pixels: coverage.nonzero_pixels,
+        };
+    }
+    let max_shift = ((coverage.height.saturating_sub(1)) as f32 * shear).ceil() as usize;
+    let width = coverage.width + max_shift;
+    let mut bitmap = vec![0u8; width * coverage.height];
+    for y in 0..coverage.height {
+        let shift = ((coverage.height - 1 - y) as f32 * shear).round() as usize;
+        let source = y * coverage.width;
+        let destination = y * width + shift;
+        bitmap[destination..destination + coverage.width]
+            .copy_from_slice(&coverage.bitmap[source..source + coverage.width]);
+    }
+    CoverageBitmap {
+        width,
+        height: coverage.height,
+        raster_x: coverage.raster_x,
+        raster_y: coverage.raster_y,
+        bitmap: Arc::new(bitmap),
+        backend: coverage.backend,
+        supersample: coverage.supersample,
+        origin_source: "ae_faux_italic_shear",
+        nonzero_pixels: coverage.nonzero_pixels,
+    }
 }
 
 fn fontdue_coverage(
@@ -1899,6 +1940,31 @@ mod tests {
         assert!(3840usize * 2160 >= PARALLEL_TEXT_PIXEL_THRESHOLD);
     }
 
+    #[test]
+    fn faux_italic_shear_keeps_baseline_and_moves_upper_coverage_right() {
+        let coverage = CoverageBitmap {
+            width: 2,
+            height: 3,
+            raster_x: 12.0,
+            raster_y: 20.0,
+            bitmap: Arc::new(vec![255, 0, 0, 255, 255, 0]),
+            backend: "test",
+            supersample: 1,
+            origin_source: "test",
+            nonzero_pixels: 3,
+        };
+        let sheared = shear_coverage(&coverage, 1.0);
+
+        assert_eq!(sheared.raster_x, coverage.raster_x);
+        assert_eq!(sheared.raster_y, coverage.raster_y);
+        assert_eq!(sheared.width, 4);
+        assert_eq!(sheared.height, 3);
+        assert_eq!(
+            sheared.bitmap.as_ref(),
+            &[0, 0, 255, 0, 0, 0, 255, 0, 255, 0, 0, 0]
+        );
+    }
+
     fn request(text: &str) -> TextLayoutRequest {
         TextLayoutRequest {
             text: text.to_string(),
@@ -1906,6 +1972,7 @@ mod tests {
             font_size: 24.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -2011,6 +2078,7 @@ mod tests {
             font_size: 58.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -2041,6 +2109,7 @@ mod tests {
             font_size: 130.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -2072,6 +2141,7 @@ mod tests {
             font_size: 96.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -2309,6 +2379,7 @@ mod tests {
             font_size: 73.25,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -2354,6 +2425,7 @@ mod tests {
             font_size: 91.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: -55.0,
             leading: None,
             center_source_rect_y: false,

@@ -27,6 +27,8 @@ pub struct TextLayoutRequest {
     pub font_overrides: Vec<(usize, String)>,
     /// Sparse TextDocument font-size overrides keyed by Unicode scalar index.
     pub font_size_overrides: Vec<(usize, f32)>,
+    /// Sparse TextDocument faux-italic flags keyed by Unicode scalar index.
+    pub faux_italic_chars: Vec<usize>,
     /// After Effects tracking units (1/1000 em).
     pub tracking: f32,
     /// Explicit After Effects line spacing in layer pixels.
@@ -50,6 +52,10 @@ fn font_size_for_char(req: &TextLayoutRequest, char_index: usize) -> f32 {
         .map(|(_, font_size)| *font_size)
         .filter(|font_size| font_size.is_finite() && *font_size > 0.0)
         .unwrap_or(req.font_size)
+}
+
+pub fn faux_italic_for_char(req: &TextLayoutRequest, char_index: usize) -> bool {
+    req.faux_italic_chars.contains(&char_index)
 }
 
 #[derive(Debug, Clone)]
@@ -1127,6 +1133,7 @@ mod tests {
             font_size: 10.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -1153,6 +1160,7 @@ mod tests {
             font_size: 20.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -1191,6 +1199,7 @@ mod tests {
             font_size: 100.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: -20.0,
             leading: Some(104.0),
             center_source_rect_y: false,
@@ -1218,6 +1227,7 @@ mod tests {
             font_size: 10.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -1239,6 +1249,7 @@ mod tests {
             font_size: 20.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: true,
@@ -1263,6 +1274,7 @@ mod tests {
             font_size: 130.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: -20.0,
             leading: Some(130.0),
             center_source_rect_y: true,
@@ -1288,6 +1300,7 @@ mod tests {
             font_size: 18.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -1336,6 +1349,7 @@ mod tests {
             font_size,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -1360,6 +1374,7 @@ mod tests {
             font_size: 80.0,
             font_overrides: Vec::new(),
             font_size_overrides: vec![(5, 120.0), (7, 120.0), (8, 120.0)],
+            faux_italic_chars: Vec::new(),
             tracking: -50.0,
             leading: Some(114.0),
             center_source_rect_y: false,
@@ -1401,6 +1416,7 @@ mod tests {
             font_size: 28.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -1451,6 +1467,7 @@ mod tests {
             font_size: 58.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -1486,6 +1503,7 @@ mod tests {
             font_size: 58.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -1515,6 +1533,7 @@ mod tests {
             font_size: 74.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,

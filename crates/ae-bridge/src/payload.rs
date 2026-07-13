@@ -913,11 +913,19 @@ fn text_char_styles(text_data: &Value) -> Vec<render_ir::TextCharStyle> {
                 .map(str::trim)
                 .filter(|font| !font.is_empty())
                 .map(ToOwned::to_owned);
-            (font.is_some() || font_size.is_some()).then_some(render_ir::TextCharStyle {
-                index,
-                font,
-                font_size,
-            })
+            let faux_italic = style
+                .get("fauxItalic")
+                .or_else(|| style.get("faux_italic"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            (font.is_some() || font_size.is_some() || faux_italic).then_some(
+                render_ir::TextCharStyle {
+                    index,
+                    font,
+                    font_size,
+                    faux_italic,
+                },
+            )
         })
         .collect()
 }
@@ -1965,15 +1973,31 @@ mod color_management_tests {
         assert_eq!(
             styles
                 .iter()
-                .map(|style| (style.index, style.font.as_deref(), style.font_size))
+                .map(|style| (
+                    style.index,
+                    style.font.as_deref(),
+                    style.font_size,
+                    style.faux_italic
+                ))
                 .collect::<Vec<_>>(),
             vec![
-                (0, Some("Point-SemiBold"), None),
-                (10, None, Some(120.0)),
-                (12, None, Some(120.0)),
-                (13, None, Some(120.0))
+                (0, Some("Point-SemiBold"), None, false),
+                (10, None, Some(120.0), false),
+                (12, None, Some(120.0), false),
+                (13, None, Some(120.0), false)
             ]
         );
+    }
+
+    #[test]
+    fn text_document_preserves_faux_italic_without_font_override() {
+        let styles = text_char_styles(&json!({
+            "char_styles_ungrouped": [{"i": 3, "fauxItalic": true}]
+        }));
+        assert_eq!(styles.len(), 1);
+        assert_eq!(styles[0].index, 3);
+        assert!(styles[0].faux_italic);
+        assert_eq!(styles[0].font, None);
     }
 
     #[test]

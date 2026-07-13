@@ -1132,6 +1132,11 @@ fn render_layer_stub(
                     .iter()
                     .filter_map(|style| style.font_size.map(|font_size| (style.index, font_size)))
                     .collect(),
+                faux_italic_chars: char_styles
+                    .iter()
+                    .filter(|style| style.faux_italic)
+                    .map(|style| style.index)
+                    .collect(),
                 tracking: effective_tracking,
                 leading: *leading,
                 center_source_rect_y: *center_source_rect_y,
@@ -1592,6 +1597,11 @@ fn render_layer_with_parent_matrix(
                             .font_size
                             .map(|font_size| (style.index, font_size * raster_scale))
                     })
+                    .collect(),
+                faux_italic_chars: char_styles
+                    .iter()
+                    .filter(|style| style.faux_italic)
+                    .map(|style| style.index)
                     .collect(),
                 tracking: effective_tracking,
                 leading: leading.map(|value| value * raster_scale),
@@ -5003,6 +5013,7 @@ mod tests {
             font_size: 10.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -5034,6 +5045,7 @@ mod tests {
             font_size: 10.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -5063,6 +5075,7 @@ mod tests {
             font_size: 10.0,
             font_overrides: Vec::new(),
             font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
             tracking: 0.0,
             leading: None,
             center_source_rect_y: false,
@@ -5177,6 +5190,7 @@ mod tests {
                 font_size: 100.0,
                 font_overrides: Vec::new(),
                 font_size_overrides: Vec::new(),
+                faux_italic_chars: Vec::new(),
                 tracking,
                 leading: None,
                 center_source_rect_y: false,

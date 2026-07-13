@@ -478,6 +478,9 @@ pub struct TextCharStyle {
     pub font: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f32>,
+    /// After Effects TextDocument fauxItalic on this Unicode scalar.
+    #[serde(default)]
+    pub faux_italic: bool,
 }
 
 impl Layer {

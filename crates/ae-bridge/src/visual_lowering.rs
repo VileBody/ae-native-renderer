@@ -1511,7 +1511,7 @@ fn lower_bot_subtitles(
                         id: format!("bot_{source_mode}_{}_accumulate_{word_index}", segment.id),
                         start: word.start,
                         duration: (segment.end - word.start).max(1.0 / comp.fps.max(1.0)),
-                        text: prefix,
+                        text: prefix.clone(),
                         font: "Montserrat-Bold".to_string(),
                         fontSize: font_size,
                         char_styles: Vec::new(),
@@ -1532,6 +1532,44 @@ fn lower_bot_subtitles(
                         effects: bot_scene_effects(source_mode, "TYPE_3", fill),
                     },
                 });
+
+                if word_index + 1 == segment.words.len() {
+                    let frame = 1.0 / comp.fps.max(1.0);
+                    let tail_start = (segment.end - frame * 4.0).max(word.start);
+                    let mut tail_transform = transform.clone();
+                    tail_transform.animation.opacity = vec![
+                        linear_scalar_key(tail_start, 0.0),
+                        scalar_key((tail_start + frame).min(segment.end), 78.0),
+                        linear_scalar_key(segment.end, 0.0),
+                    ];
+                    result.layers.push(LoweredVisualLayer {
+                        sort_key: -1_200_004 + index as i64 * 100 + word_index as i64,
+                        layer: Layer::Text {
+                            id: format!("bot_{source_mode}_{}_tail", segment.id),
+                            start: tail_start,
+                            duration: (segment.end - tail_start).max(frame),
+                            text: prefix.clone(),
+                            font: "Montserrat-Bold".to_string(),
+                            fontSize: font_size,
+                            char_styles: Vec::new(),
+                            blend_mode: BlendMode::Normal,
+                            tracking: type_spec.tracking,
+                            leading: Some(font_size * 0.92),
+                            center_source_rect_y: true,
+                            justification: TextJustification::Center,
+                            fill,
+                            box_: Some(Rect {
+                                x: (comp.w as f32 - box_width) * 0.5,
+                                y: (comp.h as f32 - box_height) * 0.5,
+                                w: box_width,
+                                h: box_height,
+                            }),
+                            transform: tail_transform,
+                            text_animators: Vec::new(),
+                            effects: bot_type_3_tail_effects(comp, tail_start, segment.end, fill),
+                        },
+                    });
+                }
             }
         } else {
             result.layers.push(LoweredVisualLayer {
@@ -1749,6 +1787,7 @@ fn bot_focus_char_styles(text: &str, segment: &BotSubtitleSegment) -> Vec<TextCh
                     index,
                     font: Some("Montserrat-BoldItalic".to_string()),
                     font_size: None,
+                    faux_italic: false,
                 }),
             );
             break;
@@ -1826,6 +1865,45 @@ fn bot_scene_effects(source_mode: &str, kind: &str, fill: [u8; 4]) -> Vec<Effect
         });
     }
     effects
+}
+
+fn bot_type_3_tail_effects(
+    comp: &CompSpec,
+    start: f64,
+    end: f64,
+    fill: [u8; 4],
+) -> Vec<EffectSpec> {
+    vec![
+        EffectSpec {
+            match_name: "ADBE Drop Shadow".to_string(),
+            params: json!({"color": [0, 0, 0, 255], "opacity": 110.0, "direction": 135.0, "distance": 5.0, "softness": 18.0}),
+        },
+        EffectSpec {
+            match_name: "ADBE Geometry2".to_string(),
+            params: json!({
+                "scale_width": 100.0,
+                "scale_height": {"keyframes": [
+                    {"t": start, "v": 92.0},
+                    {"t": end, "v": 146.0}
+                ]},
+                "anchor": [comp.w as f32 * 0.5, comp.h as f32 * 0.5]
+            }),
+        },
+        EffectSpec {
+            match_name: "ADBE Box Blur2".to_string(),
+            params: json!({
+                "radius": {"keyframes": [
+                    {"t": start, "v": 2.5},
+                    {"t": end, "v": 25.0}
+                ]},
+                "iterations": 1.0
+            }),
+        },
+        EffectSpec {
+            match_name: "ADBE Glo2".to_string(),
+            params: json!({"threshold": 130.0, "radius": 18.0, "intensity": 0.28, "operation": "add", "color": fill}),
+        },
+    ]
 }
 
 fn lower_semantic_style(
@@ -2217,11 +2295,23 @@ mod tests {
             })),
             &comp(),
         );
-        assert_eq!(result.layers.len(), 3);
+        assert_eq!(result.layers.len(), 4);
         assert!(result
             .layers
             .iter()
+            .filter(|layer| !layer.layer.id().ends_with("_tail"))
             .all(|layer| layer.layer.id().contains("accumulate_")));
+        let tail = result
+            .layers
+            .iter()
+            .find(|layer| layer.layer.id().ends_with("_tail"))
+            .expect("TYPE_3 has a separate exit tail");
+        let Layer::Text { effects, .. } = &tail.layer else {
+            panic!("expected text tail");
+        };
+        assert!(effects
+            .iter()
+            .any(|effect| effect.match_name == "ADBE Box Blur2"));
     }
 
     #[test]
