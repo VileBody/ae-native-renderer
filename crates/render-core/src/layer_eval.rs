@@ -808,12 +808,7 @@ fn render_motion_blurred_layer(
 
     let mut canvas = Canvas::transparent(comp.width, comp.height);
     for (index, chunk) in accum.chunks_exact(4).enumerate() {
-        let pixel = [
-            chunk[0].round().clamp(0.0, 255.0) as u8,
-            chunk[1].round().clamp(0.0, 255.0) as u8,
-            chunk[2].round().clamp(0.0, 255.0) as u8,
-            chunk[3].round().clamp(0.0, 255.0) as u8,
-        ];
+        let pixel = resolve_motion_accumulation(chunk);
         let x = index as u32 % comp.width;
         let y = index as u32 / comp.width;
         canvas.set_pixel(x, y, pixel);
@@ -823,11 +818,30 @@ fn render_motion_blurred_layer(
 
 fn accumulate_motion_sample(accum: &mut [f32], sample: &Canvas, weight: f32) {
     for (dst, src) in accum.chunks_exact_mut(4).zip(sample.data.chunks_exact(4)) {
-        dst[0] += src[0] as f32 * weight;
-        dst[1] += src[1] as f32 * weight;
-        dst[2] += src[2] as f32 * weight;
-        dst[3] += src[3] as f32 * weight;
+        let alpha = src[3] as f32 / 255.0;
+        let premultiplied_weight = alpha * weight;
+        dst[0] += (src[0] as f32 / 255.0) * premultiplied_weight;
+        dst[1] += (src[1] as f32 / 255.0) * premultiplied_weight;
+        dst[2] += (src[2] as f32 / 255.0) * premultiplied_weight;
+        dst[3] += premultiplied_weight;
     }
+}
+
+fn resolve_motion_accumulation(accum: &[f32]) -> [u8; 4] {
+    let alpha = accum[3].clamp(0.0, 1.0);
+    let unpremultiply = |value: f32| {
+        if alpha > f32::EPSILON {
+            (value / alpha * 255.0).round().clamp(0.0, 255.0) as u8
+        } else {
+            0
+        }
+    };
+    [
+        unpremultiply(accum[0]),
+        unpremultiply(accum[1]),
+        unpremultiply(accum[2]),
+        (alpha * 255.0).round() as u8,
+    ]
 }
 
 fn opacity_of(layer: &Layer, time: f64) -> f32 {
@@ -5936,6 +5950,20 @@ mod tests {
             alpha_pixels > 4,
             "motion blur should spread a moving layer over multiple pixels, got {alpha_pixels}"
         );
+    }
+
+    #[test]
+    fn motion_blur_accumulation_ignores_transparent_rgb() {
+        let mut accum = [0.0_f32; 4];
+        let mut transparent_red = Canvas::transparent(1, 1);
+        transparent_red.set_pixel(0, 0, [255, 0, 0, 0]);
+        let mut translucent_green = Canvas::transparent(1, 1);
+        translucent_green.set_pixel(0, 0, [0, 255, 0, 128]);
+
+        accumulate_motion_sample(&mut accum, &transparent_red, 0.5);
+        accumulate_motion_sample(&mut accum, &translucent_green, 0.5);
+
+        assert_eq!(resolve_motion_accumulation(&accum), [0, 255, 0, 64]);
     }
 
     #[test]

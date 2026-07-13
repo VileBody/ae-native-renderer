@@ -475,8 +475,10 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
 
     let mut assets = Vec::new();
     let mut layer_items = Vec::new();
+    let mut nested_layer_items = BTreeMap::<String, Vec<(i64, render_ir::Layer)>>::new();
     let mut asset_index = 0usize;
     let precomp_sources = main_precomp_sources(payload, &main_comp.name);
+    let raster_boundary_comps = root_raster_boundary_comps(payload, main_comp, &precomp_sources);
 
     for layer in payload
         .footage_layers
@@ -485,6 +487,51 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
     {
         let target_comp = layer_target_comp(layer).unwrap_or(&main_comp.name);
         if target_comp != main_comp.name {
+            if raster_boundary_comps.contains(target_comp) {
+                let Some(target_spec) = payload
+                    .comps_spec
+                    .iter()
+                    .find(|comp| comp.name == target_comp)
+                else {
+                    diagnostics.skipped_layers += 1;
+                    diagnostics.findings.push(CapabilityFinding {
+                        status: CapabilityStatus::Unsupported,
+                        feature: "import.missing_precomp_composition".to_string(),
+                        layer: Some(layer.name.clone()),
+                        detail: format!("layer targets unknown comp '{target_comp}'"),
+                    });
+                    continue;
+                };
+                if layer.kind == "footage" && is_audio_layer(layer) {
+                    diagnostics.skipped_layers += 1;
+                    diagnostics.findings.push(CapabilityFinding {
+                        status: CapabilityStatus::NotImplemented,
+                        feature: "import.skip_audio".to_string(),
+                        layer: Some(layer.name.clone()),
+                        detail: "required audio is recognized but native mux/envelope lowering is not implemented".to_string(),
+                    });
+                    continue;
+                }
+                match import_layer(layer, &mut assets, &mut asset_index, target_spec) {
+                    Some(imported) => {
+                        diagnostics.imported_layers += 1;
+                        nested_layer_items
+                            .entry(target_comp.to_string())
+                            .or_default()
+                            .push((main_sort_key(layer), imported));
+                    }
+                    None => {
+                        diagnostics.skipped_layers += 1;
+                        diagnostics.findings.push(CapabilityFinding {
+                            status: CapabilityStatus::Unsupported,
+                            feature: format!("import.layer.{}", layer.kind),
+                            layer: Some(layer.name.clone()),
+                            detail: "layer type cannot be represented in render IR yet".to_string(),
+                        });
+                    }
+                }
+                continue;
+            }
             if let Some(parent) = precomp_sources.get(target_comp) {
                 if layer.kind == "text" || layer.kind == "adjustment" {
                     match import_flattened_text_layer(layer, parent, main_comp) {
@@ -537,6 +584,7 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         if layer.kind == "precomp"
             && precomp_source_name(layer)
                 .is_some_and(|name| precomp_has_text_children(payload, name))
+            && !precomp_source_name(layer).is_some_and(|name| raster_boundary_comps.contains(name))
         {
             diagnostics.skipped_layers += 1;
             diagnostics.findings.push(CapabilityFinding {
@@ -561,7 +609,7 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
             continue;
         }
 
-        match import_layer(layer, &mut assets, &mut asset_index) {
+        match import_layer(layer, &mut assets, &mut asset_index, main_comp) {
             Some(imported) => {
                 diagnostics.imported_layers += 1;
                 layer_items.push((main_sort_key(layer), imported));
@@ -593,29 +641,109 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         .into_iter()
         .map(|(_, layer)| layer)
         .collect::<Vec<_>>();
+    let compositions = raster_boundary_comps
+        .iter()
+        .filter_map(|name| {
+            let comp = payload.comps_spec.iter().find(|comp| &comp.name == name)?;
+            let mut items = nested_layer_items.remove(name).unwrap_or_default();
+            items.sort_by_key(|(sort_key, _)| *sort_key);
+            let layers = items
+                .into_iter()
+                .map(|(_, layer)| layer)
+                .collect::<Vec<_>>();
+            Some(render_ir::CompositionNode {
+                composition: ir_composition(
+                    comp,
+                    layers.iter().any(ir_layer_motion_blur_enabled),
+                    true,
+                ),
+                layers,
+            })
+        })
+        .collect::<Vec<_>>();
     diagnostics.assets = assets.len();
     let comp_motion_blur_enabled = layers.iter().any(ir_layer_motion_blur_enabled);
 
     let scene = render_ir::Scene {
         version: "0.2-payload".to_string(),
-        composition: render_ir::Composition {
-            id: main_comp.name.clone(),
-            width: main_comp.w,
-            height: main_comp.h,
-            fps: main_comp.fps,
-            duration: main_comp.dur,
-            background: bg_color_to_rgba(main_comp.bg_color),
-            motion_blur: render_ir::MotionBlurSettings {
-                enabled: comp_motion_blur_enabled,
-                ..render_ir::MotionBlurSettings::default()
-            },
-        },
-        compositions: Vec::new(),
+        composition: ir_composition(main_comp, comp_motion_blur_enabled, false),
+        compositions,
         assets,
         layers,
     };
 
     Ok(PayloadImportResult { scene, diagnostics })
+}
+
+fn root_raster_boundary_comps(
+    payload: &GeneratedPayload,
+    main_comp: &CompSpec,
+    precomp_sources: &BTreeMap<String, &PayloadLayer>,
+) -> std::collections::BTreeSet<String> {
+    let known_comps = payload
+        .comps_spec
+        .iter()
+        .map(|comp| comp.name.as_str())
+        .collect::<std::collections::BTreeSet<_>>();
+    let mut boundaries = payload
+        .comps_spec
+        .iter()
+        .filter(|comp| comp.name != main_comp.name)
+        .filter_map(|comp| {
+            let parent = precomp_sources.get(&comp.name)?;
+            let spans_main =
+                parent.in_point.abs() <= 1.0e-6 && parent.out_point + 1.0e-6 >= main_comp.dur;
+            spans_main.then(|| comp.name.clone())
+        })
+        .collect::<std::collections::BTreeSet<_>>();
+
+    // A rasterized precomp is still a composition graph. Keep every nested
+    // composition it references so the renderer never sees a dangling source.
+    loop {
+        let dependencies = payload
+            .footage_layers
+            .iter()
+            .chain(payload.text_layers.iter())
+            .filter(|layer| {
+                layer.kind == "precomp"
+                    && layer_target_comp(layer).is_some_and(|target| boundaries.contains(target))
+            })
+            .filter_map(precomp_source_name)
+            .filter(|source| known_comps.contains(source))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let mut changed = false;
+        for dependency in dependencies {
+            changed |= boundaries.insert(dependency);
+        }
+        if !changed {
+            break;
+        }
+    }
+    boundaries
+}
+
+fn ir_composition(
+    comp: &CompSpec,
+    motion_blur_enabled: bool,
+    transparent_boundary: bool,
+) -> render_ir::Composition {
+    render_ir::Composition {
+        id: comp.name.clone(),
+        width: comp.w,
+        height: comp.h,
+        fps: comp.fps,
+        duration: comp.dur,
+        // AE's composition panel colour is a root preview/output background;
+        // precomps themselves composite over their parent with transparent RGBA.
+        background: transparent_boundary
+            .then_some([0, 0, 0, 0])
+            .unwrap_or_else(|| bg_color_to_rgba(comp.bg_color)),
+        motion_blur: render_ir::MotionBlurSettings {
+            enabled: motion_blur_enabled,
+            ..render_ir::MotionBlurSettings::default()
+        },
+    }
 }
 
 fn main_precomp_sources<'a>(
@@ -695,6 +823,7 @@ fn import_layer(
     layer: &PayloadLayer,
     assets: &mut Vec<render_ir::Asset>,
     asset_index: &mut usize,
+    comp: &CompSpec,
 ) -> Option<render_ir::Layer> {
     let id = layer_id(layer);
     let start = layer.in_point;
@@ -751,28 +880,7 @@ fn import_layer(
                 effects,
             })
         }
-        "text" => {
-            let fallback_comp = CompSpec {
-                name: String::new(),
-                w: 1080,
-                h: 1920,
-                fps: 30.0,
-                dur: duration,
-                pixel_aspect: None,
-                work_area_start: None,
-                work_area_duration: None,
-                display_start_time: None,
-                bg_color: None,
-                extra: BTreeMap::new(),
-            };
-            Some(import_text_layer(
-                layer,
-                start,
-                duration,
-                transform,
-                &fallback_comp,
-            ))
-        }
+        "text" => Some(import_text_layer(layer, start, duration, transform, comp)),
         "precomp" => Some(render_ir::Layer::Precomp {
             id,
             start,
@@ -863,12 +971,10 @@ fn text_paint_effect(text_base: &Value) -> render_ir::EffectSpec {
         .get("applyStroke")
         .and_then(Value::as_bool)
         .unwrap_or(false);
-    let fill = fill_enabled.then(|| {
-        color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255])
-    });
-    let stroke_color = stroke_enabled.then(|| {
-        color_value_to_rgba(text_base.get("strokeColor"), [0, 0, 0, 255])
-    });
+    let fill =
+        fill_enabled.then(|| color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255]));
+    let stroke_color =
+        stroke_enabled.then(|| color_value_to_rgba(text_base.get("strokeColor"), [0, 0, 0, 255]));
     let stroke_width = if stroke_enabled {
         text_base
             .get("strokeWidth")
