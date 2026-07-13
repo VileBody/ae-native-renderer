@@ -209,7 +209,7 @@ fn horizontal_blur_pass(input: &Canvas, radius: u32, parallel: bool) -> Canvas {
 }
 
 fn fill_horizontal_blur_row(output: &mut [u8], input: &[u8], width: u32, radius: u32) {
-    let mut sum = [0_u32; 4];
+    let mut sum = PremultipliedSum::default();
     let mut count = 0_u32;
     let right = radius.min(width - 1);
     for x in 0..=right {
@@ -258,7 +258,7 @@ fn vertical_blur_pass(input: &Canvas, radius: u32, parallel: bool) -> Canvas {
 }
 
 fn fill_vertical_blur_column(output: &mut Canvas, input: &Canvas, x: u32, radius: u32) {
-    let mut sum = [0_u32; 4];
+    let mut sum = PremultipliedSum::default();
     let mut count = 0_u32;
     let bottom = radius.min(input.height - 1);
     for y in 0..=bottom {
@@ -281,7 +281,7 @@ fn fill_vertical_blur_column(output: &mut Canvas, input: &Canvas, x: u32, radius
 
 fn blurred_vertical_column(input: &Canvas, x: u32, radius: u32) -> Vec<u8> {
     let mut column = vec![0u8; input.height as usize * 4];
-    let mut sum = [0_u32; 4];
+    let mut sum = PremultipliedSum::default();
     let mut count = 0_u32;
     let bottom = radius.min(input.height - 1);
     for y in 0..=bottom {
@@ -374,25 +374,38 @@ pub fn canvas_alpha_stats(canvas: &Canvas) -> CanvasAlphaStats {
     }
 }
 
-fn add_pixel(sum: &mut [u32; 4], pixel: [u8; 4]) {
-    for channel in 0..4 {
-        sum[channel] += u32::from(pixel[channel]);
-    }
+#[derive(Clone, Copy, Default)]
+struct PremultipliedSum {
+    rgb: [u64; 3],
+    alpha: u64,
 }
 
-fn subtract_pixel(sum: &mut [u32; 4], pixel: [u8; 4]) {
-    for channel in 0..4 {
-        sum[channel] -= u32::from(pixel[channel]);
+fn add_pixel(sum: &mut PremultipliedSum, pixel: [u8; 4]) {
+    let alpha = u64::from(pixel[3]);
+    for channel in 0..3 {
+        sum.rgb[channel] += u64::from(pixel[channel]) * alpha;
     }
+    sum.alpha += alpha;
 }
 
-fn average_pixel(sum: [u32; 4], count: u32) -> [u8; 4] {
-    [
-        (sum[0] / count) as u8,
-        (sum[1] / count) as u8,
-        (sum[2] / count) as u8,
-        (sum[3] / count) as u8,
-    ]
+fn subtract_pixel(sum: &mut PremultipliedSum, pixel: [u8; 4]) {
+    let alpha = u64::from(pixel[3]);
+    for channel in 0..3 {
+        sum.rgb[channel] -= u64::from(pixel[channel]) * alpha;
+    }
+    sum.alpha -= alpha;
+}
+
+fn average_pixel(sum: PremultipliedSum, count: u32) -> [u8; 4] {
+    let alpha = sum.alpha / u64::from(count);
+    let mut output = [0_u8; 4];
+    if sum.alpha > 0 {
+        for channel in 0..3 {
+            output[channel] = (sum.rgb[channel] / sum.alpha).min(255) as u8;
+        }
+    }
+    output[3] = alpha.min(255) as u8;
+    output
 }
 
 #[cfg(test)]
@@ -430,6 +443,17 @@ mod tests {
         assert!(output.pixel(0, 0)[3] > 0);
         assert!(output.pixel(1, 0)[3] > 0);
         assert!(output.pixel(2, 0)[3] > 0);
+    }
+
+    #[test]
+    fn blur_uses_premultiplied_rgb_for_transparent_neighbors() {
+        let mut input = Canvas::transparent(3, 1);
+        input.set_pixel(0, 0, [255, 0, 0, 0]);
+        input.set_pixel(1, 0, [0, 255, 0, 255]);
+
+        let output = blur_canvas(&input, 1);
+
+        assert_eq!(output.pixel(0, 0), [0, 255, 0, 127]);
     }
 
     #[test]
@@ -551,9 +575,9 @@ mod tests {
 
         let output = blur_canvas(&input, 1);
 
-        assert_eq!(output.pixel(0, 0), [135, 135, 135, 135]);
-        assert_eq!(output.pixel(1, 0), [90, 90, 90, 90]);
-        assert_eq!(output.pixel(2, 0), [90, 90, 90, 90]);
+        assert_eq!(output.pixel(0, 0), [150, 150, 150, 135]);
+        assert_eq!(output.pixel(1, 0), [150, 150, 150, 90]);
+        assert_eq!(output.pixel(2, 0), [180, 180, 180, 90]);
     }
 
     #[test]
