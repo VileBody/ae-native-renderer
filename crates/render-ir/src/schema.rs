@@ -211,12 +211,21 @@ pub const TEXT_PAINT_MATCH_NAME: &str = "ANR Text Paint";
 pub struct TextPaintSpec {
     #[serde(default)]
     pub fill: Option<[u8; 4]>,
+    /// `None` historically meant "use Layer::Text.fill". Keep that wire
+    /// behavior by default, but let imported AE TextDocument data explicitly
+    /// disable the fill for outline-only layers.
+    #[serde(default = "default_text_paint_fill_enabled")]
+    pub fill_enabled: bool,
     #[serde(default)]
     pub stroke_color: Option<[u8; 4]>,
     #[serde(default)]
     pub stroke_width: f32,
     #[serde(default)]
     pub stroke_over_fill: bool,
+}
+
+fn default_text_paint_fill_enabled() -> bool {
+    true
 }
 
 impl TextPaintSpec {

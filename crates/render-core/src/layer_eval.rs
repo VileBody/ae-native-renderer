@@ -3676,10 +3676,11 @@ fn evaluate_text_tracking(base_tracking: f32, animators: &[TextAnimatorSpec], ti
 fn resolve_text_paint(fill: [u8; 4], effects: &[EffectSpec]) -> TextPaintStyle {
     let extension = effects.iter().find_map(TextPaintSpec::from_effect);
     TextPaintStyle {
-        fill: extension
-            .as_ref()
-            .and_then(|paint| paint.fill)
-            .unwrap_or(fill),
+        fill: match extension.as_ref() {
+            Some(paint) if !paint.fill_enabled => [0, 0, 0, 0],
+            Some(paint) => paint.fill.unwrap_or(fill),
+            None => fill,
+        },
         stroke_color: extension.as_ref().and_then(|paint| paint.stroke_color),
         stroke_width: extension
             .as_ref()
@@ -5205,6 +5206,21 @@ mod tests {
         assert_eq!(paint.stroke_color, Some([10, 20, 30, 255]));
         assert_eq!(paint.stroke_width, 5.0);
         assert!(!paint.stroke_over_fill);
+    }
+
+    #[test]
+    fn text_paint_can_explicitly_disable_fill_for_hollow_outline_layers() {
+        let effects = vec![EffectSpec {
+            match_name: TEXT_PAINT_MATCH_NAME.to_string(),
+            params: json!({
+                "fill_enabled": false,
+                "stroke_color": [255, 255, 255, 255],
+                "stroke_width": 5.0
+            }),
+        }];
+        let paint = resolve_text_paint([240, 241, 242, 255], &effects);
+        assert_eq!(paint.fill, [0, 0, 0, 0]);
+        assert_eq!(paint.stroke_color, Some([255, 255, 255, 255]));
     }
 
     #[test]

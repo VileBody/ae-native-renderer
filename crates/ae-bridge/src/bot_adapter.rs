@@ -376,6 +376,7 @@ fn sanitize_times(times: Vec<f64>, duration: f64) -> Vec<f64> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::CapabilityStatus;
 
     #[test]
     fn scenes_payload_keeps_every_type_as_a_native_operation() {
@@ -466,6 +467,51 @@ mod tests {
             let report = crate::validate_payload(&request.generated_payload(), true);
             assert!(report.ok, "{mode}: {:#?}", report.errors);
             assert!(!report.has_unsupported(), "{mode}: {:#?}", report.findings);
+        }
+    }
+
+    #[test]
+    fn active_bot_modes_lower_without_required_capability_gaps() {
+        for (mode, segment_type) in [
+            ("impulse_2nd", "long"),
+            ("scenes_3rd", "TYPE_5"),
+            ("scenes_3rd_single_step", "TYPE_6"),
+            ("template_4th", "focus"),
+        ] {
+            let request = adapt_bot_envelope(
+                serde_json::from_value(json!({
+                    "subtitles_mode": mode,
+                    "composition": {"w": 1080, "h": 1920, "fps": 23.976, "dur": 1.0},
+                    "subtitle_payload": {
+                        "segments": [{
+                            "id": 1,
+                            "type": segment_type,
+                            "text": "одна сцена",
+                            "start": 0.0,
+                            "end": 1.0,
+                            "word_timings": [
+                                {"word": "одна", "start": 0.0, "end": 0.4},
+                                {"word": "сцена", "start": 0.4, "end": 1.0}
+                            ]
+                        }]
+                    }
+                }))
+                .unwrap(),
+            )
+            .unwrap();
+            let lowered = crate::lower_visual_operations(
+                &request.generated_payload(),
+                &request.comps_spec[0],
+            );
+            assert!(!lowered.layers.is_empty(), "{mode} produced no native layers");
+            assert!(
+                !lowered.findings.iter().any(|finding| {
+                    finding.status == CapabilityStatus::NotImplemented
+                        || finding.status == CapabilityStatus::Unsupported
+                }),
+                "{mode}: {:#?}",
+                lowered.findings
+            );
         }
     }
 }

@@ -820,6 +820,8 @@ fn import_text_layer(
         .and_then(Value::as_f64)
         .map(|value| value as f32);
     let char_styles = text_char_styles(&layer.text_data);
+    let mut effects = effects_of(layer);
+    effects.push(text_paint_effect(text_base));
     render_ir::Layer::Text {
         id: layer_id(layer),
         start,
@@ -848,7 +850,46 @@ fn import_text_layer(
         box_: Some(text_box_for(&transform, font_size, leading, &text, comp)),
         transform,
         text_animators: text_animators_of(layer),
-        effects: effects_of(layer),
+        effects,
+    }
+}
+
+fn text_paint_effect(text_base: &Value) -> render_ir::EffectSpec {
+    let fill_enabled = text_base
+        .get("applyFill")
+        .and_then(Value::as_bool)
+        .unwrap_or(true);
+    let stroke_enabled = text_base
+        .get("applyStroke")
+        .and_then(Value::as_bool)
+        .unwrap_or(false);
+    let fill = fill_enabled.then(|| {
+        color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255])
+    });
+    let stroke_color = stroke_enabled.then(|| {
+        color_value_to_rgba(text_base.get("strokeColor"), [0, 0, 0, 255])
+    });
+    let stroke_width = if stroke_enabled {
+        text_base
+            .get("strokeWidth")
+            .and_then(Value::as_f64)
+            .filter(|width| width.is_finite() && *width >= 0.0)
+            .unwrap_or(0.0) as f32
+    } else {
+        0.0
+    };
+    render_ir::EffectSpec {
+        match_name: render_ir::TEXT_PAINT_MATCH_NAME.to_string(),
+        params: json!(render_ir::TextPaintSpec {
+            fill,
+            fill_enabled,
+            stroke_color,
+            stroke_width,
+            stroke_over_fill: text_base
+                .get("strokeOverFill")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+        }),
     }
 }
 
@@ -1933,6 +1974,22 @@ mod color_management_tests {
                 (13, None, Some(120.0))
             ]
         );
+    }
+
+    #[test]
+    fn text_document_preserves_outline_only_paint() {
+        let effect = text_paint_effect(&json!({
+            "applyFill": false,
+            "applyStroke": true,
+            "strokeColor": [1.0, 1.0, 1.0],
+            "strokeWidth": 5,
+            "strokeOverFill": false
+        }));
+        let paint = render_ir::TextPaintSpec::from_effect(&effect).unwrap();
+        assert!(!paint.fill_enabled);
+        assert_eq!(paint.fill, None);
+        assert_eq!(paint.stroke_color, Some([255, 255, 255, 255]));
+        assert_eq!(paint.stroke_width, 5.0);
     }
 
     #[test]

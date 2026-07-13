@@ -1189,6 +1189,7 @@ fn lower_trendy(operation: &VisualOperation, comp: &CompSpec) -> Option<VisualLo
                         params: json!({
                             "text_paint": TextPaintSpec {
                                 fill: Some(fill),
+                                fill_enabled: true,
                                 stroke_color: Some([0, 0, 0, 255]),
                                 stroke_width: 5.0,
                                 stroke_over_fill: false,
@@ -1473,6 +1474,7 @@ fn lower_bot_subtitles(
                         match_name: "ANR Text Paint".to_string(),
                         params: json!(TextPaintSpec {
                             fill: Some([0, 0, 0, 0]),
+                            fill_enabled: true,
                             stroke_color: Some([255, 255, 255, 255]),
                             stroke_width: 5.0,
                             stroke_over_fill: false,

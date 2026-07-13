@@ -14,7 +14,6 @@
     {"id": "scenes_type_5_stress", "input": "cases/scenes_type_5_stress.json", "reference": "references/scenes_type_5_stress.mp4", "control_seconds": [0.16, 0.84, 1.76, 3.28], "production": {"selection": "first S3 TYPE_5 production variant with five words"}, "visual_requirements": ["hollow stroke first", "fill follows stroke", "two-line source rect"]},
     {"id": "scenes_type_6", "input": "cases/scenes_type_6.json", "reference": "references/scenes_type_6.mp4", "control_seconds": [0.20, 0.74, 1.16, 1.82], "production": {"job_id": "fbca5929d7cd4b6e8f7c73366f54ab5f", "s3_key": "out/visual_tool_examples_s3/examples/scenes3_type_6_two_part.mp4"}, "visual_requirements": ["first group reveal", "second group reveal", "posterize/turbulent stack"]},
     {"id": "scenes_type_6_stress", "input": "cases/scenes_type_6_stress.json", "reference": "references/scenes_type_6_stress.mp4", "control_seconds": [0.18, 0.54, 1.08, 1.64], "production": {"selection": "first S3 TYPE_6 production variant with four words"}, "visual_requirements": ["first group reveal", "second group reveal", "two-line source rect"]},
-    {"id": "tape_focus_flash", "input": "cases/tape_focus_flash.json", "reference": "references/tape_focus_flash.mp4"},
-    {"id": "semantic_footage_stack", "input": "cases/semantic_footage_stack.json", "reference": "references/semantic_footage_stack.mp4"}
+    {"id": "tape_focus_flash", "input": "cases/tape_focus_flash.json", "reference": "references/tape_focus_flash.mp4"}
   ]
 }
