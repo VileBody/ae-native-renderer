@@ -10,6 +10,7 @@ pub struct F3Stylize;
 enum StylizeMode {
     BlackWhite,
     NightVision,
+    Wave,
     Extract,
     Xerox,
     NeonExtract,
@@ -29,6 +30,7 @@ impl StylizeMode {
                 Self::BlackWhite
             }
             "night_vision" | "nightvision" => Self::NightVision,
+            "wave" | "wave_warp" => Self::Wave,
             "xerox" => Self::Xerox,
             "neon" | "neon_extract" => Self::NeonExtract,
             "old_camera" | "oldcamera" | "film" => Self::OldCamera,
@@ -88,6 +90,7 @@ impl Effect for F3Stylize {
                         black_white_pixel(source, magentas, tint_enabled, tint_black)
                     }
                     StylizeMode::NightVision => night_vision_pixel(source, x, y, ctx.time, amount),
+                    StylizeMode::Wave => wave_pixel(input, x, y, ctx.time, params),
                     StylizeMode::Extract => extract_pixel(source, threshold, softness, amount),
                     StylizeMode::Xerox => {
                         xerox_pixel(input, x, y, source, threshold, softness, amount)
@@ -106,6 +109,18 @@ impl Effect for F3Stylize {
             });
         Ok(output)
     }
+}
+
+fn wave_pixel(input: &Canvas, x: usize, y: usize, time: f64, params: &Value) -> [u8; 4] {
+    let height = param_f32_at_any(params, &["height", "wave_height"], time, 2.0);
+    let width = param_f32_at_any(params, &["width", "wave_width"], time, 125.4).max(1.0);
+    let speed = param_f32_at_any(params, &["speed", "wave_speed"], time, -0.62);
+    let phase = y as f32 / width * std::f32::consts::TAU + time as f32 * speed;
+    rgba_at(
+        input,
+        (x as f32 + phase.sin() * height).round() as i32,
+        y as i32,
+    )
 }
 
 fn night_vision_pixel(source: [u8; 4], x: usize, y: usize, time: f64, amount: f32) -> [u8; 4] {

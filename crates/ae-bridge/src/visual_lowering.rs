@@ -606,6 +606,7 @@ fn lower_f3(
         "blackwhite",
         "crystal_glow",
         "night_vision",
+        "wave",
     ] {
         if f3_has_effect(operation, effect_id) {
             append_lowering(
@@ -885,6 +886,20 @@ fn lower_native_f3_effect(
                 EffectSpec {
                     match_name: "ADBE Geometry2".to_string(),
                     params: json!({"scale_width":115.0, "scale_height":115.0}),
+                },
+            ],
+            "wave" => vec![
+                EffectSpec {
+                    match_name: "ANR F3 Stylize".to_string(),
+                    params: json!({"mode":"wave", "height":2.0, "width":125.4, "speed":-0.62}),
+                },
+                EffectSpec {
+                    match_name: "ADBE Turbulent Displace".to_string(),
+                    params: json!({"amount":4.0, "size":1000.0, "evolution":1.97}),
+                },
+                EffectSpec {
+                    match_name: "ADBE Geometry2".to_string(),
+                    params: json!({"scale_width":103.0, "scale_height":103.0}),
                 },
             ],
             "xerox" | "neon_extract" | "old_camera" => vec![EffectSpec {
@@ -3131,6 +3146,7 @@ mod tests {
             "blackwhite",
             "crystal_glow",
             "night_vision",
+            "wave",
         ] {
             let mut payload = payload("hook.f3.effect.v1", json!([]));
             payload.visual_ops[0].params = json!({

@@ -2034,6 +2034,7 @@ fn f3_all_effects_are_native(operation: &VisualOperation) -> bool {
                     | "blackwhite"
                     | "crystal_glow"
                     | "night_vision"
+                    | "wave"
             )
         })
 }
