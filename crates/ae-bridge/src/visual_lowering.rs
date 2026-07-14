@@ -604,6 +604,7 @@ fn lower_f3(
         "neon_extract",
         "old_camera",
         "blackwhite",
+        "crystal_glow",
     ] {
         if f3_has_effect(operation, effect_id) {
             append_lowering(
@@ -846,6 +847,31 @@ fn lower_native_f3_effect(
                     "tint_black": [0.0078160008, 0.006920415, 0.019607844, 1.0]
                 }),
             }],
+            // Production: Sharpen(50) -> Gaussian Blur(2) -> Sapphire S_Glint
+            // (brightness .8, threshold .4, size 240). Native Glow has no star
+            // streak kernel, so two ordered highlight blooms preserve the look.
+            "crystal_glow" => vec![
+                EffectSpec {
+                    match_name: "ADBE Gaussian Blur 2".to_string(),
+                    params: json!({"blurriness": 2.0, "repeat_edge_pixels": false}),
+                },
+                EffectSpec {
+                    match_name: "ADBE Glo2".to_string(),
+                    params: json!({
+                        "based_on": "color channels", "threshold": 102.0,
+                        "radius": 18.0, "intensity": 0.8, "operation": "add",
+                        "composite_original": "on top"
+                    }),
+                },
+                EffectSpec {
+                    match_name: "ADBE Glo2".to_string(),
+                    params: json!({
+                        "based_on": "color channels", "threshold": 102.0,
+                        "radius": 96.0, "intensity": 0.32, "operation": "add",
+                        "composite_original": "on top"
+                    }),
+                },
+            ],
             "xerox" | "neon_extract" | "old_camera" => vec![EffectSpec {
                 match_name: "ANR F3 Stylize".to_string(),
                 params: json!({
@@ -2989,6 +3015,20 @@ mod tests {
     }
 
     #[test]
+    fn crystal_glow_keeps_the_production_blur_then_two_glow_passes() {
+        let mut payload = payload("hook.f3.effect.v1", json!([]));
+        payload.visual_ops[0].params = json!({"detected_effect_ids":["crystal_glow"]});
+        let result = lower_visual_operations(&payload, &comp());
+        let Layer::Adjustment { effects, .. } = &result.layers[0].layer else {
+            panic!("expected crystal glow adjustment");
+        };
+        assert_eq!(effects.len(), 3);
+        assert_eq!(effects[0].match_name, "ADBE Gaussian Blur 2");
+        assert_eq!(effects[1].match_name, "ADBE Glo2");
+        assert_eq!(effects[2].params["radius"], json!(96.0));
+    }
+
+    #[test]
     fn f1_f2_f4_and_f5_have_native_visual_lowerings() {
         let mut f1 = payload("hook.f1.sound.v1", json!([]));
         f1.visual_ops[0].timing.start = Some(1.0);
@@ -3074,6 +3114,7 @@ mod tests {
             "neon_extract",
             "old_camera",
             "blackwhite",
+            "crystal_glow",
         ] {
             let mut payload = payload("hook.f3.effect.v1", json!([]));
             payload.visual_ops[0].params = json!({

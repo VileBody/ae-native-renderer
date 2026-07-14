@@ -2032,6 +2032,7 @@ fn f3_all_effects_are_native(operation: &VisualOperation) -> bool {
                     | "neon_extract"
                     | "old_camera"
                     | "blackwhite"
+                    | "crystal_glow"
             )
         })
 }
