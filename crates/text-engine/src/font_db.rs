@@ -25,6 +25,7 @@ impl FontDb {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub enum FontResolutionSource {
     DirectPath,
+    UserFont,
     FixtureAsset,
     FontConfig,
     CommonFallback,
@@ -58,6 +59,10 @@ pub fn resolve_font_with_telemetry(font_id: &str) -> FontResolutionTelemetry {
         );
     }
 
+    if let Some(resolution) = resolve_exact_user_font(font_id) {
+        return resolution;
+    }
+
     if let Some(resolution) = resolve_known_fixture_font(font_id) {
         return resolution;
     }
@@ -87,6 +92,28 @@ pub fn resolve_font_with_telemetry(font_id: &str) -> FontResolutionTelemetry {
         fallback: true,
         source: FontResolutionSource::Missing,
     }
+}
+
+fn resolve_exact_user_font(font_id: &str) -> Option<FontResolutionTelemetry> {
+    let normalized = normalized_font_name(font_id);
+    let file_names: &[&str] = match normalized.as_str() {
+        // AE projects in this corpus refer to the PostScript name. Prefer the
+        // installed OTF that AE itself resolves over our older conformance TTF
+        // fixture; callers can always provide a direct asset path to pin it.
+        "pointlight" | "point" => &["PointLight.otf", "Point-Light.otf"],
+        _ => return None,
+    };
+    let home = std::env::var_os("HOME")?;
+    let path = file_names
+        .iter()
+        .map(|file_name| PathBuf::from(&home).join("Library/Fonts").join(file_name))
+        .find(|path| path.exists())?;
+    Some(resolution_from_path(
+        font_id,
+        path,
+        FontResolutionSource::UserFont,
+        false,
+    ))
 }
 
 static FONT_CACHE: OnceLock<Mutex<HashMap<String, Arc<Font>>>> = OnceLock::new();
@@ -381,14 +408,25 @@ mod tests {
     }
 
     #[test]
-    fn point_light_family_resolution_uses_local_fixture_when_available() {
-        let Some(path) = point_light_fixture() else {
+    fn point_light_family_resolution_prefers_installed_ae_face() {
+        let user_font = std::env::var_os("HOME")
+            .map(PathBuf::from)
+            .map(|home| home.join("Library/Fonts/PointLight.otf"));
+        let expected = user_font
+            .as_ref()
+            .filter(|path| path.exists())
+            .cloned()
+            .or_else(point_light_fixture);
+        let Some(path) = expected else {
             return;
         };
         let resolution = resolve_font_with_telemetry("Point-Light");
 
         assert_eq!(resolution.resolved_path.as_deref(), Some(path.as_path()));
-        assert_eq!(resolution.source, FontResolutionSource::FixtureAsset);
+        assert!(matches!(
+            resolution.source,
+            FontResolutionSource::UserFont | FontResolutionSource::FixtureAsset
+        ));
         assert!(!resolution.fallback);
     }
 

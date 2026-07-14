@@ -3426,8 +3426,8 @@ fn record_text_selector_trace(
             );
             let expression = text_expression_weight_detail(
                 animator.expression_selector.as_ref(),
-                unit.index,
-                unit.total,
+                unit.expression_index,
+                unit.expression_total,
                 time,
                 layer_start,
             );
@@ -3437,6 +3437,8 @@ fn record_text_selector_trace(
                 "selector_index": selector_index,
                 "selector_position_percent": selector_position_percent,
                 "total": unit.total,
+                "expression_index": unit.expression_index,
+                "expression_total": unit.expression_total,
                 "rect": [unit.x0, unit.y0, unit.x1, unit.y1],
                 "range_weight": range_weight,
                 "expression_weight": expression.weight,
@@ -3882,6 +3884,8 @@ struct UnitRect {
     y1: u32,
     index: usize,
     total: usize,
+    expression_index: usize,
+    expression_total: usize,
 }
 
 fn apply_unit_animator_transform(
@@ -3912,8 +3916,8 @@ fn apply_unit_animator_transform(
         );
         let expression_weight = text_expression_weight(
             animator.expression_selector.as_ref(),
-            unit.index,
-            unit.total,
+            unit.expression_index,
+            unit.expression_total,
             time,
             layer_start,
         );
@@ -3975,9 +3979,13 @@ fn text_expression_weight_detail(
             let t = (time - layer_start) as f32 - *delay * text_index;
             if t < 0.0 {
                 return TextExpressionWeightDetail {
-                    weight: 0.0,
-                    raw_amount: Some(0.0),
-                    clamped_amount: Some(0.0),
+                    // An Expression Selector's Amount starts at its native
+                    // value (100) before the generated expression reaches
+                    // its per-character delay. With this animator that means
+                    // the character is still under the zero-opacity state.
+                    weight: 1.0,
+                    raw_amount: Some(100.0),
+                    clamped_amount: Some(100.0),
                     local_time_after_delay: Some(t),
                     text_index: Some(index + 1),
                     text_total: total,
@@ -3985,7 +3993,11 @@ fn text_expression_weight_detail(
             }
             let amount =
                 *amplitude * (freq * t * 2.0 * std::f32::consts::PI).cos() / (*decay * t).exp();
-            let weight = (amount / 100.0).clamp(-2.0, 2.0);
+            // The selector Amount is bounded by AE's 0..100 range. In
+            // particular, the negative half of the cosine must restore the
+            // base glyph; applying it as a negative transform mirrors and
+            // over-amplifies characters in the Impulse template.
+            let weight = (amount / 100.0).clamp(0.0, 1.0);
             TextExpressionWeightDetail {
                 weight,
                 raw_amount: Some(amount),
@@ -4214,24 +4226,93 @@ fn draw_transformed_unit(
     unit_scale: f32,
 ) {
     let transform = animator_unit_transform(unit, animator, weight, unit_scale);
+    let matrix = transform.matrix.m;
+    let a = matrix[0][0];
+    let b = matrix[0][1];
+    let tx = matrix[0][2];
+    let c = matrix[1][0];
+    let d = matrix[1][1];
+    let ty = matrix[1][2];
+    let determinant = a * d - b * c;
+    if determinant.abs() <= f32::EPSILON {
+        return;
+    }
 
-    for y in unit.y0..unit.y1 {
-        for x in unit.x0..unit.x1 {
-            let mut pixel = input.pixel(x, y);
-            if pixel[3] == 0 {
+    // Forward splatting with rounded output pixels breaks thin Point-Light
+    // strokes as soon as the bounce applies a fractional transform. Rasterize
+    // the transformed unit backwards instead, so every destination pixel has
+    // one bilinear source sample.
+    let corners = [
+        Vec2::new(unit.x0 as f32, unit.y0 as f32),
+        Vec2::new(unit.x1 as f32, unit.y0 as f32),
+        Vec2::new(unit.x0 as f32, unit.y1 as f32),
+        Vec2::new(unit.x1 as f32, unit.y1 as f32),
+    ];
+    let mut min_x = f32::INFINITY;
+    let mut min_y = f32::INFINITY;
+    let mut max_x = f32::NEG_INFINITY;
+    let mut max_y = f32::NEG_INFINITY;
+    for corner in corners {
+        let point = transform.matrix.transform_point(corner);
+        min_x = min_x.min(point.x);
+        min_y = min_y.min(point.y);
+        max_x = max_x.max(point.x);
+        max_y = max_y.max(point.y);
+    }
+
+    // The later blur splat can legitimately bleed an out-of-frame glyph back
+    // onto the canvas, so retain an out-of-frame traversal margin.
+    let bleed_margin = transform.blur_radius.max(1) as f32;
+    let start_x = min_x.floor().max(-bleed_margin) as i32;
+    let start_y = min_y.floor().max(-bleed_margin) as i32;
+    let end_x = max_x.ceil().min(output.width as f32 + bleed_margin) as i32;
+    let end_y = max_y.ceil().min(output.height as f32 + bleed_margin) as i32;
+    for dy in start_y..end_y {
+        for dx in start_x..end_x {
+            let translated_x = dx as f32 - tx;
+            let translated_y = dy as f32 - ty;
+            let sx = (d * translated_x - b * translated_y) / determinant;
+            let sy = (-c * translated_x + a * translated_y) / determinant;
+            let Some(mut pixel) = sample_unit_bilinear(input, unit, sx, sy) else {
                 continue;
-            }
+            };
             pixel[3] = (pixel[3] as f32 * transform.alpha_scale)
                 .round()
                 .clamp(0.0, 255.0) as u8;
-            let p = transform
-                .matrix
-                .transform_point(Vec2::new(x as f32, y as f32));
-            let dx = p.x.round() as i32;
-            let dy = p.y.round() as i32;
+            if pixel[3] == 0 {
+                continue;
+            }
             splat_blurred_pixel(output, dx, dy, pixel, transform.blur_radius);
         }
     }
+}
+
+fn sample_unit_bilinear(input: &Canvas, unit: UnitRect, x: f32, y: f32) -> Option<[u8; 4]> {
+    if x < unit.x0 as f32 || y < unit.y0 as f32 || x >= unit.x1 as f32 || y >= unit.y1 as f32 {
+        return None;
+    }
+    let x0 = x.floor() as u32;
+    let y0 = y.floor() as u32;
+    let x1 = (x0 + 1).min(unit.x1.saturating_sub(1));
+    let y1 = (y0 + 1).min(unit.y1.saturating_sub(1));
+    let fx = x - x0 as f32;
+    let fy = y - y0 as f32;
+    let samples = [
+        (input.pixel(x0, y0), (1.0 - fx) * (1.0 - fy)),
+        (input.pixel(x1, y0), fx * (1.0 - fy)),
+        (input.pixel(x0, y1), (1.0 - fx) * fy),
+        (input.pixel(x1, y1), fx * fy),
+    ];
+    let mut pixel = [0_u8; 4];
+    for channel in 0..4 {
+        pixel[channel] = samples
+            .iter()
+            .map(|(sample, factor)| sample[channel] as f32 * factor)
+            .sum::<f32>()
+            .round()
+            .clamp(0.0, 255.0) as u8;
+    }
+    (pixel[3] > 0).then_some(pixel)
 }
 
 fn splat_blurred_pixel(output: &mut Canvas, x: i32, y: i32, pixel: [u8; 4], radius: i32) {
@@ -4301,13 +4382,25 @@ fn layout_character_unit_rects(
     text: &str,
     layout: &TextLayoutResult,
 ) -> Vec<UnitRect> {
+    let expression_indices = layout
+        .glyphs
+        .iter()
+        .filter(|glyph| glyph_char(text, glyph.char_index).is_some_and(|ch| !ch.is_whitespace()))
+        .map(|glyph| glyph.char_index)
+        .collect::<Vec<_>>();
     let rects = layout
         .glyphs
         .iter()
         .filter(|glyph| glyph_char(text, glyph.char_index).is_some_and(|ch| !ch.is_whitespace()))
         .map(|glyph| rect_from_bbox(canvas, glyph.bbox))
         .collect::<Vec<_>>();
-    with_unit_totals(rects)
+    let mut rects = with_unit_totals(rects);
+    let expression_total = text.chars().count();
+    for (rect, expression_index) in rects.iter_mut().zip(expression_indices) {
+        rect.expression_index = expression_index;
+        rect.expression_total = expression_total;
+    }
+    rects
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -4377,6 +4470,8 @@ fn rect_from_bbox(canvas: &Canvas, bbox: [f32; 4]) -> UnitRect {
         y1,
         index: 0,
         total: 0,
+        expression_index: 0,
+        expression_total: 0,
     }
 }
 
@@ -4385,6 +4480,8 @@ fn with_unit_totals(mut rects: Vec<UnitRect>) -> Vec<UnitRect> {
     for (index, rect) in rects.iter_mut().enumerate() {
         rect.index = index;
         rect.total = total;
+        rect.expression_index = index;
+        rect.expression_total = total;
     }
     rects
 }
@@ -4406,6 +4503,8 @@ fn line_unit_rects(canvas: &Canvas, text: &str) -> Vec<UnitRect> {
             y1: y1.min(canvas.height),
             index,
             total,
+            expression_index: index,
+            expression_total: total,
         });
     }
     units
@@ -4442,6 +4541,8 @@ fn inline_unit_rects(canvas: &Canvas, text: &str, mode: UnitMode) -> Vec<UnitRec
                 y1: y1.min(canvas.height),
                 index: global,
                 total,
+                expression_index: global,
+                expression_total: total,
             });
             global += 1;
         }
@@ -5020,6 +5121,53 @@ mod tests {
     }
 
     #[test]
+    fn text_animator_zero_opacity_does_not_leave_a_blur_trace() {
+        let mut canvas = Canvas::transparent(3, 1);
+        canvas.set_pixel(1, 0, [255, 255, 255, 255]);
+        let animator = TextAnimatorSpec {
+            name: "hidden".to_string(),
+            opacity: 0.0,
+            blur: Some([4.0, 4.0]),
+            selector: TextRangeSelector {
+                start: 0.0,
+                end: 100.0,
+                ..TextRangeSelector::default()
+            },
+            ..TextAnimatorSpec::default()
+        };
+
+        let animated =
+            apply_unit_animator_transform(&canvas, "A", None, &animator, 0.0, 100.0, 0.0, 0.0, 1.0);
+
+        assert!(
+            (0..animated.width).all(|x| animated.pixel(x, 0)[3] == 0),
+            "a fully hidden animator must not leave a blur splat"
+        );
+    }
+
+    #[test]
+    fn impulse_bounce_hides_future_characters_and_clamps_negative_half_wave() {
+        let selector = TextExpressionSelector::PerCharacterBounce {
+            delay: 0.05,
+            freq: 2.0,
+            amplitude: 100.0,
+            decay: 8.0,
+            source: "impulse fixture".to_string(),
+        };
+
+        let future = text_expression_weight_detail(Some(&selector), 0, 4, 0.0, 0.0);
+        assert_eq!(future.raw_amount, Some(100.0));
+        assert_eq!(future.weight, 1.0);
+
+        // First character has started, but the cosine is in its negative
+        // half-wave. AE's Amount bounds restore the base glyph here.
+        let negative = text_expression_weight_detail(Some(&selector), 0, 4, 0.30, 0.0);
+        assert!(negative.raw_amount.is_some_and(|amount| amount < 0.0));
+        assert_eq!(negative.clamped_amount, Some(0.0));
+        assert_eq!(negative.weight, 0.0);
+    }
+
+    #[test]
     fn selector_glyph_passport_maps_word_units_to_glyph_runs() {
         let layout = text_engine::layout_text_stub(&TextLayoutRequest {
             text: "Hi all".to_string(),
@@ -5079,6 +5227,41 @@ mod tests {
         assert_eq!(units[2].index, 2);
         assert_eq!(units[2].x0, canvas.width);
         assert_eq!(units[2].x1, canvas.width);
+    }
+
+    #[test]
+    fn impulse_expression_indices_include_whitespace_between_visible_glyphs() {
+        let canvas = Canvas::transparent(120, 40);
+        let layout = text_engine::layout_text_stub(&TextLayoutRequest {
+            text: "A B C".to_string(),
+            font_id: "missing".to_string(),
+            font_size: 10.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
+            tracking: 0.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: LayoutTextJustification::Center,
+            box_rect: Some([0.0, 0.0, 120.0, 40.0]),
+        });
+
+        let units = unit_rects(
+            &canvas,
+            "A B C",
+            Some(&layout),
+            render_ir::TextSelectorBasedOn::Characters,
+        );
+
+        assert_eq!(units.len(), 3);
+        assert_eq!(
+            units
+                .iter()
+                .map(|unit| unit.expression_index)
+                .collect::<Vec<_>>(),
+            vec![0, 2, 4]
+        );
+        assert!(units.iter().all(|unit| unit.expression_total == 5));
     }
 
     #[test]
@@ -5270,6 +5453,8 @@ mod tests {
             y1: 2,
             index: 0,
             total: 1,
+            expression_index: 0,
+            expression_total: 1,
         };
 
         let contribution = animator_contribution_json(unit, &animator, 1.0, 1.0);
