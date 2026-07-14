@@ -605,6 +605,7 @@ fn lower_f3(
         "old_camera",
         "blackwhite",
         "crystal_glow",
+        "night_vision",
     ] {
         if f3_has_effect(operation, effect_id) {
             append_lowering(
@@ -870,6 +871,20 @@ fn lower_native_f3_effect(
                         "radius": 96.0, "intensity": 0.32, "operation": "add",
                         "composite_original": "on top"
                     }),
+                },
+            ],
+            "night_vision" => vec![
+                EffectSpec {
+                    match_name: "ANR F3 Stylize".to_string(),
+                    params: json!({"mode":"night_vision", "amount":1.0}),
+                },
+                EffectSpec {
+                    match_name: "ADBE Gaussian Blur 2".to_string(),
+                    params: json!({"blurriness":5.0}),
+                },
+                EffectSpec {
+                    match_name: "ADBE Geometry2".to_string(),
+                    params: json!({"scale_width":115.0, "scale_height":115.0}),
                 },
             ],
             "xerox" | "neon_extract" | "old_camera" => vec![EffectSpec {
@@ -3115,6 +3130,7 @@ mod tests {
             "old_camera",
             "blackwhite",
             "crystal_glow",
+            "night_vision",
         ] {
             let mut payload = payload("hook.f3.effect.v1", json!([]));
             payload.visual_ops[0].params = json!({

@@ -9,6 +9,7 @@ pub struct F3Stylize;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StylizeMode {
     BlackWhite,
+    NightVision,
     Extract,
     Xerox,
     NeonExtract,
@@ -27,6 +28,7 @@ impl StylizeMode {
             "blackwhite" | "black_white" | "black-and-white" | "black_and_white" => {
                 Self::BlackWhite
             }
+            "night_vision" | "nightvision" => Self::NightVision,
             "xerox" => Self::Xerox,
             "neon" | "neon_extract" => Self::NeonExtract,
             "old_camera" | "oldcamera" | "film" => Self::OldCamera,
@@ -85,6 +87,7 @@ impl Effect for F3Stylize {
                     StylizeMode::BlackWhite => {
                         black_white_pixel(source, magentas, tint_enabled, tint_black)
                     }
+                    StylizeMode::NightVision => night_vision_pixel(source, x, y, ctx.time, amount),
                     StylizeMode::Extract => extract_pixel(source, threshold, softness, amount),
                     StylizeMode::Xerox => {
                         xerox_pixel(input, x, y, source, threshold, softness, amount)
@@ -103,6 +106,19 @@ impl Effect for F3Stylize {
             });
         Ok(output)
     }
+}
+
+fn night_vision_pixel(source: [u8; 4], x: usize, y: usize, time: f64, amount: f32) -> [u8; 4] {
+    let luma = luminance(source) / 255.0;
+    let frame = (time * 24.0).floor().max(0.0) as u32;
+    let grain = (hash_noise(x as u32, y as u32, frame) - 0.5) * 0.12 * amount;
+    let value = ((luma + grain).clamp(0.0, 1.0) * 255.0).round() as u8;
+    [
+        (value as f32 * 0.24).round() as u8,
+        value,
+        (value as f32 * 0.32).round() as u8,
+        source[3],
+    ]
 }
 
 fn black_white_pixel(
