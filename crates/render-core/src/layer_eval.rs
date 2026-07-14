@@ -1328,7 +1328,7 @@ fn render_layer_stub(
                         composition
                     );
                 }
-                let source_time = (layer_time - *start).max(0.0);
+                let source_time = precomp_source_time(comp, &node.composition, layer_time, *start);
                 let use_cache = trace
                     .as_ref()
                     .is_some_and(|trace| !trace.capture_effect_debug);
@@ -1458,7 +1458,7 @@ fn render_collapsed_precomp(
     }
     let node = composition_node(scene, composition)
         .ok_or_else(|| anyhow::anyhow!("precomp composition '{composition}' was not found"))?;
-    let source_time = (time - *start).max(0.0);
+    let source_time = precomp_source_time(parent_comp, &node.composition, time, *start);
     let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
     let parent_matrix = transform_to_matrix(&evaluated).matrix();
     record_transform_sampling_trace(
@@ -1733,7 +1733,7 @@ fn render_layer_with_parent_matrix(
             let node = composition_node(scene, composition).ok_or_else(|| {
                 anyhow::anyhow!("precomp composition '{composition}' was not found")
             })?;
-            let source_time = (time - *start).max(0.0);
+            let source_time = precomp_source_time(parent_comp, &node.composition, time, *start);
             let evaluated = evaluate_transform(transform, time, *start, *duration, parent_comp.fps);
             record_transform_sampling_trace(
                 trace.as_deref_mut(),
@@ -1826,6 +1826,25 @@ fn can_collapse_composition(scene: &Scene, composition: &str, stack: &[String]) 
             Layer::Footage { .. } | Layer::Adjustment { .. } => false,
         }
     })
+}
+
+fn precomp_source_time(
+    parent: &Composition,
+    child: &Composition,
+    parent_time: f64,
+    layer_start: f64,
+) -> f64 {
+    // JSX exports the subtitle master comp and its nested text precomps with
+    // the same global timeline duration as their parent. Their child keyframes
+    // therefore remain in composition time, even when an individual precomp
+    // starts later (the TYPE_4 red hook is the clearest example). Ordinary
+    // shorter precomps retain AE's local layer-time sampling.
+    let frame = 1.0 / parent.fps.max(1.0);
+    if (child.duration - parent.duration).abs() <= frame {
+        parent_time.max(0.0)
+    } else {
+        (parent_time - layer_start).max(0.0)
+    }
 }
 
 fn composition_node<'a>(
@@ -4048,7 +4067,10 @@ struct AnimatorUnitTransform {
 
 const TEXT_ANIMATOR_BLUR_RADIUS_LIMIT: i32 = 128;
 const TEXT_ANIMATOR_MIN_VISIBLE_UNIT_EXTENT_PX: f32 = 30.0;
-const IMPULSE_BOUNCE_BLUR_GAIN: f32 = 0.5;
+// The AE Impulse template carries a Text Blur animator, but applying it to a
+// tiny incoming glyph makes the native raster collapse into dots. Keep the
+// scale/rotation bounce and leave the text edge crisp.
+const IMPULSE_BOUNCE_BLUR_GAIN: f32 = 0.0;
 
 fn animator_unit_transform(
     unit: UnitRect,
@@ -5076,6 +5098,34 @@ mod tests {
     }
 
     #[test]
+    fn full_duration_subtitle_precomp_uses_global_composition_time() {
+        let parent = Composition {
+            id: "root".to_string(),
+            width: 1080,
+            height: 1920,
+            fps: 24.0,
+            duration: 44.0,
+            background: [0, 0, 0, 0],
+            motion_blur: render_ir::MotionBlurSettings::default(),
+        };
+        let child = Composition {
+            id: "subtitle-master".to_string(),
+            ..parent.clone()
+        };
+        assert_eq!(precomp_source_time(&parent, &child, 22.94, 22.8), 22.94);
+
+        let local_child = Composition {
+            id: "short-precomp".to_string(),
+            duration: 2.0,
+            ..parent.clone()
+        };
+        assert_close(
+            precomp_source_time(&parent, &local_child, 22.94, 22.8),
+            0.14,
+        );
+    }
+
+    #[test]
     fn text_animator_position_moves_character_unit() {
         let mut canvas = Canvas::transparent(4, 1);
         canvas.set_pixel(0, 0, [255, 255, 255, 255]);
@@ -5132,7 +5182,7 @@ mod tests {
             }),
             ..animator
         };
-        assert_eq!(text_animator_blur_radius(&impulse_bounce, 1.0, 1.0), 5);
+        assert_eq!(text_animator_blur_radius(&impulse_bounce, 1.0, 1.0), 0);
     }
 
     #[test]

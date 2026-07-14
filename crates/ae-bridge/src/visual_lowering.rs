@@ -98,7 +98,50 @@ pub fn lower_visual_operations(
             });
         }
     }
+    lower_implicit_impulse_flash(payload, main_comp, &mut result);
     result
+}
+
+fn lower_implicit_impulse_flash(
+    payload: &GeneratedPayload,
+    comp: &CompSpec,
+    result: &mut VisualLoweringResult,
+) {
+    if payload.project_spec.subtitles_mode.as_deref() != Some("impulse_2nd")
+        || payload
+            .visual_ops
+            .iter()
+            .any(|operation| f3_has_effect(operation, "flash_on_cuts"))
+    {
+        return;
+    }
+
+    // Raw JSX requests do not carry bot_adapter's generated F3 operation.
+    // Recreate the template's cut flash from the imported footage timeline.
+    let operation = VisualOperation {
+        id: Some("implicit_impulse_flash_on_cuts".to_string()),
+        kind: "hook.f3.effect.v1".to_string(),
+        target: Default::default(),
+        timing: Default::default(),
+        params: json!({"detected_effect_ids": ["flash_on_cuts"]}),
+        assets: Vec::new(),
+        required: false,
+    };
+    let Some(mut lowered) = lower_flash_on_cuts(&operation, comp, payload) else {
+        return;
+    };
+    // Direct JSX puts the subtitle master precomp at the top (z=1) and
+    // footage below it (z>=100). Keep the flash in between those two stacks.
+    for layer in &mut lowered.layers {
+        layer.sort_key += 1_000_000;
+    }
+    result.layers.append(&mut lowered.layers);
+    result.findings.push(CapabilityFinding {
+        status: CapabilityStatus::Approximate,
+        feature: "lower.implicit_impulse_flash_on_cuts".to_string(),
+        layer: Some("implicit_impulse_flash_on_cuts".to_string()),
+        detail: "raw impulse JSX did not expose visualOps; flash_on_cuts was reconstructed from footage boundaries".to_string(),
+    });
 }
 
 fn lower_brat(operation: &VisualOperation, comp: &CompSpec) -> Option<VisualLoweringResult> {
@@ -2683,6 +2726,28 @@ mod tests {
         assert_eq!(*blend_mode, BlendMode::Add);
         assert_eq!(transform.opacity, 40.0);
         assert_eq!(transform.animation.opacity[1].value, 0.0);
+    }
+
+    #[test]
+    fn raw_impulse_jsx_reconstructs_flash_without_visual_ops() {
+        let mut payload = payload("unused", json!([]));
+        payload.visual_ops.clear();
+        payload.project_spec.subtitles_mode = Some("impulse_2nd".to_string());
+        payload.footage_layers = vec![layer(
+            "clip.mp4",
+            "footage",
+            1.0,
+            json!({"source_footage":{"file_name":"clip.mp4"}}),
+        )];
+
+        let result = lower_visual_operations(&payload, &comp());
+        assert_eq!(result.layers.len(), 1);
+        assert_eq!(result.layers[0].sort_key, 500_000);
+        assert!(matches!(result.layers[0].layer, Layer::Solid { .. }));
+        assert!(result
+            .findings
+            .iter()
+            .any(|finding| finding.feature == "lower.implicit_impulse_flash_on_cuts"));
     }
 
     #[test]

@@ -927,7 +927,12 @@ fn import_text_layer(
         .get("leading")
         .and_then(Value::as_f64)
         .map(|value| value as f32);
-    let char_styles = text_char_styles(&layer.text_data);
+    let mut char_styles = text_char_styles(&layer.text_data);
+    fit_sparse_point_styles_to_hard_lines(
+        &mut char_styles,
+        text_base.get("font").and_then(Value::as_str),
+        &text,
+    );
     let mut effects = effects_of(layer);
     effects.push(text_paint_effect(text_base));
     render_ir::Layer::Text {
@@ -1047,6 +1052,27 @@ fn text_char_styles(text_data: &Value) -> Vec<render_ir::TextCharStyle> {
             )
         })
         .collect()
+}
+
+fn fit_sparse_point_styles_to_hard_lines(
+    styles: &mut [render_ir::TextCharStyle],
+    base_font: Option<&str>,
+    text: &str,
+) {
+    // The Point SemiBold JSX scenes keep their intended two hard lines, but
+    // CoolType's width is slightly narrower than fontdue's. The sparse 120px
+    // focus spans can otherwise force a third line in Rust. Only cap those
+    // oversized spans when an explicit line is long enough to need the fit.
+    let needs_fit =
+        base_font == Some("Point-SemiBold") && text.lines().any(|line| line.chars().count() >= 14);
+    if !needs_fit {
+        return;
+    }
+    for style in styles {
+        if style.font.as_deref() == Some("Point-SemiBold") {
+            style.font_size = style.font_size.map(|size| size.min(110.0));
+        }
+    }
 }
 
 fn normalize_ae_line_breaks(text: &str) -> String {
@@ -2145,6 +2171,36 @@ mod color_management_tests {
         assert_eq!(styles.len(), 1);
         assert_eq!(styles[0].index, 3);
         assert_eq!(styles[0].fill, Some([229, 21, 21, 255]));
+    }
+
+    #[test]
+    fn long_point_semibold_hard_line_caps_sparse_focus_size() {
+        let mut styles = vec![render_ir::TextCharStyle {
+            index: 8,
+            font: Some("Point-SemiBold".to_string()),
+            font_size: Some(120.0),
+            fill: None,
+            faux_italic: false,
+        }];
+        fit_sparse_point_styles_to_hard_lines(
+            &mut styles,
+            Some("Point-SemiBold"),
+            "ТЕБЕ НЕ\nПЛАТЯТ ПРОЦЕНТЫ",
+        );
+        assert_eq!(styles[0].font_size, Some(110.0));
+    }
+
+    #[test]
+    fn short_point_semibold_line_keeps_sparse_focus_size() {
+        let mut styles = vec![render_ir::TextCharStyle {
+            index: 0,
+            font: Some("Point-SemiBold".to_string()),
+            font_size: Some(120.0),
+            fill: None,
+            faux_italic: false,
+        }];
+        fit_sparse_point_styles_to_hard_lines(&mut styles, Some("Point-SemiBold"), "СЕН-ЛОРАНЕ");
+        assert_eq!(styles[0].font_size, Some(120.0));
     }
 
     #[test]
