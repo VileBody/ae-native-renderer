@@ -170,7 +170,7 @@ pub fn rasterize_text_with_layout_and_paint(
         // Fontdue preserves their complete Latin and Cyrillic contours.
         let glyph_use_outline_backend = !matches!(
             glyph_resolution.resolved_postscript_name.as_deref(),
-            Some("Montserrat-Bold") | Some("ArialNarrow")
+            Some("Montserrat-Bold") | Some("Montserrat-BoldItalic") | Some("ArialNarrow")
         );
         let glyph_font_key = glyph_resolution
             .resolved_path
@@ -2137,6 +2137,37 @@ mod tests {
             let index = ((y as u32 * canvas.width + left_quarter as u32) * 4 + 3) as usize;
             canvas.data[index] > 0
         }));
+    }
+
+    #[test]
+    fn montserrat_bolditalic_uses_complete_fontdue_cyrillic_glyphs() {
+        let Some(path) = montserrat_bolditalic_fixture() else {
+            return;
+        };
+        let req = TextLayoutRequest {
+            text: "ПРИЛОЖИЛИ".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 96.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
+            tracking: -25.0,
+            leading: None,
+            center_source_rect_y: false,
+            justification: crate::TextJustification::Center,
+            box_rect: Some([0.0, 0.0, 972.0, 286.0]),
+        };
+        let layout = layout_text(&req).unwrap();
+        let (canvas, trace) =
+            rasterize_text_with_layout(&req, &layout, 972, 286, [255, 255, 255, 255]).unwrap();
+
+        assert_eq!(trace.coverage_backend, "fontdue_rasterize_indexed_fallback");
+        assert!(trace
+            .draw_chars
+            .iter()
+            .filter(|glyph| glyph.character == "Л")
+            .all(|glyph| glyph.coverage_nonzero_pixels > 0));
+        assert!(canvas.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]
