@@ -1,0 +1,67 @@
+name: Release Rust Gen Manager
+
+on:
+  push:
+    branches: ["codex/rust-visual-repro-v2", "main"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: rust-gen-release-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  image:
+    runs-on: ubuntu-latest
+    outputs:
+      image: ghcr.io/${{ github.repository_owner }}/ae-native-renderer@${{ steps.image.outputs.digest }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: docker/setup-buildx-action@v3
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+      - name: Manager unit tests
+        run: cargo test -p render-manager
+      - id: image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: true
+          tags: ghcr.io/${{ github.repository_owner }}/ae-native-renderer:${{ github.sha }}
+          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/ae-native-renderer,push-by-digest=true,name-canonical=true,push=true
+
+  deploy:
+    needs: image
+    if: ${{ vars.RUST_GEN_DEPLOY_ENABLED == 'true' }}
+    runs-on: ubuntu-latest
+    environment: rust-gen-production
+    steps:
+      - uses: actions/checkout@v4
+      - name: Configure SSH key
+        env:
+          SSH_KEY: ${{ secrets.RUST_GEN_DEPLOY_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$SSH_KEY" > ~/.ssh/rust_gen
+          chmod 600 ~/.ssh/rust_gen
+      - name: Deploy immutable manager image
+        env:
+          RUST_GEN_DEPLOY_HOST: ${{ vars.RUST_GEN_DEPLOY_HOST }}
+          RUST_GEN_DEPLOY_USER: ${{ vars.RUST_GEN_DEPLOY_USER }}
+          RUST_GEN_MANAGER_TOKEN: ${{ secrets.RUST_GEN_MANAGER_TOKEN }}
+          RUST_GEN_REGISTRY_TOKEN: ${{ secrets.RUST_GEN_REGISTRY_TOKEN }}
+          RUST_GEN_REGISTRY_USER: ${{ github.actor }}
+          RUST_GEN_MANAGER_IMAGE: ${{ needs.image.outputs.image }}
+          RUST_GEN_RENDERER_IMAGE: ${{ needs.image.outputs.image }}
+          RUST_GEN_SSH_KEY_PATH: ~/.ssh/rust_gen
+        run: |
+          set -euo pipefail
+          export RUST_GEN_DEPLOY_PORT="${RUST_GEN_DEPLOY_PORT:-22}"
+          scripts/deploy_rust_gen_manager.sh

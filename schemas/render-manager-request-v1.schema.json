@@ -1,0 +1,72 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ae-native-renderer.manager-request.v1",
+  "title": "Rust Gen Manager Render Request v1",
+  "type": "object",
+  "required": ["schema", "job_id", "input"],
+  "properties": {
+    "schema": { "const": "ae-native-renderer.manager-request.v1" },
+    "job_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+    "render_id": { "type": "string", "pattern": "^[A-Za-z0-9._-]{1,128}$" },
+    "input": {
+      "type": "object",
+      "required": ["kind"],
+      "properties": {
+        "kind": { "enum": ["native_request", "bot_payload"] },
+        "inline": {},
+        "url": { "type": "string", "pattern": "^https?://" },
+        "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" }
+      },
+      "oneOf": [{ "required": ["inline"] }, { "required": ["url"] }],
+      "additionalProperties": false
+    },
+    "assets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["role", "url", "destination"],
+        "properties": {
+          "role": { "type": "string", "minLength": 1 },
+          "url": { "type": "string", "pattern": "^https?://" },
+          "destination": { "type": "string", "pattern": "^(?!/)(?!.*(^|/)\\.\\.(/|$)).+" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+          "optional": { "type": "boolean", "default": false }
+        },
+        "additionalProperties": false
+      },
+      "default": []
+    },
+    "uploads": { "$ref": "#/$defs/uploads" },
+    "limits": {
+      "type": "object",
+      "properties": {
+        "timeout_s": { "type": "integer", "minimum": 1 },
+        "memory": { "type": "string", "minLength": 1 },
+        "cpus": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    }
+  },
+  "$defs": {
+    "upload": {
+      "type": "object",
+      "required": ["url", "artifact_ref"],
+      "properties": {
+        "url": { "type": "string", "pattern": "^https?://" },
+        "artifact_ref": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "uploads": {
+      "type": "object",
+      "properties": {
+        "video": { "$ref": "#/$defs/upload" },
+        "manifest": { "$ref": "#/$defs/upload" },
+        "response": { "$ref": "#/$defs/upload" },
+        "logs": { "$ref": "#/$defs/upload" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false
+}

@@ -16,7 +16,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 WORKDIR /app
 COPY . .
-RUN cargo build --release -p render-cli
+RUN cargo build --release -p render-cli -p render-manager
 
 FROM debian:bookworm-slim AS runtime
 
@@ -35,9 +35,12 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     libfreetype6 \
     libharfbuzz0b \
     fontconfig \
+    curl \
+    podman \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /work
 COPY --from=builder /app/target/release/render-cli /usr/local/bin/render-cli
+COPY --from=builder /app/target/release/render-manager /usr/local/bin/render-manager
 
 ENTRYPOINT ["render-cli"]

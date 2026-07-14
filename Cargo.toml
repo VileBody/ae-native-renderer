@@ -11,7 +11,8 @@ members = [
   "crates/expression-engine",
   "crates/effects",
   "crates/ae-bridge",
-  "crates/testkit"
+  "crates/testkit",
+  "crates/render-manager"
 ]
 
 [workspace.package]
@@ -33,3 +34,5 @@ fontdue = "0.9"
 ttf-parser = "0.21.1"
 rustybuzz = "0.20.1"
 rayon = "1.10"
+axum = { version = "0.8", features = ["json"] }
+tokio = { version = "1.44", features = ["macros", "rt-multi-thread", "process", "fs", "sync", "time"] }
