@@ -695,13 +695,14 @@ fn lower_native_f3_effect(
         }
         let end = window_start + duration;
         if effect_id == "hook_light" {
-            result.layers.push(light_flash_layer(
-                format!("visual_f3_hook_light_{index:04}"),
-                window_start,
-                duration,
-                comp,
-                -500_360 + index as i64,
-            ));
+            append_lowering(
+                &mut result,
+                lower_hook_light(
+                    comp,
+                    window_start,
+                    format!("visual_f3_hook_light_{index:04}"),
+                ),
+            );
             continue;
         }
 
@@ -935,6 +936,60 @@ fn lower_native_f3_effect(
             detail: format!("{effect_id} lowered to deterministic native Rust primitives"),
         });
     }
+    result
+}
+
+fn lower_hook_light(comp: &CompSpec, start: f64, id: String) -> VisualLoweringResult {
+    let flash_duration = 0.334_f64.min((comp.dur - start).max(0.0));
+    let tail = 1.668_f64.min((comp.dur - start).max(0.0));
+    if flash_duration <= 0.0 || tail <= 0.0 {
+        return VisualLoweringResult::default();
+    }
+    let end = start + tail;
+    let cx = comp.w as f32 * 0.5;
+    let cy = comp.h as f32 * 0.5;
+    let mut result = VisualLoweringResult::default();
+    result
+        .layers
+        .push(light_flash_layer(id, start, flash_duration, comp, -500_360));
+    result.layers.push(LoweredVisualLayer {
+        sort_key: -500_359,
+        layer: Layer::Adjustment {
+            id: "visual_f3_hook_light_bolts".to_string(),
+            start,
+            duration: flash_duration,
+            effects: vec![
+                EffectSpec { match_name: "ANR Shape Overlay".to_string(), params: json!({"shape":"lightning_left", "opacity":85.0, "thickness":18.0, "size":540.0}) },
+                EffectSpec { match_name: "ANR Shape Overlay".to_string(), params: json!({"shape":"lightning_right", "opacity":85.0, "thickness":18.0, "size":540.0}) },
+            ],
+        },
+    });
+    result.layers.push(LoweredVisualLayer {
+        sort_key: -500_358,
+        layer: Layer::Adjustment {
+            id: "visual_f3_hook_light_zoom_shake".to_string(),
+            start,
+            duration: tail,
+            effects: vec![
+                EffectSpec { match_name: "ADBE Geometry2".to_string(), params: json!({
+                    "anchor":[cx,cy], "position": {"keyframes":[
+                        {"time":start,"value":[cx,cy]},
+                        {"time":start + tail * 0.12,"value":[cx + 10.0,cy - 8.0]},
+                        {"time":start + tail * 0.28,"value":[cx - 7.0,cy + 6.0]},
+                        {"time":end,"value":[cx,cy]}
+                    ]},
+                    "scale_width":{"keyframes":[{"time":start,"value":110.0},{"time":end,"value":100.0}]},
+                    "scale_height":{"keyframes":[{"time":start,"value":110.0},{"time":end,"value":100.0}]}
+                }) },
+            ],
+        },
+    });
+    result.findings.push(CapabilityFinding {
+        status: CapabilityStatus::Approximate,
+        feature: "lower.visual_op.hook.f3.effect.v1.hook_light".to_string(),
+        layer: None,
+        detail: "AE light hook is represented by Add flash, two lightning traces, drop-relative zoom, and deterministic shake".to_string(),
+    });
     result
 }
 

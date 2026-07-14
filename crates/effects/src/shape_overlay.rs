@@ -83,6 +83,8 @@ fn overlay_distance(shape: &str, p: [f32; 2], size: f32, thickness: f32) -> f32 
         "swipe" => sd_swipe(p, size, thickness),
         "pinch" => sd_pinch(p, size, thickness),
         "holdfinger" => sd_hold_finger(p, size, thickness),
+        "lightning_left" => sd_lightning(p, size, true),
+        "lightning_right" => sd_lightning(p, size, false),
         _ => sd_ellipse(p, [size, size * 0.72]),
     };
     if matches!(
@@ -93,6 +95,20 @@ fn overlay_distance(shape: &str, p: [f32; 2], size: f32, thickness: f32) -> f32 
     } else {
         signed.abs() - thickness * 0.5
     }
+}
+
+fn sd_lightning(p: [f32; 2], size: f32, left: bool) -> f32 {
+    let sign = if left { -1.0 } else { 1.0 };
+    let points = [
+        [sign * size * 0.12, -size * 0.82],
+        [sign * size * 0.55, -size * 0.32],
+        [sign * size * 0.18, size * 0.02],
+        [sign * size * 0.52, size * 0.56],
+    ];
+    points
+        .windows(2)
+        .map(|segment| sd_segment(p, segment[0], segment[1]))
+        .fold(f32::INFINITY, f32::min)
 }
 
 fn sd_circle(p: [f32; 2], radius: f32) -> f32 {
