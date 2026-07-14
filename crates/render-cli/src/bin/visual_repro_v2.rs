@@ -1629,21 +1629,23 @@ fn draw_text_layer(
     time: f64,
     adjustment_geometry: SubtitleGeometry,
 ) {
+    // AE evaluates the text inside its layer/precomp boundary before applying
+    // the layer effect stack. Keeping that raster boundary is important for
+    // blur, glow, Minimax and duplicate-text echoes.
+    let mut scratch = Canvas::new(dst.width, dst.height, [0, 0, 0, 0]);
+    rasterize_text_layer(
+        &mut scratch,
+        fonts,
+        layer,
+        precomp_offset,
+        opacity,
+        font_scale,
+        time,
+        adjustment_geometry.scale,
+    );
+    apply_text_effect_stack(&mut scratch, &layer.effects, time, layer.suppress_fill);
+
     if adjustment_geometry.rotation.abs() > 0.001 {
-        let mut scratch = Canvas::new(dst.width, dst.height, [0, 0, 0, 0]);
-        draw_text_layer(
-            &mut scratch,
-            fonts,
-            layer,
-            precomp_offset,
-            opacity,
-            font_scale,
-            time,
-            SubtitleGeometry {
-                scale: adjustment_geometry.scale,
-                rotation: 0.0,
-            },
-        );
         composite_rotated_canvas(
             dst,
             &scratch,
@@ -1653,10 +1655,21 @@ fn draw_text_layer(
             ],
             adjustment_geometry.rotation,
         );
-        return;
+    } else {
+        composite_canvas(dst, &scratch);
     }
+}
 
-    let adjustment_scale = adjustment_geometry.scale;
+fn rasterize_text_layer(
+    dst: &mut Canvas,
+    fonts: &FontBook,
+    layer: &TextLayer,
+    precomp_offset: [f32; 2],
+    opacity: f32,
+    font_scale: f32,
+    time: f64,
+    adjustment_scale: [f32; 2],
+) {
     let transform_scale = eval_vec2_keys(&layer.scale_keys, time, layer.transform.scale);
     let effective_scale = [
         transform_scale[0] * adjustment_scale[0] / 100.0,
@@ -1715,37 +1728,83 @@ fn draw_text_layer(
         }
     }
 
-    for pass in text_passes(
-        layer.apply_fill,
-        layer.apply_stroke,
-        layer.suppress_fill,
-        &layer.effects,
-        time,
-    ) {
-        for (word_index, word) in &words {
-            let word_opacity = opacity
-                * selector_visible_opacity(
-                    reveal,
-                    reveal_end,
-                    *word_index,
-                    word_count,
-                    layer.reveal_smoothness,
-                );
-            if word_opacity > 0.1 {
-                draw_text_run(
-                    dst,
-                    fonts,
-                    layer,
-                    &word.text,
-                    word.start_char,
-                    word.x,
-                    word.baseline,
-                    word_opacity,
-                    &pass,
-                    font_size_multiplier,
-                    layer_scale_y / layer_scale_x,
-                    time,
-                );
+    for (word_index, word) in &words {
+        let word_opacity = opacity
+            * selector_visible_opacity(
+                reveal,
+                reveal_end,
+                *word_index,
+                word_count,
+                layer.reveal_smoothness,
+            );
+        if word_opacity <= 0.1 {
+            continue;
+        }
+        draw_text_run_base(
+            dst,
+            fonts,
+            layer,
+            &word.text,
+            word.start_char,
+            word.x,
+            word.baseline,
+            word_opacity,
+            font_size_multiplier,
+            layer_scale_y / layer_scale_x,
+            time,
+        );
+    }
+}
+
+fn composite_canvas(dst: &mut Canvas, src: &Canvas) {
+    for (dst_px, src_px) in dst.data.chunks_exact_mut(4).zip(src.data.chunks_exact(4)) {
+        if src_px[3] == 0 {
+            continue;
+        }
+        let out = over(
+            [dst_px[0], dst_px[1], dst_px[2], dst_px[3]],
+            src_px.try_into().unwrap(),
+            100.0,
+        );
+        dst_px.copy_from_slice(&out);
+    }
+}
+
+fn apply_text_effect_stack(
+    dst: &mut Canvas,
+    effects: &[TextEffect],
+    time: f64,
+    suppress_source_fill: bool,
+) {
+    for effect in effects {
+        match effect {
+            TextEffect::DropShadow(params) => apply_canvas_drop_shadow(dst, *params),
+            TextEffect::Glow(params) => apply_canvas_glow(dst, *params),
+            TextEffect::BoxBlur(params) => {
+                let active = params.at_time(time);
+                if active.radius > 0.01 {
+                    // TYPE_4's echo precomp is a fill-suppressed source: its
+                    // Box Blur is the visible diffuse echo, not a mild blur of
+                    // a crisp copy. Match that raster-only role here.
+                    let (radius, iterations) = if suppress_source_fill {
+                        (active.radius * 3.0, active.iterations)
+                    } else {
+                        (active.radius, active.iterations)
+                    };
+                    apply_canvas_box_blur(dst, radius, iterations);
+                    if suppress_source_fill {
+                        amplify_canvas_alpha(dst, 4.0);
+                    }
+                }
+            }
+            TextEffect::Minimax(params) => {
+                let active = params.at_time(time);
+                if active.radius > 0.01 {
+                    apply_canvas_minimax(dst, active.radius);
+                }
+            }
+            TextEffect::TurbulentDisplace(params) => {
+                apply_canvas_turbulent_displace(dst, params, time)
             }
         }
     }
@@ -1795,6 +1854,104 @@ fn text_passes(
         passes.push(TextPass::Fill);
     }
     passes
+}
+
+fn draw_text_run_base(
+    dst: &mut Canvas,
+    fonts: &FontBook,
+    layer: &TextLayer,
+    text: &str,
+    start_char: usize,
+    mut cursor_x: f32,
+    baseline: f32,
+    opacity: f32,
+    font_size_multiplier: f32,
+    glyph_scale_y: f32,
+    time: f64,
+) {
+    let base_font_size = layer.font_size * font_size_multiplier;
+    let tracking_px = layer.tracking / 1000.0 * base_font_size;
+    for (offset, ch) in text.chars().enumerate() {
+        let index = start_char + offset;
+        let animator_state = layer
+            .text_animator
+            .as_ref()
+            .map(|animator| animator.state_at(time, layer.start, index))
+            .unwrap_or_else(TextAnimatorState::identity);
+        let char_opacity = opacity * animator_state.opacity;
+        let style = layer.char_styles.get(&index);
+        let font = fonts.for_name(
+            style
+                .and_then(|style| style.font_name.as_deref())
+                .or(layer.font_name.as_deref()),
+        );
+        let char_font_size = style
+            .and_then(|style| style.font_size)
+            .unwrap_or(layer.font_size)
+            * font_size_multiplier;
+        let glyph = font.lookup_glyph_index(ch);
+        let metrics = font.metrics_indexed(glyph, char_font_size);
+        if !ch.is_whitespace() && char_opacity > 0.01 {
+            let (metrics, bitmap) = font.rasterize_indexed(glyph, char_font_size);
+            let mut fill = style.and_then(|style| style.fill).unwrap_or(layer.fill);
+            if is_red_fill(fill) {
+                fill = [255, 22, 22, fill[3]];
+            }
+            let faux_italic = style.is_some_and(|style| style.faux_italic);
+            let x = cursor_x + metrics.xmin as f32;
+            let y = baseline - metrics.ymin as f32 - metrics.height as f32;
+            let animated = animate_glyph_bitmap(
+                &bitmap,
+                metrics.width,
+                metrics.height,
+                animator_state,
+                font_size_multiplier,
+            );
+            let (glyph_bitmap, glyph_width, glyph_height, glyph_offset) = animated
+                .as_ref()
+                .map(|glyph| {
+                    (
+                        glyph.bitmap.as_slice(),
+                        glyph.width,
+                        glyph.height,
+                        glyph.offset,
+                    )
+                })
+                .unwrap_or((&bitmap[..], metrics.width, metrics.height, [0.0, 0.0]));
+            let glyph_x = x + glyph_offset[0] + animator_state.position[0] * font_size_multiplier;
+            let glyph_y = y + glyph_offset[1] + animator_state.position[1] * font_size_multiplier;
+            if layer.apply_stroke {
+                draw_hollow_stroke_glyph(
+                    dst,
+                    glyph_bitmap,
+                    glyph_width,
+                    glyph_height,
+                    glyph_x,
+                    glyph_y,
+                    layer.stroke,
+                    layer.stroke_width * font_size_multiplier,
+                    char_opacity,
+                    faux_italic,
+                    glyph_scale_y,
+                );
+            }
+            if layer.apply_fill {
+                blit_glyph(
+                    dst,
+                    glyph_bitmap,
+                    glyph_width,
+                    glyph_height,
+                    glyph_x,
+                    glyph_y,
+                    fill,
+                    char_opacity,
+                    faux_italic,
+                    glyph_scale_y,
+                );
+            }
+        }
+        cursor_x += metrics.advance_width + tracking_px;
+    }
 }
 
 fn draw_text_run(
@@ -2434,6 +2591,54 @@ fn apply_canvas_box_blur(dst: &mut Canvas, radius: f32, iterations: f32) {
                 dst.data[index * 4 + channel] = value;
             }
         }
+    }
+}
+
+fn apply_canvas_drop_shadow(dst: &mut Canvas, params: TextDropShadow) {
+    let source = dst.clone();
+    let width = dst.width as usize;
+    let height = dst.height as usize;
+    let radius = drop_shadow_blur_radius(params.softness, 1.0);
+    let mut alpha = source
+        .data
+        .chunks_exact(4)
+        .map(|pixel| pixel[3])
+        .collect::<Vec<_>>();
+    if radius > 0 {
+        alpha = box_blur_alpha(&alpha, width, height, radius);
+        alpha = box_blur_alpha(&alpha, width, height, radius);
+    }
+    let (offset_x, offset_y) = drop_shadow_offset(params.direction_degrees, params.distance);
+    dst.data.fill(0);
+    let opacity = normalize_drop_shadow_opacity(params.opacity);
+    for y in 0..height {
+        for x in 0..width {
+            let sx = x as i32 - offset_x.round() as i32;
+            let sy = y as i32 - offset_y.round() as i32;
+            if sx < 0 || sy < 0 || sx >= width as i32 || sy >= height as i32 {
+                continue;
+            }
+            let alpha = ((alpha[sy as usize * width + sx as usize] as f32 * opacity).round()) as u8;
+            if alpha == 0 {
+                continue;
+            }
+            let index = (y * width + x) * 4;
+            dst.data[index..index + 4].copy_from_slice(&[
+                params.color[0],
+                params.color[1],
+                params.color[2],
+                alpha,
+            ]);
+        }
+    }
+    if !params.shadow_only {
+        composite_canvas(dst, &source);
+    }
+}
+
+fn amplify_canvas_alpha(dst: &mut Canvas, multiplier: f32) {
+    for pixel in dst.data.chunks_exact_mut(4) {
+        pixel[3] = (pixel[3] as f32 * multiplier).round().clamp(0.0, 255.0) as u8;
     }
 }
 
@@ -3345,6 +3550,9 @@ fn parse_text_effect(key: Option<&str>, item: &Value) -> Option<TextEffect> {
         }
         "ADBE Glo2" => Some(TextEffect::Glow(TextGlow::from_params(params))),
         "ADBE Box Blur2" => Some(TextEffect::BoxBlur(TextBoxBlur::from_params(params))),
+        "ADBE Gaussian Blur 2" => Some(TextEffect::BoxBlur(TextBoxBlur::from_gaussian_params(
+            params,
+        ))),
         "ADBE Minimax" => Some(TextEffect::Minimax(TextMinimax::from_params(params))),
         "ADBE Turbulent Displace" => Some(TextEffect::TurbulentDisplace(
             TextTurbulentDisplace::from_params(params),
@@ -3477,6 +3685,31 @@ impl TextBoxBlur {
             radius_keys: Vec::new(),
             iterations: self.iterations,
             glow_only: self.glow_only,
+        }
+    }
+
+    fn from_gaussian_params(params: &Value) -> Self {
+        let radius_names = [
+            "blurriness",
+            "Blurriness",
+            "radius",
+            "Radius",
+            "0001",
+            "ADBE Gaussian Blur 2-0001",
+        ];
+        let radius_value = effect_param_value_any(params, &radius_names);
+        let radius_keys = radius_value
+            .map(effect_value_scalar_keys)
+            .unwrap_or_default();
+        let radius = radius_value
+            .and_then(effect_value_f32)
+            .or_else(|| radius_keys.first().map(|(_, value)| *value))
+            .unwrap_or(0.0);
+        Self {
+            radius,
+            radius_keys,
+            iterations: 1.0,
+            glow_only: false,
         }
     }
 }
@@ -4180,6 +4413,26 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![TextPassKind::BoxBlur, TextPassKind::Fill]
         );
+    }
+
+    #[test]
+    fn gaussian_blur_parser_keeps_brat_raster_blur() {
+        let layer = serde_json::json!({
+            "effects": [{
+                "match_name": "ADBE Gaussian Blur 2",
+                "params": { "ADBE Gaussian Blur 2-0001": 10.0 }
+            }]
+        });
+        let effects = parse_text_effects(&layer);
+        assert_eq!(
+            effects.iter().map(TextEffect::kind).collect::<Vec<_>>(),
+            vec![TextEffectKind::BoxBlur]
+        );
+        let TextEffect::BoxBlur(params) = &effects[0] else {
+            panic!("expected Gaussian Blur as raster blur");
+        };
+        assert_eq!(params.radius, 10.0);
+        assert_eq!(params.iterations, 1.0);
     }
 
     #[test]
