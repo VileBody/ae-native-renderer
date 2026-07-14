@@ -121,7 +121,7 @@ fn lower_brat(operation: &VisualOperation, comp: &CompSpec) -> Option<VisualLowe
         .min(130.0)
         .max(56.0);
     let fill = operation_fill(operation, [255, 255, 255, 255]);
-    let frame = 1.0 / 30.0;
+    let frame = 1.0 / comp.fps.max(1.0);
     let span_start = words.first()?.start;
     let span_end = words.last()?.end;
     let bpm = operation

@@ -893,7 +893,19 @@ fn resolve_subtitle_topology(
         }
     }
 
-    layers.sort_by(|a, b| b.z.total_cmp(&a.z));
+    layers.sort_by(|a, b| {
+        // A glow precomp is a duplicate source raster. It must be drawn just
+        // before its otherwise identical crisp copy, regardless of the AE
+        // index used for the two parent placements.
+        if a.text == b.text
+            && (a.start - b.start).abs() <= f64::EPSILON
+            && (a.end - b.end).abs() <= f64::EPSILON
+            && a.suppress_fill != b.suppress_fill
+        {
+            return b.suppress_fill.cmp(&a.suppress_fill);
+        }
+        b.z.total_cmp(&a.z)
+    });
     layers
 }
 
@@ -942,62 +954,92 @@ fn compose_precomp_opacity_keys(
     placement: &PrecompPlacement,
     child: &TextLayer,
 ) -> Vec<(f64, f32)> {
-    if !child.opacity_keys.is_empty() {
-        return child
-            .opacity_keys
-            .iter()
-            .map(|(time, value)| {
-                (
-                    placement.source_start_time + *time,
-                    value * placement.transform.opacity / 100.0,
-                )
-            })
-            .collect();
-    }
-    placement
-        .opacity_keys
-        .iter()
-        .map(|(time, value)| (*time, value * child.transform.opacity / 100.0))
-        .collect()
+    let child_keys = shift_scalar_keys(&child.opacity_keys, placement.source_start_time);
+    compose_scalar_keyframes(
+        &placement.opacity_keys,
+        placement.transform.opacity,
+        &child_keys,
+        child.transform.opacity,
+    )
 }
 
 fn compose_precomp_scale_keys(
     placement: &PrecompPlacement,
     child: &TextLayer,
 ) -> Vec<(f64, [f32; 2])> {
-    if !child.scale_keys.is_empty() {
-        return child
-            .scale_keys
-            .iter()
-            .map(|(time, value)| {
-                (
-                    placement.source_start_time + *time,
-                    [
-                        value[0] * placement.transform.scale[0] / 100.0,
-                        value[1] * placement.transform.scale[1] / 100.0,
-                    ],
-                )
-            })
-            .collect();
-    }
-    // TODO(visual_repro_v2 topology): when subtitle precomp children gain their
-    // own animated transforms, sample parent and child curves together here.
-    // The current bounded hook covers exported TYPE_4 red-hook glow copies:
-    // parent precomp scale/opacity drives cloned child text, without changing
-    // effect implementations.
-    placement
+    let child_keys = child
         .scale_keys
         .iter()
-        .map(|(time, value)| {
+        .map(|(time, value)| (time + placement.source_start_time, *value))
+        .collect::<Vec<_>>();
+    compose_vec2_keyframes(
+        &placement.scale_keys,
+        placement.transform.scale,
+        &child_keys,
+        child.transform.scale,
+    )
+}
+
+// AE evaluates parent and child transform properties independently, then
+// multiplies them. Sampling the union preserves that behaviour when either
+// side has keys, instead of silently discarding one animation curve.
+fn compose_scalar_keyframes(
+    parent: &[(f64, f32)],
+    parent_default: f32,
+    child: &[(f64, f32)],
+    child_default: f32,
+) -> Vec<(f64, f32)> {
+    let times = merged_key_times(
+        parent.iter().map(|(time, _)| *time),
+        child.iter().map(|(time, _)| *time),
+    );
+    times
+        .into_iter()
+        .map(|time| {
             (
-                *time,
+                time,
+                eval_scalar_keys(parent, time, parent_default)
+                    * eval_scalar_keys(child, time, child_default)
+                    / 100.0,
+            )
+        })
+        .collect()
+}
+
+fn compose_vec2_keyframes(
+    parent: &[(f64, [f32; 2])],
+    parent_default: [f32; 2],
+    child: &[(f64, [f32; 2])],
+    child_default: [f32; 2],
+) -> Vec<(f64, [f32; 2])> {
+    let times = merged_key_times(
+        parent.iter().map(|(time, _)| *time),
+        child.iter().map(|(time, _)| *time),
+    );
+    times
+        .into_iter()
+        .map(|time| {
+            let parent_value = eval_vec2_keys(parent, time, parent_default);
+            let child_value = eval_vec2_keys(child, time, child_default);
+            (
+                time,
                 [
-                    child.transform.scale[0] * value[0] / 100.0,
-                    child.transform.scale[1] * value[1] / 100.0,
+                    parent_value[0] * child_value[0] / 100.0,
+                    parent_value[1] * child_value[1] / 100.0,
                 ],
             )
         })
         .collect()
+}
+
+fn merged_key_times(
+    parent: impl Iterator<Item = f64>,
+    child: impl Iterator<Item = f64>,
+) -> Vec<f64> {
+    let mut times = parent.chain(child).collect::<Vec<_>>();
+    times.sort_by(f64::total_cmp);
+    times.dedup_by(|left, right| (*left - *right).abs() <= f64::EPSILON);
+    times
 }
 
 fn shift_scalar_keys(keys: &[(f64, f32)], delta: f64) -> Vec<(f64, f32)> {
@@ -4526,6 +4568,8 @@ mod tests {
         .unwrap();
 
         assert_eq!(layers.len(), 2);
+        assert_eq!(layers[0].transform.opacity, 40.0);
+        assert_eq!(layers[1].transform.opacity, 100.0);
         let normal = layers
             .iter()
             .find(|layer| (layer.transform.opacity - 100.0).abs() < f32::EPSILON)
@@ -4566,6 +4610,31 @@ mod tests {
             eval_vec2_keys(&glow.scale_keys, 7.02, glow.transform.scale),
             [250.0, 250.0]
         );
+    }
+
+    #[test]
+    fn nested_precomp_keys_multiply_parent_and_child_at_their_union() {
+        let opacity = compose_scalar_keyframes(
+            &[(1.0, 40.0), (3.0, 80.0)],
+            100.0,
+            &[(2.0, 50.0), (3.0, 25.0)],
+            100.0,
+        );
+        assert_eq!(
+            opacity.iter().map(|(time, _)| *time).collect::<Vec<_>>(),
+            [1.0, 2.0, 3.0]
+        );
+        assert_close(eval_scalar_keys(&opacity, 1.0, 100.0) as f64, 20.0);
+        assert_close(eval_scalar_keys(&opacity, 2.0, 100.0) as f64, 30.0);
+        assert_close(eval_scalar_keys(&opacity, 3.0, 100.0) as f64, 20.0);
+
+        let scale = compose_vec2_keyframes(
+            &[(1.0, [150.0, 100.0])],
+            [100.0, 100.0],
+            &[(2.0, [200.0, 50.0])],
+            [100.0, 100.0],
+        );
+        assert_eq!(scale, vec![(1.0, [300.0, 50.0]), (2.0, [300.0, 50.0])]);
     }
 
     #[test]

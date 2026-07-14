@@ -159,7 +159,19 @@ def main() -> None:
         comps = request.get("compsSpec") or []
         comp_fps = comps[0].get("fps") if comps and isinstance(comps[0], dict) else None
         fps = float(comp_fps or default_fps)
-        start, end = text_layer_window(request, str(case["text"]))
+        explicit_window = case.get("window")
+        if explicit_window is not None:
+            if (
+                not isinstance(explicit_window, list)
+                or len(explicit_window) != 2
+                or not all(isinstance(value, (int, float)) for value in explicit_window)
+            ):
+                raise SystemExit(f"invalid explicit window for case {case['id']}")
+            start, end = (float(explicit_window[0]), float(explicit_window[1]))
+            if end <= start:
+                raise SystemExit(f"invalid explicit window for case {case['id']}")
+        else:
+            start, end = text_layer_window(request, str(case["text"]))
         times = state_times(start, end, list(case["states"]))
         frames = [round(time * fps) for time in times]
         request["policy"] = {"onUnsupported": "report"}
