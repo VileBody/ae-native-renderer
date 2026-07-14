@@ -682,7 +682,7 @@ fn lower_native_f3_effect(
             "extract_flash" => 0.18,
             "layer_shake" => 0.24,
             "hook_light" => 0.35,
-            "flash_slow_shutter" => 0.60,
+            "flash_slow_shutter" => 0.50,
             "negative_zoom" => 0.50,
             _ => operation
                 .timing
@@ -782,26 +782,14 @@ fn lower_native_f3_effect(
             }
             "flash_slow_shutter" => vec![
                 EffectSpec {
+                    // AE: Echo(-.2, 5, .8, Add). Directional Blur is the
+                    // available native temporal-trail approximation.
                     match_name: "ADBE Motion Blur".to_string(),
-                    params: json!({
-                        "direction": 0.0,
-                        "blur_length": {
-                            "keyframes": [
-                                {"time": window_start, "value": 72.0},
-                                {"time": end, "value": 0.0}
-                            ]
-                        }
-                    }),
+                    params: json!({"direction":90.0, "blur_length":42.0}),
                 },
                 EffectSpec {
-                    match_name: "ADBE Glo2".to_string(),
-                    params: json!({
-                        "threshold": 105.0,
-                        "radius": 28.0,
-                        "intensity": 0.7,
-                        "operation": "screen",
-                        "composite_original": "on top"
-                    }),
+                    match_name: "ADBE Posterize Time".to_string(),
+                    params: json!({"frameRate":8.0}),
                 },
             ],
             "negative_zoom" => {
