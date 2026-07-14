@@ -118,6 +118,45 @@ fn extract_injected_visual_ops(source: &str, payload: &GeneratedPayload) -> Vec<
         });
     }
 
+    if subtitles_mode == "impulse_2nd" {
+        let defaults = ["extract_flash", "flash_on_cuts"];
+        if let Some(operation) = operations
+            .iter_mut()
+            .find(|operation| operation.kind == "hook.f3.effect.v1")
+        {
+            let ids = operation
+                .params
+                .get_mut("detected_effect_ids")
+                .and_then(Value::as_array_mut)
+                .expect("generated F3 operation always has detected effect ids");
+            for id in defaults {
+                if !ids.iter().any(|value| value.as_str() == Some(id)) {
+                    ids.push(Value::String(id.to_string()));
+                }
+            }
+        } else {
+            operations.push(VisualOperation {
+                id: Some("generated_impulse_effects".to_string()),
+                kind: "hook.f3.effect.v1".to_string(),
+                target: VisualOperationTarget {
+                    composition: Some(payload.project_spec.main_comp_name.clone()),
+                    layer: Some("Текст".to_string()),
+                    place: Some("below:Текст".to_string()),
+                },
+                timing: VisualOperationTiming {
+                    start: Some(0.0),
+                    duration: None,
+                    end: None,
+                    anchor: Some("composition".to_string()),
+                    offset: Some(0.0),
+                },
+                params: json!({"detected_effect_ids": defaults}),
+                assets: Vec::new(),
+                required: true,
+            });
+        }
+    }
+
     operations
 }
 
@@ -264,6 +303,30 @@ mod tests {
         assert_eq!(
             payload.visual_ops[0].params["detected_effect_ids"][0],
             "flash_on_cuts"
+        );
+        assert!(payload.visual_ops[0].params["detected_effect_ids"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|id| id == "extract_flash"));
+    }
+
+    #[test]
+    fn impulse_jsx_without_an_injected_f3_section_gets_the_default_flash_stack() {
+        let source = r#"
+            var projectSpec = {"mainCompName":"Comp 1","subtitlesMode":"impulse_2nd"};
+            var compsSpec = [{"name":"Comp 1","w":64,"h":64,"fps":24,"dur":2}];
+            var footage_layers = [];
+            var text_layers = [];
+        "#;
+
+        let payload = extract_payload_from_jsx(source).unwrap();
+
+        assert_eq!(payload.visual_ops.len(), 1);
+        assert_eq!(payload.visual_ops[0].kind, "hook.f3.effect.v1");
+        assert_eq!(
+            payload.visual_ops[0].params["detected_effect_ids"],
+            json!(["extract_flash", "flash_on_cuts"])
         );
     }
 

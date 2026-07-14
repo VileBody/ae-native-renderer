@@ -296,9 +296,9 @@ fn lower_flash_on_cuts(
         let end = (start + 0.633).min(comp.dur);
         let fade_end = (start + 0.6).min(end);
         let mut transform = Transform2D::default();
-        transform.opacity = 25.0;
+        transform.opacity = 40.0;
         transform.animation.opacity = vec![
-            linear_scalar_key(start, 25.0),
+            linear_scalar_key(start, 40.0),
             linear_scalar_key(fade_end, 0.0),
         ];
         result.layers.push(LoweredVisualLayer {
@@ -2680,7 +2680,7 @@ mod tests {
         assert_eq!(*start, 1.0);
         assert!((*duration - 0.633).abs() < 1e-9);
         assert_eq!(*blend_mode, BlendMode::Add);
-        assert_eq!(transform.opacity, 25.0);
+        assert_eq!(transform.opacity, 40.0);
         assert_eq!(transform.animation.opacity[1].value, 0.0);
     }
 

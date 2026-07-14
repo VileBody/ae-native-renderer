@@ -503,7 +503,10 @@ mod tests {
                 &request.generated_payload(),
                 &request.comps_spec[0],
             );
-            assert!(!lowered.layers.is_empty(), "{mode} produced no native layers");
+            assert!(
+                !lowered.layers.is_empty(),
+                "{mode} produced no native layers"
+            );
             assert!(
                 !lowered.findings.iter().any(|finding| {
                     finding.status == CapabilityStatus::NotImplemented

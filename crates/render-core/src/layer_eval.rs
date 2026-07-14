@@ -4038,6 +4038,8 @@ struct AnimatorUnitTransform {
 }
 
 const TEXT_ANIMATOR_BLUR_RADIUS_LIMIT: i32 = 128;
+const TEXT_ANIMATOR_MIN_VISIBLE_UNIT_EXTENT_PX: f32 = 30.0;
+const IMPULSE_BOUNCE_BLUR_GAIN: f32 = 0.5;
 
 fn animator_unit_transform(
     unit: UnitRect,
@@ -4073,10 +4075,19 @@ fn animator_unit_transform(
 }
 
 fn text_animator_blur_radius(animator: &TextAnimatorSpec, weight: f32, unit_scale: f32) -> i32 {
+    let gain = if matches!(
+        animator.expression_selector,
+        Some(TextExpressionSelector::PerCharacterBounce { .. })
+    ) {
+        IMPULSE_BOUNCE_BLUR_GAIN
+    } else {
+        1.0
+    };
     animator
         .blur
         .map(|blur| {
-            (blur[0].abs().max(blur[1].abs()) * weight.max(0.0) * unit_scale.abs()).round() as i32
+            (blur[0].abs().max(blur[1].abs()) * weight.max(0.0) * unit_scale.abs() * gain).round()
+                as i32
         })
         .unwrap_or(0)
         .clamp(0, TEXT_ANIMATOR_BLUR_RADIUS_LIMIT)
@@ -4226,6 +4237,14 @@ fn draw_transformed_unit(
     unit_scale: f32,
 ) {
     let transform = animator_unit_transform(unit, animator, weight, unit_scale);
+    let transformed_width = (unit.x1 - unit.x0) as f32 * transform.scale[0].abs();
+    let transformed_height = (unit.y1 - unit.y0) as f32 * transform.scale[1].abs();
+    let is_downscaled = transform.scale[0].abs() < 0.5 || transform.scale[1].abs() < 0.5;
+    if is_downscaled
+        && transformed_width.max(transformed_height) < TEXT_ANIMATOR_MIN_VISIBLE_UNIT_EXTENT_PX
+    {
+        return;
+    }
     let matrix = transform.matrix.m;
     let a = matrix[0][0];
     let b = matrix[0][1];
@@ -5093,6 +5112,18 @@ mod tests {
         assert_eq!(text_animator_blur_radius(&animator, 1.0, 1.0), 10);
         assert_eq!(text_animator_blur_radius(&animator, 0.45, 1.0), 5);
         assert_eq!(text_animator_blur_radius(&animator, -1.0, 1.0), 0);
+
+        let impulse_bounce = TextAnimatorSpec {
+            expression_selector: Some(TextExpressionSelector::PerCharacterBounce {
+                delay: 0.05,
+                freq: 2.0,
+                amplitude: 100.0,
+                decay: 8.0,
+                source: "impulse fixture".to_string(),
+            }),
+            ..animator
+        };
+        assert_eq!(text_animator_blur_radius(&impulse_bounce, 1.0, 1.0), 5);
     }
 
     #[test]
@@ -5143,6 +5174,39 @@ mod tests {
             (0..animated.width).all(|x| animated.pixel(x, 0)[3] == 0),
             "a fully hidden animator must not leave a blur splat"
         );
+    }
+
+    #[test]
+    fn text_animator_hides_subpixel_glyphs_until_they_reach_a_readable_size() {
+        let mut canvas = Canvas::transparent(100, 100);
+        for y in 2..98 {
+            for x in 2..98 {
+                canvas.set_pixel(x, y, [255, 255, 255, 255]);
+            }
+        }
+        let tiny = TextAnimatorSpec {
+            name: "tiny".to_string(),
+            opacity: 100.0,
+            scale: Some([20.0, 20.0]),
+            selector: TextRangeSelector {
+                start: 0.0,
+                end: 100.0,
+                ..TextRangeSelector::default()
+            },
+            ..TextAnimatorSpec::default()
+        };
+        let visible = TextAnimatorSpec {
+            scale: Some([60.0, 60.0]),
+            ..tiny.clone()
+        };
+
+        let hidden =
+            apply_unit_animator_transform(&canvas, "A", None, &tiny, 0.0, 100.0, 0.0, 0.0, 1.0);
+        let shown =
+            apply_unit_animator_transform(&canvas, "A", None, &visible, 0.0, 100.0, 0.0, 0.0, 1.0);
+
+        assert!(hidden.data.chunks_exact(4).all(|pixel| pixel[3] == 0));
+        assert!(shown.data.chunks_exact(4).any(|pixel| pixel[3] > 0));
     }
 
     #[test]
