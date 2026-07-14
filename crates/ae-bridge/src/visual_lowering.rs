@@ -603,6 +603,7 @@ fn lower_f3(
         "xerox",
         "neon_extract",
         "old_camera",
+        "blackwhite",
     ] {
         if f3_has_effect(operation, effect_id) {
             append_lowering(
@@ -651,7 +652,14 @@ fn lower_native_f3_effect(
     payload: &GeneratedPayload,
     effect_id: &str,
 ) -> VisualLoweringResult {
-    let start = f3_operation_start(operation).clamp(0.0, comp.dur);
+    // The build worker reuses one F3 operation for hook/transition/extra, but
+    // every EXTRA block receives startTime:0 in JSX. Do not inherit dropTime
+    // here: it would silently skip persistent looks when the drop is at the end.
+    let start = if f3_is_persistent_extra(effect_id) {
+        0.0
+    } else {
+        f3_operation_start(operation).clamp(0.0, comp.dur)
+    };
     let cut_times = f3_cut_times(comp, payload, false);
     let windows = match effect_id {
         "invert_flash" | "extract_flash" | "minimax" | "layer_shake" => {
@@ -829,6 +837,15 @@ fn lower_native_f3_effect(
                     },
                 ]
             }
+            "blackwhite" => vec![EffectSpec {
+                match_name: "ANR F3 Stylize".to_string(),
+                params: json!({
+                    "mode": "blackwhite",
+                    "magentas": -100.0,
+                    "tint": true,
+                    "tint_black": [0.0078160008, 0.006920415, 0.019607844, 1.0]
+                }),
+            }],
             "xerox" | "neon_extract" | "old_camera" => vec![EffectSpec {
                 match_name: "ANR F3 Stylize".to_string(),
                 params: json!({
@@ -863,6 +880,19 @@ fn lower_native_f3_effect(
         });
     }
     result
+}
+
+fn f3_is_persistent_extra(effect_id: &str) -> bool {
+    matches!(
+        effect_id,
+        "xerox"
+            | "neon_extract"
+            | "old_camera"
+            | "blackwhite"
+            | "crystal_glow"
+            | "night_vision"
+            | "wave"
+    )
 }
 
 fn light_flash_layer(
@@ -2891,7 +2921,7 @@ mod tests {
         payload.visual_ops[0].params = json!({
             "hook":["hook_light", "flash_slow_shutter", "negative_zoom"],
             "transition":["invert_flash", "extract_flash", "minimax", "layer_shake"],
-            "extra":["xerox", "neon_extract", "old_camera"],
+            "extra":["xerox", "neon_extract", "old_camera", "blackwhite"],
             "drop_time": 1.0
         });
         payload.footage_layers = vec![
@@ -2921,6 +2951,7 @@ mod tests {
             "visual_f3_xerox_0000",
             "visual_f3_neon_extract_0000",
             "visual_f3_old_camera_0000",
+            "visual_f3_blackwhite_0000",
         ] {
             assert!(
                 result
@@ -2930,6 +2961,31 @@ mod tests {
                 "missing {expected}"
             );
         }
+    }
+
+    #[test]
+    fn persistent_f3_extras_start_at_the_composition_boundary() {
+        let mut payload = payload("hook.f3.effect.v1", json!([]));
+        payload.visual_ops[0].params = json!({
+            "detected_effect_ids":["blackwhite"],
+            "drop_time": 12.0
+        });
+        payload.visual_ops[0].timing.start = Some(12.0);
+
+        let result = lower_visual_operations(&payload, &comp());
+        let Layer::Adjustment {
+            start,
+            duration,
+            effects,
+            ..
+        } = &result.layers[0].layer
+        else {
+            panic!("expected blackwhite adjustment");
+        };
+        assert_eq!(*start, 0.0);
+        assert_eq!(*duration, comp().dur);
+        assert_eq!(effects[0].match_name, "ANR F3 Stylize");
+        assert_eq!(effects[0].params["magentas"], json!(-100.0));
     }
 
     #[test]
@@ -3017,6 +3073,7 @@ mod tests {
             "xerox",
             "neon_extract",
             "old_camera",
+            "blackwhite",
         ] {
             let mut payload = payload("hook.f3.effect.v1", json!([]));
             payload.visual_ops[0].params = json!({

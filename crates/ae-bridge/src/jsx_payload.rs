@@ -189,6 +189,13 @@ fn detect_f3_ids(section: &str) -> Vec<String> {
         ("neon_extract", "neon_extract"),
         ("old_camera", "old_camera"),
         ("xerox", "xerox"),
+        ("blackwhite", "blackwhite"),
+        ("black & white", "blackwhite"),
+        ("crystal_glow", "crystal_glow"),
+        ("crystal glow", "crystal_glow"),
+        ("night_vision", "night_vision"),
+        ("night vision", "night_vision"),
+        ("wave", "wave"),
     ];
     let lower = section.to_ascii_lowercase();
     let mut detected = TOKENS
@@ -318,6 +325,28 @@ mod tests {
             .unwrap()
             .iter()
             .any(|id| id == "extract_flash"));
+    }
+
+    #[test]
+    fn detects_every_public_extra_marker_in_an_f3_section() {
+        let source = r#"
+            var projectSpec = {"mainCompName":"Comp 1","subtitlesMode":"brat_5th"};
+            var compsSpec = [{"name":"Comp 1","w":64,"h":64,"fps":24,"dur":2}];
+            var footage_layers = [];
+            var text_layers = [];
+            /* ===== F3 «Эффект» overlay (injected by build worker) ===== */
+            $.global.__BLAST = {startTime: 0};
+            /*** blackwhite ***/ /*** crystal glow ***/ /*** night_vision ***/ /*** wave ***/
+            // ==========================================================
+            // 5.7) F2
+        "#;
+        let payload = extract_payload_from_jsx(source).unwrap();
+        let ids = payload.visual_ops[0].params["detected_effect_ids"]
+            .as_array()
+            .unwrap();
+        for expected in ["blackwhite", "crystal_glow", "night_vision", "wave"] {
+            assert!(ids.iter().any(|id| id == expected), "missing {expected}");
+        }
     }
 
     #[test]

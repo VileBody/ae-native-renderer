@@ -1,0 +1,20 @@
+{
+  "schema": "ae-native-renderer.f3-production-artifacts.v1",
+  "observed_at": "2026-07-14T17:00:00Z",
+  "source": "f7cef916-job-artifacts/ae_jobs_artifacts plus production orchestrator job state",
+  "cases": [
+    {"effect_id": "snap_wipe", "job_id": "09de1d05da454ba2b9c8b4fe720732ee", "s3_key": "ae_jobs_artifacts/09de1d05da454ba2b9c8b4fe720732ee/09de1d05da454ba2b9c8b4fe720732ee_job_folder.tar.gz"},
+    {"effect_id": "minimax", "job_id": "0d6eab36e42f45dc827ee17832b6b4ef", "s3_key": "ae_jobs_artifacts/0d6eab36e42f45dc827ee17832b6b4ef/0d6eab36e42f45dc827ee17832b6b4ef_job_folder.tar.gz"},
+    {"effect_id": "invert_flash", "job_id": null, "s3_key": null, "status": "no job state retained in the 14-day observable window"},
+    {"effect_id": "extract_flash", "job_id": "638bd9fb81fc40f69b4cd03b3626b790", "s3_key": "ae_jobs_artifacts/638bd9fb81fc40f69b4cd03b3626b790/638bd9fb81fc40f69b4cd03b3626b790_job_folder.tar.gz"},
+    {"effect_id": "flash_on_cuts", "job_id": "396e0bd5320047b9bc84c6c89851ed48", "s3_key": "ae_jobs_artifacts/396e0bd5320047b9bc84c6c89851ed48/396e0bd5320047b9bc84c6c89851ed48_job_folder.tar.gz"},
+    {"effect_id": "xerox", "job_id": "0d7f77b3c19d41a7a79d407264a8e053", "s3_key": "ae_jobs_artifacts/0d7f77b3c19d41a7a79d407264a8e053/0d7f77b3c19d41a7a79d407264a8e053_job_folder.tar.gz"},
+    {"effect_id": "analog_glitch", "job_id": "396e0bd5320047b9bc84c6c89851ed48", "s3_key": "ae_jobs_artifacts/396e0bd5320047b9bc84c6c89851ed48/396e0bd5320047b9bc84c6c89851ed48_job_folder.tar.gz"},
+    {"effect_id": "neon_extract", "job_id": "bb3582736e8042aa80c7131f4339a549", "s3_key": "ae_jobs_artifacts/bb3582736e8042aa80c7131f4339a549/bb3582736e8042aa80c7131f4339a549_job_folder.tar.gz"},
+    {"effect_id": "old_camera", "job_id": "3fecd2391dad4bbda02ff329d310ffd3", "s3_key": "ae_jobs_artifacts/3fecd2391dad4bbda02ff329d310ffd3/3fecd2391dad4bbda02ff329d310ffd3_job_folder.tar.gz"},
+    {"effect_id": "blackwhite", "job_id": "ae964a63706c45ef8d42580b4e70b3a4", "s3_key": "ae_jobs_artifacts/ae964a63706c45ef8d42580b4e70b3a4/ae964a63706c45ef8d42580b4e70b3a4_job_folder.tar.gz"},
+    {"effect_id": "crystal_glow", "job_id": "9fcbf11a0ef1401699a55c9631a9e9a6", "s3_key": "ae_jobs_artifacts/9fcbf11a0ef1401699a55c9631a9e9a6/9fcbf11a0ef1401699a55c9631a9e9a6_job_folder.tar.gz"},
+    {"effect_id": "night_vision", "job_id": "0d6eab36e42f45dc827ee17832b6b4ef", "s3_key": "ae_jobs_artifacts/0d6eab36e42f45dc827ee17832b6b4ef/0d6eab36e42f45dc827ee17832b6b4ef_job_folder.tar.gz"},
+    {"effect_id": "wave", "job_id": "638bd9fb81fc40f69b4cd03b3626b790", "s3_key": "ae_jobs_artifacts/638bd9fb81fc40f69b4cd03b3626b790/638bd9fb81fc40f69b4cd03b3626b790_job_folder.tar.gz"}
+  ]
+}

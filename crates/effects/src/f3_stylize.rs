@@ -1,4 +1,4 @@
-use crate::{param_bool_any, param_f32_at_any, param_value, Effect, EffectContext};
+use crate::{param_bool_any, param_f32_at_any, param_rgba_any, param_value, Effect, EffectContext};
 use raster_cpu::Canvas;
 use rayon::prelude::*;
 use serde_json::Value;
@@ -8,6 +8,7 @@ pub struct F3Stylize;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum StylizeMode {
+    BlackWhite,
     Extract,
     Xerox,
     NeonExtract,
@@ -23,6 +24,9 @@ impl StylizeMode {
             .unwrap_or("extract")
             .to_ascii_lowercase();
         match value.as_str() {
+            "blackwhite" | "black_white" | "black-and-white" | "black_and_white" => {
+                Self::BlackWhite
+            }
             "xerox" => Self::Xerox,
             "neon" | "neon_extract" => Self::NeonExtract,
             "old_camera" | "oldcamera" | "film" => Self::OldCamera,
@@ -60,6 +64,12 @@ impl Effect for F3Stylize {
             &["composite_original", "compositeOriginal", "keep_original"],
             false,
         );
+        // The production AE preset uses ADBE Black&White with Magentas=-100 and
+        // a near-black blue tint. Keep these configurable for future captures.
+        let magentas = param_f32_at_any(params, &["magentas", "magentas_adjust"], ctx.time, 0.0)
+            .clamp(-100.0, 100.0);
+        let tint_enabled = param_bool_any(params, &["tint", "tint_enabled"], false);
+        let tint_black = param_rgba_any(params, &["tint_black", "tint_color"], [0, 0, 0, 255]);
         let mut output = Canvas::transparent(input.width, input.height);
         let width = input.width as usize;
         let height = input.height as usize;
@@ -72,6 +82,9 @@ impl Effect for F3Stylize {
                 let y = index / width.max(1);
                 let source = rgba_at(input, x as i32, y as i32);
                 let styled = match mode {
+                    StylizeMode::BlackWhite => {
+                        black_white_pixel(source, magentas, tint_enabled, tint_black)
+                    }
                     StylizeMode::Extract => extract_pixel(source, threshold, softness, amount),
                     StylizeMode::Xerox => {
                         xerox_pixel(input, x, y, source, threshold, softness, amount)
@@ -90,6 +103,33 @@ impl Effect for F3Stylize {
             });
         Ok(output)
     }
+}
+
+fn black_white_pixel(
+    source: [u8; 4],
+    magentas: f32,
+    tint_enabled: bool,
+    tint_black: [u8; 4],
+) -> [u8; 4] {
+    let r = source[0] as f32;
+    let g = source[1] as f32;
+    let b = source[2] as f32;
+    // AE's Magentas slider affects pixels whose red/blue components dominate
+    // green. This lightweight sector mask preserves neutral and green footage.
+    let magenta_weight = ((r + b - 2.0 * g) / 510.0).clamp(0.0, 1.0);
+    let gray = (luminance(source) * (1.0 + magentas / 100.0 * magenta_weight)).clamp(0.0, 255.0);
+    if !tint_enabled {
+        let value = gray.round() as u8;
+        return [value, value, value, source[3]];
+    }
+    let t = gray / 255.0;
+    let white = [255u8; 3];
+    [
+        (tint_black[0] as f32 + (white[0] as f32 - tint_black[0] as f32) * t).round() as u8,
+        (tint_black[1] as f32 + (white[1] as f32 - tint_black[1] as f32) * t).round() as u8,
+        (tint_black[2] as f32 + (white[2] as f32 - tint_black[2] as f32) * t).round() as u8,
+        source[3],
+    ]
 }
 
 fn add_over_original(original: [u8; 4], styled: [u8; 4]) -> [u8; 4] {
@@ -244,6 +284,29 @@ mod tests {
         );
         assert_eq!(output.pixel(0, 0), [0, 0, 0, 0]);
         assert_eq!(output.pixel(1, 0), [240, 240, 240, 255]);
+    }
+
+    #[test]
+    fn blackwhite_suppresses_magentas_and_preserves_the_blue_black_tint() {
+        let mut input = Canvas::transparent(3, 1);
+        input.set_pixel(0, 0, [255, 0, 255, 255]);
+        input.set_pixel(1, 0, [128, 128, 128, 255]);
+        input.set_pixel(2, 0, [0, 255, 0, 255]);
+        let output = render(
+            &input,
+            json!({
+                "mode":"blackwhite",
+                "magentas":-100,
+                "tint":true,
+                "tint_black":[0.0078160008,0.006920415,0.019607844,1]
+            }),
+            0.0,
+        );
+        assert!(output.pixel(0, 0)[0] <= 4);
+        assert!(output.pixel(0, 0)[2] > output.pixel(0, 0)[0]);
+        assert!(output.pixel(1, 0)[0] > 120);
+        assert!(output.pixel(2, 0)[0] > output.pixel(0, 0)[0]);
+        assert_eq!(output.pixel(2, 0)[3], 255);
     }
 
     #[test]

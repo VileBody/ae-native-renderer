@@ -2031,6 +2031,7 @@ fn f3_all_effects_are_native(operation: &VisualOperation) -> bool {
                     | "analog_glitch"
                     | "neon_extract"
                     | "old_camera"
+                    | "blackwhite"
             )
         })
 }
