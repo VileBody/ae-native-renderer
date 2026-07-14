@@ -118,8 +118,17 @@ fn extract_injected_visual_ops(source: &str, payload: &GeneratedPayload) -> Vec<
         });
     }
 
-    if subtitles_mode == "impulse_2nd" {
-        let defaults = ["extract_flash", "flash_on_cuts"];
+    let (defaults, operation_id) = match subtitles_mode {
+        "impulse_2nd" => (
+            &["extract_flash", "flash_on_cuts"][..],
+            "generated_impulse_effects",
+        ),
+        // Tape's JSX always calls addFlashOnCuts() after building the subtitle
+        // precomp, but has no explicit F3 section to detect from source text.
+        "template_4th" => (&["flash_on_cuts"][..], "generated_tape_effects"),
+        _ => (&[][..], ""),
+    };
+    if !defaults.is_empty() {
         if let Some(operation) = operations
             .iter_mut()
             .find(|operation| operation.kind == "hook.f3.effect.v1")
@@ -136,7 +145,7 @@ fn extract_injected_visual_ops(source: &str, payload: &GeneratedPayload) -> Vec<
             }
         } else {
             operations.push(VisualOperation {
-                id: Some("generated_impulse_effects".to_string()),
+                id: Some(operation_id.to_string()),
                 kind: "hook.f3.effect.v1".to_string(),
                 target: VisualOperationTarget {
                     composition: Some(payload.project_spec.main_comp_name.clone()),
@@ -327,6 +336,28 @@ mod tests {
         assert_eq!(
             payload.visual_ops[0].params["detected_effect_ids"],
             json!(["extract_flash", "flash_on_cuts"])
+        );
+    }
+
+    #[test]
+    fn tape_jsx_without_an_injected_f3_section_gets_flash_on_cuts() {
+        let source = r#"
+            var projectSpec = {"mainCompName":"Comp 1","subtitlesMode":"template_4th"};
+            var compsSpec = [{"name":"Comp 1","w":64,"h":64,"fps":24,"dur":2}];
+            var footage_layers = [];
+            var text_layers = [];
+        "#;
+
+        let payload = extract_payload_from_jsx(source).unwrap();
+
+        assert_eq!(payload.visual_ops.len(), 1);
+        assert_eq!(
+            payload.visual_ops[0].id.as_deref(),
+            Some("generated_tape_effects")
+        );
+        assert_eq!(
+            payload.visual_ops[0].params["detected_effect_ids"],
+            json!(["flash_on_cuts"])
         );
     }
 

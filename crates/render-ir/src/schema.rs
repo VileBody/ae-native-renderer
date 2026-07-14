@@ -478,6 +478,9 @@ pub struct TextCharStyle {
     pub font: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub font_size: Option<f32>,
+    /// Sparse TextDocument fill-color override keyed by Unicode scalar index.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<[u8; 4]>,
     /// After Effects TextDocument fauxItalic on this Unicode scalar.
     #[serde(default)]
     pub faux_italic: bool,

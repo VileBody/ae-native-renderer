@@ -955,7 +955,14 @@ fn import_text_layer(
         center_source_rect_y: true,
         justification: render_ir::TextJustification::Center,
         fill: color_value_to_rgba(text_base.get("fillColor"), [255, 255, 255, 255]),
-        box_: Some(text_box_for(&transform, font_size, leading, &text, comp)),
+        box_: Some(text_box_for(
+            &layer.text_data,
+            &transform,
+            font_size,
+            leading,
+            &text,
+            comp,
+        )),
         transform,
         text_animators: text_animators_of(layer),
         effects,
@@ -1024,11 +1031,17 @@ fn text_char_styles(text_data: &Value) -> Vec<render_ir::TextCharStyle> {
                 .or_else(|| style.get("faux_italic"))
                 .and_then(Value::as_bool)
                 .unwrap_or(false);
-            (font.is_some() || font_size.is_some() || faux_italic).then_some(
+            // TextDocument sparse styles carry RGB triples. Unlike a raster
+            // pixel, a missing fourth component means opaque, not transparent.
+            let fill = style
+                .get("fillColor")
+                .map(|value| color_value_to_rgba(Some(value), [0, 0, 0, 255]));
+            (font.is_some() || font_size.is_some() || fill.is_some() || faux_italic).then_some(
                 render_ir::TextCharStyle {
                     index,
                     font,
                     font_size,
+                    fill,
                     faux_italic,
                 },
             )
@@ -1803,19 +1816,37 @@ fn color_component_to_u8(value: f64) -> u8 {
 }
 
 fn text_box_for(
+    text_data: &Value,
     transform: &render_ir::Transform2D,
     font_size: f32,
     leading: Option<f32>,
     text: &str,
     comp: &CompSpec,
 ) -> render_ir::Rect {
+    let explicit_box = text_data
+        .get("box_text")
+        .and_then(Value::as_array)
+        .and_then(|box_text| {
+            let width = box_text.first()?.as_f64()? as f32;
+            let height = box_text.get(1)?.as_f64()? as f32;
+            (width.is_finite() && height.is_finite() && width > 0.0 && height > 0.0)
+                .then_some((width, height))
+        });
     let line_count = text.lines().count().max(1) as f32;
     let line_height = leading.unwrap_or(font_size * 1.2).max(font_size);
-    let height = (line_height * line_count).max(font_size * 2.0).max(1.0);
+    let (width, height) = explicit_box.unwrap_or_else(|| {
+        (
+            comp.w as f32,
+            (line_height * line_count).max(font_size * 2.0).max(1.0),
+        )
+    });
     render_ir::Rect {
-        x: transform.anchor[0] - transform.position[0],
+        // The JSX gives boxText dimensions in the local TextDocument space;
+        // sourceRect centering then places that rectangle around the layer's
+        // anchor/position pair. Flattened precomps keep the same local origin.
+        x: transform.anchor[0] - width / 2.0,
         y: transform.anchor[1] - height / 2.0,
-        w: comp.w as f32,
+        w: width,
         h: height,
     }
 }
@@ -2107,6 +2138,16 @@ mod color_management_tests {
     }
 
     #[test]
+    fn text_document_preserves_opaque_rgb_focus_fill() {
+        let styles = text_char_styles(&json!({
+            "char_styles_ungrouped": [{"i": 3, "fillColor": [0.898, 0.082, 0.082]}]
+        }));
+        assert_eq!(styles.len(), 1);
+        assert_eq!(styles[0].index, 3);
+        assert_eq!(styles[0].fill, Some([229, 21, 21, 255]));
+    }
+
+    #[test]
     fn text_document_preserves_outline_only_paint() {
         let effect = text_paint_effect(&json!({
             "applyFill": false,
@@ -2142,7 +2183,44 @@ mod color_management_tests {
             bg_color: None,
             extra: BTreeMap::new(),
         };
-        let rect = text_box_for(&transform, 80.0, Some(114.0), "FIRST\nSECOND", &comp);
+        let rect = text_box_for(
+            &Value::Null,
+            &transform,
+            80.0,
+            Some(114.0),
+            "FIRST\nSECOND",
+            &comp,
+        );
         assert_eq!(rect.h, 228.0);
+    }
+
+    #[test]
+    fn text_document_box_text_is_preserved_for_wrapping() {
+        let transform = render_ir::Transform2D::default();
+        let comp = CompSpec {
+            name: "Comp 1".to_string(),
+            w: 1080,
+            h: 1920,
+            fps: 24.0,
+            dur: 1.0,
+            pixel_aspect: None,
+            work_area_start: None,
+            work_area_duration: None,
+            display_start_time: None,
+            bg_color: None,
+            extra: BTreeMap::new(),
+        };
+        let rect = text_box_for(
+            &json!({"box_text": [900, 160]}),
+            &transform,
+            60.0,
+            Some(80.0),
+            "ПРИЛОЖИЛИ ТЕ КТО ДОСТИГ",
+            &comp,
+        );
+        assert_eq!(
+            (rect.x, rect.y, rect.w, rect.h),
+            (-450.0, -80.0, 900.0, 160.0)
+        );
     }
 }

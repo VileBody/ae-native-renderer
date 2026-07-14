@@ -313,8 +313,7 @@ fn layout_with_font(
         .as_deref()
         .and_then(|bytes| Face::parse(bytes, 0).ok());
     let box_rect = req.box_rect.unwrap_or([0.0, 0.0, f32::MAX, f32::MAX]);
-    let lines: Vec<&str> = req.text.split('\n').collect();
-    let lines = if lines.is_empty() { vec![""] } else { lines };
+    let lines = wrapped_layout_lines(req, font);
     let line_height = effective_line_height(
         req.leading,
         req.font_size,
@@ -325,12 +324,12 @@ fn layout_with_font(
     let mut glyphs = Vec::new();
     let mut telemetry_glyphs = Vec::new();
     let mut telemetry_line_boxes = Vec::new();
-    let mut char_offset = 0usize;
     let mut word_index = 0usize;
     let mut in_word = false;
     let mut seen_word = false;
 
-    for (line_index, line) in lines.iter().enumerate() {
+    for (line_index, (line, char_offset)) in lines.iter().enumerate() {
+        let char_offset = *char_offset;
         let line_char_count = line.chars().count();
         let whitespace_count = line.chars().filter(|ch| ch.is_whitespace()).count();
         let has_font_size_override = line.chars().enumerate().any(|(local_index, _)| {
@@ -519,7 +518,6 @@ fn layout_with_font(
             line_glyph_bbox,
             box_rect,
         ));
-        char_offset += line_char_count + 1;
         in_word = false;
         baseline += line_height;
     }
@@ -545,6 +543,73 @@ fn layout_with_font(
         },
         req,
     )
+}
+
+/// Returns explicit and box-wrapped lines while keeping each line's indices in
+/// the original TextDocument string. Sparse font/fill overrides therefore stay
+/// attached to the same AE characters after a word moves to the next line.
+fn wrapped_layout_lines(req: &TextLayoutRequest, font: &Font) -> Vec<(String, usize)> {
+    let max_width = req
+        .box_rect
+        .map(|rect| rect[2])
+        .filter(|width| width.is_finite() && *width > 0.0);
+    let mut lines = Vec::new();
+    let mut base_index = 0usize;
+
+    for source_line in req.text.split('\n') {
+        if max_width.is_none() || source_line.trim().is_empty() {
+            lines.push((source_line.to_string(), base_index));
+            base_index += source_line.chars().count() + 1;
+            continue;
+        }
+
+        let mut current = String::new();
+        let mut current_start = base_index;
+        let chars = source_line.chars().collect::<Vec<_>>();
+        let mut cursor = 0usize;
+        while cursor < chars.len() {
+            while cursor < chars.len() && chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            if cursor >= chars.len() {
+                break;
+            }
+            let word_start = cursor;
+            while cursor < chars.len() && !chars[cursor].is_whitespace() {
+                cursor += 1;
+            }
+            let word = chars[word_start..cursor].iter().collect::<String>();
+            let candidate = if current.is_empty() {
+                word.clone()
+            } else {
+                format!("{current} {word}")
+            };
+            let candidate_start = if current.is_empty() {
+                base_index + word_start
+            } else {
+                current_start
+            };
+            let candidate_width =
+                measure_line_fontdue_styled(font, &candidate, candidate_start, req);
+            if !current.is_empty() && candidate_width > max_width.unwrap_or(f32::MAX) {
+                lines.push((current, current_start));
+                current = word;
+                current_start = base_index + word_start;
+            } else {
+                if current.is_empty() {
+                    current_start = candidate_start;
+                }
+                current = candidate;
+            }
+        }
+        lines.push((current, current_start));
+        base_index += source_line.chars().count() + 1;
+    }
+
+    if lines.is_empty() {
+        lines.push((String::new(), 0));
+    }
+    lines
 }
 
 pub(crate) fn font_line_height(_font: &Font, font_size: f32) -> f32 {
@@ -1520,6 +1585,39 @@ mod tests {
         assert_approx_eps(glyphs[0].bbox[0], 28.466008, 0.001);
         assert_approx_eps(glyphs[0].bbox[1], 179.903999, 0.001);
         assert_approx_eps(glyphs[0].bbox[3], 41.992001, 0.001);
+    }
+
+    #[test]
+    fn boxed_text_wraps_words_without_reindexing_sparse_styles() {
+        let Some(path) = montserrat_bolditalic_fixture() else {
+            return;
+        };
+        let layout = layout_text(&TextLayoutRequest {
+            text: "ПРИЛОЖИЛИ ТЕ КТО ДОСТИГ".to_string(),
+            font_id: path.display().to_string(),
+            font_size: 60.0,
+            font_overrides: Vec::new(),
+            font_size_overrides: Vec::new(),
+            faux_italic_chars: Vec::new(),
+            tracking: -25.0,
+            leading: Some(80.0),
+            center_source_rect_y: true,
+            justification: TextJustification::Center,
+            box_rect: Some([0.0, 0.0, 900.0, 160.0]),
+        })
+        .unwrap();
+
+        assert_eq!(layout.telemetry.line_boxes.len(), 2);
+        assert!(layout
+            .glyphs
+            .iter()
+            .filter(|glyph| glyph.char_index < 17)
+            .all(|glyph| glyph.line_index == 0));
+        assert!(layout
+            .glyphs
+            .iter()
+            .filter(|glyph| glyph.char_index >= 17)
+            .all(|glyph| glyph.line_index == 1));
     }
 
     #[test]

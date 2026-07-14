@@ -1787,6 +1787,7 @@ fn bot_focus_char_styles(text: &str, segment: &BotSubtitleSegment) -> Vec<TextCh
                     index,
                     font: Some("Montserrat-BoldItalic".to_string()),
                     font_size: None,
+                    fill: None,
                     faux_italic: false,
                 }),
             );

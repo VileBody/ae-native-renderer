@@ -1133,7 +1133,11 @@ fn render_layer_stub(
             let local_width = canvas_dim(rect.w);
             let local_height = canvas_dim(rect.h);
             let effective_tracking = evaluate_text_tracking(*tracking, text_animators, text_time);
-            let paint = resolve_text_paint(*fill, effects);
+            let mut paint = resolve_text_paint(*fill, effects);
+            paint.char_fill_overrides = char_styles
+                .iter()
+                .filter_map(|style| style.fill.map(|fill| (style.index, fill)))
+                .collect();
             let request = TextLayoutRequest {
                 text: text.clone(),
                 font_id: font.clone(),
@@ -1596,6 +1600,10 @@ fn render_layer_with_parent_matrix(
             let effective_tracking = evaluate_text_tracking(*tracking, text_animators, time);
             let mut paint = resolve_text_paint(*fill, effects);
             paint.stroke_width *= raster_scale;
+            paint.char_fill_overrides = char_styles
+                .iter()
+                .filter_map(|style| style.fill.map(|fill| (style.index, fill)))
+                .collect();
             let request = TextLayoutRequest {
                 text: text.clone(),
                 font_id: font.clone(),
@@ -3707,6 +3715,7 @@ fn resolve_text_paint(fill: [u8; 4], effects: &[EffectSpec]) -> TextPaintStyle {
             Some(paint) => paint.fill.unwrap_or(fill),
             None => fill,
         },
+        char_fill_overrides: Vec::new(),
         stroke_color: extension.as_ref().and_then(|paint| paint.stroke_color),
         stroke_width: extension
             .as_ref()

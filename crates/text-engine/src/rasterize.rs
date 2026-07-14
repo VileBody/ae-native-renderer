@@ -18,9 +18,11 @@ const PARALLEL_TEXT_PIXEL_THRESHOLD: usize = 8_000_000;
 const FONTDUE_COVERAGE_CACHE_CAPACITY: usize = 2_048;
 const FAUX_ITALIC_SHEAR: f32 = 0.212_556_57; // tan(12deg), close to AE faux italic.
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct TextPaintStyle {
     pub fill: [u8; 4],
+    /// Sparse TextDocument fill overrides keyed by Unicode scalar index.
+    pub char_fill_overrides: Vec<(usize, [u8; 4])>,
     pub stroke_color: Option<[u8; 4]>,
     pub stroke_width: f32,
     pub stroke_over_fill: bool,
@@ -30,6 +32,7 @@ impl TextPaintStyle {
     pub fn fill(fill: [u8; 4]) -> Self {
         Self {
             fill,
+            char_fill_overrides: Vec::new(),
             stroke_color: None,
             stroke_width: 0.0,
             stroke_over_fill: false,
@@ -230,7 +233,13 @@ pub fn rasterize_text_with_layout_and_paint(
             coverage.bitmap.as_ref(),
             clipped_bounds,
         );
-        let draw_fill = paint.fill[3] > 0;
+        let fill_color = paint
+            .char_fill_overrides
+            .iter()
+            .find(|(index, _)| *index == glyph.char_index)
+            .map(|(_, fill)| *fill)
+            .unwrap_or(paint.fill);
+        let draw_fill = fill_color[3] > 0;
         let draw_stroke = paint
             .stroke_color
             .is_some_and(|color| color[3] > 0 && paint.stroke_width > 0.0);
@@ -258,7 +267,7 @@ pub fn rasterize_text_with_layout_and_paint(
             skip_reason,
             glyph_matrix: [font_size, 0.0, 0.0, 0.0, font_size, 0.0, 0.0, 0.0, 1.0],
             text_matrix: [1.0, 0.0, 0.0, 0.0, 1.0, 0.0, glyph.x, baseline, 1.0],
-            fill_rgba,
+            fill_rgba: rgba_u8_to_f32(fill_color),
             stroke_rgba,
             stroke_width: paint.stroke_width.max(0.0),
             line_join: 0,
@@ -291,7 +300,7 @@ pub fn rasterize_text_with_layout_and_paint(
                     coverage.width,
                     coverage.height,
                     coverage.bitmap.as_ref(),
-                    paint.fill,
+                    fill_color,
                     clipped_bounds,
                 );
             }
@@ -2350,6 +2359,7 @@ mod tests {
             80,
             TextPaintStyle {
                 fill: [255, 255, 255, 255],
+                char_fill_overrides: Vec::new(),
                 stroke_color: Some([0, 0, 0, 255]),
                 stroke_width: 5.0,
                 stroke_over_fill: false,
