@@ -1425,10 +1425,9 @@ fn audio_filter(plans: &[AudioTrackPlan]) -> String {
         if plan.level_db.abs() > 1e-9 {
             filters.push(format!("volume={:.6}dB", plan.level_db));
         }
-        let silence_gain = 10f64.powf(plan.min_db.min(0.0) / 20.0).clamp(0.0, 1.0);
         if plan.fade_in > 0.0 {
             filters.push(format!(
-                "afade=t=in:st=0:d={}:curve=qsin:silence={silence_gain:.9}:unity=1",
+                "afade=t=in:st=0:d={}:curve=qsin",
                 ffmpeg_seconds(plan.fade_in)
             ));
         }
@@ -1436,7 +1435,7 @@ fn audio_filter(plans: &[AudioTrackPlan]) -> String {
             let start = (plan.layer_duration - plan.fade_out).max(0.0);
             if start < plan.duration {
                 filters.push(format!(
-                    "afade=t=out:st={}:d={}:curve=qsin:silence={silence_gain:.9}:unity=1",
+                    "afade=t=out:st={}:d={}:curve=qsin",
                     ffmpeg_seconds(start),
                     ffmpeg_seconds(plan.fade_out)
                 ));
