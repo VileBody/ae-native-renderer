@@ -623,7 +623,7 @@ async fn run_container(
         .arg(format!("{}:/job:Z", work_dir.display()))
         .args(["--entrypoint", "/bin/sh"])
         .arg(&config.renderer_image)
-        .args(["sh", "-lc", script])
+        .args(["-lc", script])
         .output()
         .await
         .context("start podman render container")?;
