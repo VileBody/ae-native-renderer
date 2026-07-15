@@ -497,6 +497,9 @@ async fn normalize_native_request(path: &FsPath) -> Result<()> {
         "schema".to_string(),
         Value::String("ae-native-renderer.render-request.v1".to_string()),
     );
+    object
+        .entry("action".to_string())
+        .or_insert(Value::String("render".to_string()));
     let assets = object.entry("assetsSpec").or_insert_with(|| json!({}));
     assets
         .as_object_mut()
@@ -931,5 +934,22 @@ mod tests {
     fn request_hash_is_stable() {
         let request = valid_request();
         assert_eq!(request_hash(&request), request_hash(&request));
+    }
+
+    #[tokio::test]
+    async fn normalizes_extracted_payload_into_render_request() {
+        let path = std::env::temp_dir().join(format!("rust-gen-normalize-{}.json", now_ms()));
+        fs::write(&path, serde_json::to_vec(&json!({ "projectSpec": {} })).unwrap())
+            .await
+            .unwrap();
+
+        normalize_native_request(&path).await.unwrap();
+
+        let normalized: Value = serde_json::from_slice(&fs::read(&path).await.unwrap()).unwrap();
+        assert_eq!(normalized["schema"], "ae-native-renderer.render-request.v1");
+        assert_eq!(normalized["action"], "render");
+        assert_eq!(normalized["assetsSpec"]["root"], "/job");
+        assert_eq!(normalized["outputSpec"]["directory"], "/job/out");
+        let _ = fs::remove_file(path).await;
     }
 }
