@@ -31,6 +31,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--render-cli", type=Path, default=ROOT / "target" / "release" / "render-cli")
     parser.add_argument("--case", action="append", dest="cases")
+    parser.add_argument("--render-video", action="store_true",
+                        help="Render a full native MP4 in addition to frame-locked controls; enables audio mux validation.")
+    parser.add_argument("--discard-native-video", action="store_true",
+                        help="After extracting controls, delete the full native MP4 and render frames to keep large corpus runs bounded.")
     return parser.parse_args()
 
 
@@ -57,6 +61,12 @@ def select_cases(manifest: dict[str, Any], requested: list[str] | None) -> list[
 
 
 def unpack_job(archive_root: Path, job_id: str, cache_root: Path) -> Path:
+    extracted_matches = sorted(archive_root.glob(f"**/job_folder/{job_id}/app/render.jsx"))
+    if extracted_matches:
+        return extracted_matches[0].parent
+    extracted_matches = sorted(archive_root.glob(f"**/{job_id}/app/render.jsx"))
+    if extracted_matches:
+        return extracted_matches[0].parent
     app_root = cache_root / job_id / "app"
     if (app_root / "render.jsx").is_file():
         return app_root
@@ -142,6 +152,10 @@ def ae_frame(reference: Path, frame: int, out: Path) -> None:
          "-vf", f"select=eq(n\\,{frame})", "-frames:v", "1", out])
 
 
+def video_frame(reference: Path, frame: int, out: Path) -> None:
+    ae_frame(reference, frame, out)
+
+
 def hstack(native: Path, ae: Path, out: Path) -> None:
     run(["ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error", "-y", "-i", native, "-i", ae,
          "-filter_complex", "[0:v][1:v]hstack=inputs=2", "-frames:v", "1", out])
@@ -219,7 +233,12 @@ def main() -> None:
         request["policy"] = {"onUnsupported": "report"}
         request["assetsSpec"] = {"root": str(app_root)}
         native_dir = (case_dir / "native").resolve()
-        request["outputSpec"] = {"directory": str(native_dir), "frames": frames}
+        native_video = case_dir / "native.mp4"
+        request["outputSpec"] = {"directory": str(native_dir)}
+        if args.render_video:
+            request["outputSpec"]["video"] = str(native_video.resolve())
+        else:
+            request["outputSpec"]["frames"] = frames
         request["action"] = "render"
         render_request = case_dir / "request.render.json"
         render_request.write_text(json.dumps(request, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -233,6 +252,9 @@ def main() -> None:
         controls: list[dict[str, Any]] = []
         for label, time, frame in zip(labels, times, frames, strict=True):
             native = native_dir / "render" / "frames" / f"frame_{frame:06d}.png"
+            if args.render_video:
+                native = case_dir / f"native_{frame:06d}.png"
+                video_frame(native_video, frame, native)
             if not native.is_file():
                 raise SystemExit(f"native frame missing: {native}")
             ae = case_dir / f"ae_{frame:06d}.png"
@@ -250,6 +272,14 @@ def main() -> None:
             "side_by_side_video": str(movie), "response": str(response),
             "capabilities": capability_summary(response),
         }
+        if args.render_video:
+            review["native_video"] = str(native_video)
+            if args.discard_native_video and native_video.exists():
+                native_video.unlink()
+                review["native_video_discarded"] = True
+            if args.discard_native_video and native_dir.exists():
+                shutil.rmtree(native_dir)
+                review["native_render_dir_discarded"] = True
         (case_dir / "review.json").write_text(json.dumps(review, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
         index.append(review)
 
