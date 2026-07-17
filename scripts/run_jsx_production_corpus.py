@@ -194,6 +194,45 @@ def capability_summary(response: Path) -> dict[str, Any]:
     }
 
 
+def infer_f3_ids_from_case_metadata(case: dict[str, Any], app_root: Path) -> list[str]:
+    """Recover public F3 ids when legacy JSX comments omit stable ids.
+
+    Older /bigtest exports sometimes contain the F3 injected section and timing
+    but no machine-readable effect id.  The acceptance manifest and exported job
+    folder still preserve the public selector label, so use that metadata to
+    keep the corpus request equivalent to the user's actual bot choice.
+    """
+    haystack = " ".join(
+        [str(case.get("id") or ""), str(app_root)]
+        + [str(item) for item in case.get("requirements", [])]
+    ).lower()
+    tokens = [
+        ("минимакс", "minimax"),
+        ("minimax", "minimax"),
+        ("неон", "neon_extract"),
+        ("neon", "neon_extract"),
+        ("старая камера", "old_camera"),
+        ("old camera", "old_camera"),
+        ("old_camera", "old_camera"),
+    ]
+    detected = [effect_id for needle, effect_id in tokens if needle in haystack]
+    return sorted(set(detected))
+
+
+def patch_empty_f3_ids_from_case_metadata(request: dict[str, Any], case: dict[str, Any], app_root: Path) -> None:
+    inferred = infer_f3_ids_from_case_metadata(case, app_root)
+    if not inferred:
+        return
+    for operation in request.get("visualOps", []):
+        if operation.get("type") != "hook.f3.effect.v1":
+            continue
+        params = operation.setdefault("params", {})
+        ids = params.get("detected_effect_ids")
+        if isinstance(ids, list) and not ids:
+            params["detected_effect_ids"] = inferred
+            params["detected_effect_ids_source"] = "jsx-production-corpus-metadata"
+
+
 def main() -> None:
     args = parse_args()
     manifest = json.loads(args.manifest.read_text(encoding="utf-8"))
@@ -213,6 +252,7 @@ def main() -> None:
         extracted = case_dir / "request.extracted.json"
         run([render_cli, "extract-jsx-request", "--jsx", app_root / "render.jsx", "--out", extracted])
         request = json.loads(extracted.read_text(encoding="utf-8"))
+        patch_empty_f3_ids_from_case_metadata(request, case, app_root)
         comps = request.get("compsSpec") or []
         comp_fps = comps[0].get("fps") if comps and isinstance(comps[0], dict) else None
         fps = float(comp_fps or default_fps)
