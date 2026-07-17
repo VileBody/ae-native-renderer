@@ -250,6 +250,33 @@ fn unsupported_policy_error_returns_exit_three_without_rendering() {
 }
 
 #[test]
+fn unknown_effect_param_policy_error_returns_exit_three_without_rendering() {
+    let scratch = Scratch::new("unsupported-effect-param");
+    let mut request = fixture_request();
+    request["action"] = json!("render");
+    request["footage_layers"][0]["effects"] = json!({
+        "ADBE Drop Shadow": {
+            "mystery": {"value": 42}
+        }
+    });
+    request["policy"]["onUnsupported"] = json!("error");
+    request["outputSpec"]["directory"] = json!("out");
+
+    let output = run_json(&scratch.0, &serde_json::to_vec(&request).unwrap());
+    assert_eq!(output.status.code(), Some(3));
+    let response = response(&output);
+    assert_eq!(response["status"], "unsupported");
+    assert_eq!(response["ok"], false);
+    assert!(has_capability(
+        &response,
+        "unsupported",
+        "effect_param.ADBE Drop Shadow.mystery",
+        "red-solid"
+    ));
+    assert!(!scratch.0.join("out").exists());
+}
+
+#[test]
 fn approximate_native_operation_is_allowed_by_unsupported_error_policy() {
     let scratch = Scratch::new("approximate-native");
     let mut request = fixture_request();
@@ -269,6 +296,39 @@ fn approximate_native_operation_is_allowed_by_unsupported_error_policy() {
     assert_eq!(response["status"], "rendered");
     assert_eq!(response["ok"], true);
     assert!(scratch.0.join("out/render/frames").is_dir());
+}
+
+#[test]
+fn debug_spec_can_force_full_effect_stage_telemetry_for_video_output() {
+    let scratch = Scratch::new("debug-spec-stage-telemetry");
+    let mut request = fixture_request();
+    request["action"] = json!("render");
+    request["outputSpec"]["directory"] = json!("out");
+    request["outputSpec"]["video"] = json!("result.mp4");
+    request["debugSpec"] = json!({
+        "captureEffectStages": true,
+        "sourceLayers": true,
+        "preEffects": true,
+        "textMasks": true,
+        "adjustmentResults": true,
+        "precompResults": true,
+        "finalComposite": true
+    });
+
+    let output = run_json(&scratch.0, &serde_json::to_vec(&request).unwrap());
+    assert!(output.status.success());
+    let response = response(&output);
+    assert_eq!(response["status"], "rendered");
+
+    let normalized: Value =
+        serde_json::from_slice(&fs::read(scratch.0.join("out/request.normalized.json")).unwrap())
+            .unwrap();
+    assert_eq!(normalized["debugSpec"]["captureEffectStages"], true);
+    assert_eq!(normalized["debugSpec"]["finalComposite"], true);
+
+    let render_log = fs::read_to_string(scratch.0.join("out/render/render-log.jsonl")).unwrap();
+    let start_event: Value = serde_json::from_str(render_log.lines().next().unwrap()).unwrap();
+    assert_eq!(start_event["output"]["telemetry"], "full");
 }
 
 #[test]

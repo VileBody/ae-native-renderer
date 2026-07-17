@@ -1,4 +1,7 @@
-use crate::{CapabilityFinding, CapabilityStatus, CompSpec, GeneratedPayload, VisualOperation};
+use crate::{
+    style_registry::StyleRegistry, CapabilityFinding, CapabilityStatus, CompSpec, GeneratedPayload,
+    VisualOperation,
+};
 use render_ir::{
     BlendMode, EffectSpec, KeyframeEase, Layer, Rect, ScalarKeyframe, TextAnimatorSpec,
     TextCharStyle, TextExpressionSelector, TextJustification, TextPaintSpec, TextRangeSelector,
@@ -73,9 +76,17 @@ pub fn lower_visual_operations(
             "subtitle.bot.template_4th.v1" => {
                 lower_bot_subtitles(operation, main_comp, "template_4th")
             }
-            "subtitle.bot.legacy_blocks.v1" => {
-                lower_bot_subtitles(operation, main_comp, "legacy_blocks")
-            }
+            "subtitle.bot.legacy_blocks.v1" => Some(VisualLoweringResult {
+                layers: Vec::new(),
+                findings: vec![CapabilityFinding {
+                    status: CapabilityStatus::NotImplemented,
+                    feature: "lower.visual_op.subtitle.bot.legacy_blocks.v1".to_string(),
+                    layer: operation.id.clone(),
+                    detail:
+                        "legacy macro-block renderer is intentionally out of native P0/P1 scope"
+                            .to_string(),
+                }],
+            }),
             "style.semantic.v1" => lower_semantic_style(operation, main_comp),
             "hook.f1.sound.v1" => lower_f1(operation, main_comp),
             "hook.f2.object.v1" => lower_f2(operation, main_comp),
@@ -88,14 +99,16 @@ pub fn lower_visual_operations(
             let layer_count = lowered.layers.len();
             result.layers.append(&mut lowered.layers);
             result.findings.append(&mut lowered.findings);
-            result.findings.push(CapabilityFinding {
-                status: CapabilityStatus::Approximate,
-                feature: format!("lower.visual_op.{}", operation.kind),
-                layer: operation.id.clone(),
-                detail: format!(
-                    "lowered to {layer_count} native layers; remaining parity gaps are reported by the operation capability"
-                ),
-            });
+            if layer_count > 0 {
+                result.findings.push(CapabilityFinding {
+                    status: CapabilityStatus::Approximate,
+                    feature: format!("lower.visual_op.{}", operation.kind),
+                    layer: operation.id.clone(),
+                    detail: format!(
+                        "lowered to {layer_count} native layers; remaining parity gaps are reported by the operation capability"
+                    ),
+                });
+            }
         }
     }
     lower_implicit_impulse_flash(payload, main_comp, &mut result);
@@ -2084,6 +2097,17 @@ fn lower_semantic_style(
     comp: &CompSpec,
 ) -> Option<VisualLoweringResult> {
     let style = operation_string_param(operation, &["styleId", "style_id"])?;
+    let Some(metadata) = StyleRegistry::metadata(style) else {
+        return Some(VisualLoweringResult {
+            layers: Vec::new(),
+            findings: vec![CapabilityFinding {
+                status: CapabilityStatus::NotImplemented,
+                feature: format!("lower.visual_op.style.semantic.v1.{style}"),
+                layer: operation.id.clone(),
+                detail: "style id is not in the frozen bot semantic style catalog".to_string(),
+            }],
+        });
+    };
     let effects = match style {
         "ftg_al16_default_v1" => vec![
             EffectSpec {
@@ -2133,17 +2157,7 @@ fn lower_semantic_style(
                 params: json!({"direction": 90.0, "blur_length": 46.0}),
             },
         ],
-        _ => {
-            return Some(VisualLoweringResult {
-                layers: Vec::new(),
-                findings: vec![CapabilityFinding {
-                    status: CapabilityStatus::NotImplemented,
-                    feature: format!("lower.visual_op.style.semantic.v1.{style}"),
-                    layer: operation.id.clone(),
-                    detail: "style id is not in the frozen bot semantic style catalog".to_string(),
-                }],
-            })
-        }
+        _ => unreachable!("style registry and lowering table drifted for {style}"),
     };
     Some(VisualLoweringResult {
         layers: vec![LoweredVisualLayer {
@@ -2159,9 +2173,10 @@ fn lower_semantic_style(
             status: CapabilityStatus::Approximate,
             feature: format!("lower.visual_op.style.semantic.v1.{style}"),
             layer: operation.id.clone(),
-            detail:
-                "semantic AE/plugin stack is represented by a deterministic native approximation"
-                    .to_string(),
+            detail: format!(
+                "semantic AE/plugin stack is represented by a deterministic native approximation: {}",
+                metadata.effect_ids.join(", ")
+            ),
         }],
     })
 }

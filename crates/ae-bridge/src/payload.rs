@@ -341,6 +341,16 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
         for (effect_name, params) in &layer.effects {
             let normalized = normalize_effect_name(effect_name);
             for (param_name, param) in params {
+                if !effect_param_is_known(normalized, param_name) {
+                    findings.push(CapabilityFinding {
+                        status: CapabilityStatus::Unsupported,
+                        feature: format!("effect_param.{normalized}.{param_name}"),
+                        layer: Some(layer.name.clone()),
+                        detail: format!(
+                            "effect parameter '{param_name}' is not in the native registry metadata for {normalized}"
+                        ),
+                    });
+                }
                 if let Some(expression) = param.expression.as_deref() {
                     if expression.trim().is_empty() {
                         continue;
@@ -1941,10 +1951,13 @@ fn visual_operation_status(operation: &VisualOperation) -> (CapabilityStatus, &'
         "subtitle.bot.impulse_2nd.v1"
         | "subtitle.bot.scenes_3rd.v1"
         | "subtitle.bot.scenes_3rd_single_step.v1"
-        | "subtitle.bot.template_4th.v1"
-        | "subtitle.bot.legacy_blocks.v1" => (
+        | "subtitle.bot.template_4th.v1" => (
             CapabilityStatus::Approximate,
             "bot planner segments lower directly to native text/reveal layers; source family typography and AE effect-stack parity remain approximate",
+        ),
+        "subtitle.bot.legacy_blocks.v1" => (
+            CapabilityStatus::NotImplemented,
+            "legacy macro-block renderer is intentionally out of native P0/P1 scope; request is preserved and rejected explicitly",
         ),
         "style.semantic.v1" => (
             CapabilityStatus::Approximate,
@@ -1986,6 +1999,119 @@ fn visual_operation_status(operation: &VisualOperation) -> (CapabilityStatus, &'
             CapabilityStatus::Unsupported,
             "unknown visual operation; it is preserved in diagnostics and never silently dropped",
         ),
+    }
+}
+
+fn effect_param_is_known(effect_name: &str, param_name: &str) -> bool {
+    if is_ae_numeric_param(param_name) {
+        return true;
+    }
+    let Some(known) = effect_known_params(effect_name) else {
+        return true;
+    };
+    known.contains(&param_name)
+}
+
+fn is_ae_numeric_param(param_name: &str) -> bool {
+    let bytes = param_name.as_bytes();
+    bytes.len() == 4 && bytes.iter().all(u8::is_ascii_digit)
+}
+
+fn effect_known_params(effect_name: &str) -> Option<&'static [&'static str]> {
+    match effect_name {
+        "ANR Analog Glitch" => Some(&[
+            "contrast",
+            "red_gain",
+            "wave_amplitude",
+            "wave_width",
+            "grid_w",
+            "grid_h",
+            "glow_radius",
+        ]),
+        "ANR F3 Stylize" => Some(&[
+            "mode",
+            "amount",
+            "threshold",
+            "softness",
+            "composite_original",
+            "magentas",
+            "tint",
+            "tint_black",
+            "height",
+            "width",
+            "speed",
+        ]),
+        "ANR Shape Overlay" => Some(&[
+            "shape",
+            "opacity",
+            "thickness",
+            "size",
+            "fill",
+            "stroke",
+            "seed",
+        ]),
+        "ANR Vertical Gradient" => Some(&[
+            "text_paint",
+            "top",
+            "bottom",
+            "brightness",
+            "start_xy",
+            "end_xy",
+            "source_match_name",
+            "sapphire_params",
+        ]),
+        "ADBE Box Blur2" => Some(&[
+            "radius",
+            "iterations",
+            "repeat_edge_pixels",
+            "horizontal",
+            "vertical",
+        ]),
+        "ADBE Drop Shadow" => Some(&[
+            "color",
+            "opacity",
+            "direction",
+            "distance",
+            "softness",
+            "source_match_name",
+            "sapphire_params",
+        ]),
+        "ADBE Motion Blur" => Some(&["direction", "blur_length"]),
+        "ADBE Gaussian Blur 2" => Some(&["blurriness", "repeat_edge_pixels"]),
+        "ADBE Glo2" => Some(&[
+            "threshold",
+            "radius",
+            "intensity",
+            "operation",
+            "color",
+            "based_on",
+            "composite_original",
+        ]),
+        "CC Image Wipe" => Some(&["completion", "border_softness"]),
+        "ADBE Invert" => Some(&["channel", "blend_with_original"]),
+        "ADBE Minimax" => Some(&["operation", "channels", "direction", "radius"]),
+        "ADBE Optics Compensation" => Some(&["field_of_view", "reverse", "center"]),
+        "ADBE Posterize Time" => Some(&["frameRate", "frame_rate"]),
+        "ADBE Geometry2" => Some(&[
+            "anchor",
+            "position",
+            "scale",
+            "scale_width",
+            "scale_height",
+            "rotation",
+            "opacity",
+        ]),
+        "ADBE Turbulent Displace" => Some(&[
+            "amount",
+            "size",
+            "offset",
+            "complexity",
+            "evolution",
+            "seed",
+            "pinning",
+            "resize_layer",
+        ]),
+        _ => None,
     }
 }
 
@@ -2117,6 +2243,67 @@ mod color_management_tests {
             findings[0].status,
             CapabilityStatus::NotImplemented
         ));
+    }
+
+    #[test]
+    fn unknown_effect_param_is_reported_explicitly() {
+        let payload = GeneratedPayload {
+            project_spec: ProjectSpec {
+                main_comp_name: "Comp 1".to_string(),
+                subtitles_mode: None,
+                extra: BTreeMap::new(),
+            },
+            comps_spec: vec![CompSpec {
+                name: "Comp 1".to_string(),
+                w: 64,
+                h: 64,
+                fps: 24.0,
+                dur: 1.0,
+                pixel_aspect: None,
+                work_area_start: None,
+                work_area_duration: None,
+                display_start_time: None,
+                bg_color: None,
+                extra: BTreeMap::new(),
+            }],
+            footage_layers: vec![PayloadLayer {
+                name: "adjustment".to_string(),
+                kind: "adjustment".to_string(),
+                in_point: 0.0,
+                out_point: 1.0,
+                z_index: 1,
+                text: String::new(),
+                adjustment_layer: true,
+                props: BTreeMap::new(),
+                effects: BTreeMap::from([(
+                    "ADBE Drop Shadow".to_string(),
+                    BTreeMap::from([(
+                        "mystery".to_string(),
+                        PropertySpec {
+                            match_name: None,
+                            value: Value::Null,
+                            keyframes: Vec::new(),
+                            expression: None,
+                            extra: BTreeMap::new(),
+                        },
+                    )]),
+                )]),
+                text_data: Value::Null,
+                source_rect: json!({}),
+                extra: BTreeMap::new(),
+            }],
+            text_layers: Vec::new(),
+            visual_ops: Vec::new(),
+            payload_version: None,
+        };
+
+        let report = validate_payload(&payload, true);
+        assert!(!report.ok);
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Unsupported
+                && finding.feature == "effect_param.ADBE Drop Shadow.mystery"
+                && finding.layer.as_deref() == Some("adjustment")
+        }));
     }
 
     #[test]

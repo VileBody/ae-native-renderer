@@ -965,6 +965,7 @@ fn render(
             job_archive.clone(),
             mp4_path,
             true,
+            false,
         )?;
         println!(
             "render.done scene={} out={}",
@@ -983,6 +984,7 @@ fn render(
         mp4.as_deref(),
         None,
         true,
+        false,
     )?;
     println!(
         "render.done scene={} out={}",
@@ -1001,6 +1003,7 @@ fn render_png_output(
     mp4: Option<&Path>,
     selected_frames: Option<&[u32]>,
     emit_progress: bool,
+    capture_effect_debug: bool,
 ) -> anyhow::Result<()> {
     if selected_frames.is_some() && mp4.is_some() {
         anyhow::bail!(
@@ -1022,7 +1025,7 @@ fn render_png_output(
     write_media_plan(out, &media_plan, prepare_report, emit_progress)?;
     if let Some(frames) = selected_frames {
         render_core::render_png_frames_with_footage(scene, out, &mut footage, frames)?;
-    } else if mp4.is_some() {
+    } else if mp4.is_some() && !capture_effect_debug {
         render_core::render_png_sequence_with_footage_production(scene, out, &mut footage)?;
     } else {
         render_core::render_png_sequence_with_footage(scene, out, &mut footage)?;
@@ -1059,7 +1062,21 @@ fn render_video_output(
     job_archive: Option<PathBuf>,
     mp4: &Path,
     emit_progress: bool,
+    capture_effect_debug: bool,
 ) -> anyhow::Result<()> {
+    if capture_effect_debug {
+        return render_png_output(
+            scene_path,
+            scene,
+            out,
+            assets_root,
+            job_archive,
+            Some(mp4),
+            None,
+            emit_progress,
+            true,
+        );
+    }
     match render_direct_mp4(
         scene_path,
         scene,
@@ -1083,6 +1100,7 @@ fn render_video_output(
                 Some(mp4),
                 None,
                 emit_progress,
+                false,
             )
         }
     }

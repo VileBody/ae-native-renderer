@@ -1,0 +1,92 @@
+{
+  "schema": "ae-native-renderer.native-tunables.v1",
+  "profile": "p0p1-readiness",
+  "notes": [
+    "Production defaults remain compiled into the native effects; this file is the contract surface for non-recompile tuning.",
+    "Unknown keys must be reported by tooling before they are used in production jobs."
+  ],
+  "text": {
+    "baseline_offsets_px": {
+      "default": 0.0,
+      "montserrat_bold_cyrillic": 0.0,
+      "point_semibold_cyrillic": -2.0
+    },
+    "source_rect": {
+      "edge_tolerance_px": 2,
+      "alpha_threshold": 8,
+      "wrap_epsilon_px": 0.5
+    },
+    "reveal": {
+      "min_visible_scale": 0.42,
+      "min_visible_alpha": 0.08,
+      "word_timing_frame_tolerance": 1
+    }
+  },
+  "effects": {
+    "blur": {
+      "box_radius_multiplier": 1.0,
+      "gaussian_sigma_multiplier": 1.0,
+      "repeat_edge_pixels_default": false
+    },
+    "glow": {
+      "radius_multiplier": 1.0,
+      "intensity_multiplier": 1.0,
+      "threshold_offset": 0.0,
+      "composite_original_default": true
+    },
+    "shadow": {
+      "softness_multiplier": 1.0,
+      "opacity_multiplier": 1.0,
+      "distance_multiplier": 1.0
+    },
+    "sampling": {
+      "resampling": "bilinear_premultiplied",
+      "optics_edge": "transparent",
+      "motion_blur_edge": "transparent"
+    },
+    "alpha": {
+      "boundary": "straight_rgba8",
+      "internal": "premultiplied_float",
+      "matte_threshold": 1
+    }
+  },
+  "styles": {
+    "txt_soft_v1": {
+      "glow_radius": 28.0,
+      "glow_intensity": 0.55,
+      "geometry_rotation": 0.15
+    },
+    "txt_punch_v1": {
+      "scale_width": 112.0,
+      "scale_height": 88.0,
+      "motion_blur_length": 32.0
+    },
+    "txt_drop_v1": {
+      "glow_radius": 38.0,
+      "motion_blur_length": 46.0
+    },
+    "ftg_al16_default_v1": {
+      "gaussian_blur": 3.0,
+      "scale_width": 103.0,
+      "scale_height": 103.0,
+      "motion_blur_length": 8.0
+    }
+  },
+  "f3": {
+    "flash_on_cuts": {
+      "opacity": 0.78,
+      "fade_frames": 4
+    },
+    "analog_glitch": {
+      "contrast": 1.08,
+      "wave_amplitude": 4.0,
+      "grid_w": 4,
+      "grid_h": 8
+    },
+    "crystal_glow": {
+      "pre_blur": 12.0,
+      "glow_radius_a": 32.0,
+      "glow_radius_b": 96.0
+    }
+  }
+}

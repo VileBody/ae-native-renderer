@@ -100,6 +100,19 @@
       },
       "additionalProperties": false
     },
+    "debugSpec": {
+      "type": "object",
+      "properties": {
+        "captureEffectStages": { "type": "boolean", "default": false },
+        "sourceLayers": { "type": "boolean", "default": false },
+        "preEffects": { "type": "boolean", "default": false },
+        "textMasks": { "type": "boolean", "default": false },
+        "adjustmentResults": { "type": "boolean", "default": false },
+        "precompResults": { "type": "boolean", "default": false },
+        "finalComposite": { "type": "boolean", "default": false }
+      },
+      "additionalProperties": false
+    },
     "policy": {
       "type": "object",
       "properties": {

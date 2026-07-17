@@ -1,0 +1,120 @@
+{
+  "schema": "ae-native-renderer.p0p1-readiness-corpus.v1",
+  "description": "Contract corpus for active Blast public modes. Local cases are runnable now; external cases require S3/artifact archives before differential rendering.",
+  "local_cases": [
+    {
+      "id": "impulse_long_short",
+      "family": "Impulse",
+      "input": "cases/impulse_long_short.json",
+      "expected_visual_ops": ["subtitle.bot.impulse_2nd.v1", "hook.f3.effect.v1"]
+    },
+    {
+      "id": "scenes_type_1",
+      "family": "Scenes",
+      "input": "cases/scenes_type_1.json",
+      "expected_visual_ops": ["subtitle.bot.scenes_3rd.v1"]
+    },
+    {
+      "id": "scenes_single_step_contract",
+      "family": "Scenes",
+      "input": "cases/scenes_type_1.json",
+      "expected_visual_ops": ["subtitle.bot.scenes_3rd_single_step.v1"],
+      "notes": "Contract mode is covered by adapter/deserializer tests; reuse local phrase geometry until a dedicated bot fixture is exported."
+    },
+    {
+      "id": "tape_focus_flash",
+      "family": "Tape",
+      "input": "cases/tape_focus_flash.json",
+      "expected_visual_ops": ["subtitle.bot.template_4th.v1", "hook.f3.effect.v1"]
+    },
+    {
+      "id": "semantic_footage_stack",
+      "family": "SemanticStyle",
+      "input": "cases/semantic_footage_stack.json",
+      "expected_visual_ops": ["style.semantic.v1"]
+    }
+  ],
+  "external_required_cases": [
+    {
+      "id": "trendy_5th_real_job",
+      "family": "Trendy",
+      "source": "artifact_jobs",
+      "expected_visual_ops": ["subtitle.trendy.v1"],
+      "required_fields": ["word_timings", "fill", "blend", "style"]
+    },
+    {
+      "id": "brat_5th_real_job",
+      "family": "Brat",
+      "source": "artifact_jobs",
+      "expected_visual_ops": ["subtitle.brat.v1"],
+      "required_fields": ["word_timings", "bpm", "fill", "blend"]
+    },
+    {
+      "id": "bigtest_f1_sound",
+      "family": "F1",
+      "source": "blast /bigtest",
+      "expected_visual_ops": ["hook.f1.sound.v1"],
+      "required_assets": ["audio"]
+    },
+    {
+      "id": "bigtest_f2_object",
+      "family": "F2",
+      "source": "blast /bigtest",
+      "expected_visual_ops": ["hook.f2.object.v1"],
+      "required_params": ["shape", "drop_time", "seed"]
+    },
+    {
+      "id": "bigtest_f3_effect",
+      "family": "F3",
+      "source": "blast /bigtest",
+      "expected_visual_ops": ["hook.f3.effect.v1"],
+      "required_params": ["detected_effect_ids", "drop_time"]
+    },
+    {
+      "id": "bigtest_f4_motion",
+      "family": "F4",
+      "source": "blast /bigtest",
+      "expected_visual_ops": ["hook.f4.motion.v1"],
+      "required_params": ["device", "bpm", "drop_time"]
+    },
+    {
+      "id": "bigtest_f5_cognition",
+      "family": "F5",
+      "source": "blast /bigtest",
+      "expected_visual_ops": ["hook.f5.cognition.v1"],
+      "required_assets": ["tts_audio"],
+      "required_fields": ["word_timings", "duck"]
+    }
+  ],
+  "active_f3_ids": [
+    "hook_light",
+    "shutter_effect",
+    "flash_slow_shutter",
+    "negative_zoom",
+    "snap_wipe",
+    "minimax",
+    "invert_flash",
+    "extract_flash",
+    "flash_on_cuts",
+    "layer_shake",
+    "analog_glitch",
+    "xerox",
+    "neon_extract",
+    "old_camera",
+    "blackwhite",
+    "crystal_glow",
+    "night_vision",
+    "wave"
+  ],
+  "legacy": {
+    "family": "Legacy",
+    "status": "not_implemented",
+    "expected_visual_ops": ["subtitle.bot.legacy_blocks.v1"]
+  },
+  "acceptance": {
+    "no_silent_drops": true,
+    "allowed_statuses_for_active_public_modes": ["supported", "approximate"],
+    "policy_on_unsupported_error_blocks_before_output": true,
+    "audio_complete_requires_ffprobe": true
+  }
+}

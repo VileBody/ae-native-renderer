@@ -38,6 +38,9 @@ Schemas:
     "directory": "out",
     "video": "result.mp4"
   },
+  "debugSpec": {
+    "captureEffectStages": false
+  },
   "policy": {
     "onUnsupported": "report"
   }
@@ -76,6 +79,13 @@ unmanaged working space with nonlinear blending and sRGB output. Native v1
 accepts `workingSpace` values `none` and `srgb`; other ICC or wide-gamut
 profiles remain explicit capability gaps. Visual operation assets use the
 normalized roles `audio`, `tts_audio`, `overlay`, and `matte`.
+
+`debugSpec` is optional. Production defaults all flags to `false`.
+`captureEffectStages=true` forces the PNG/full-telemetry render path even when
+`outputSpec.video` is requested, so `render/render-log.jsonl` records full effect
+stage telemetry for differential debugging. The source/pre-effects/text-mask/
+adjustment/precomp/final-composite flags are preserved in the normalized request
+as contract switches for stage export tooling.
 
 ### Exact frame selection
 
@@ -147,6 +157,10 @@ to this request. It retains the source subtitle family, scene type, focus metada
 cut times, and semantic style IDs as native operations, rather than attempting to
 recover them from generated JSX. The canonical visual corpus is under
 `fixtures/bot_corpus` and is rendered with `scripts/run_bot_visual_corpus.py`.
+Canonical RenderPlan/native requests can be rendered and compared to AE MP4s with
+`scripts/run_render_plan_differential.py`; it writes native MP4s, optional
+side-by-side control frames, optional heatmaps, contact sheets, and capability
+summaries.
 
 When `outputSpec.video` is set, every main-composition footage layer with
 `layer_meta.audioEnabled=true` is mixed into the rendered MP4. Footage timing

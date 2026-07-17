@@ -9,6 +9,33 @@ use crate::{
 
 pub struct EffectRegistry;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum EffectBackend {
+    Native,
+    NativeApproximation,
+    ExternalPlugin,
+    Unsupported,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ParityStatus {
+    Approximate,
+    ProductionSubset,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct EffectMetadata {
+    pub stable_id: &'static str,
+    pub ae_match_name: &'static str,
+    pub backend: EffectBackend,
+    pub known_params: &'static [&'static str],
+    pub keyframes: bool,
+    pub alpha: &'static str,
+    pub color: &'static str,
+    pub fallback_policy: &'static str,
+    pub parity: ParityStatus,
+}
+
 impl EffectRegistry {
     pub fn create(match_name: &str) -> Option<Box<dyn Effect>> {
         match match_name {
@@ -52,6 +79,205 @@ impl EffectRegistry {
             "ADBE Turbulent Displace",
         ]
     }
+
+    pub fn metadata(match_name: &str) -> Option<&'static EffectMetadata> {
+        EFFECT_METADATA
+            .iter()
+            .find(|metadata| metadata.ae_match_name == match_name)
+    }
+
+    pub fn known_metadata() -> &'static [EffectMetadata] {
+        EFFECT_METADATA
+    }
+
+    pub fn is_known_param(match_name: &str, param: &str) -> bool {
+        let Some(metadata) = Self::metadata(match_name) else {
+            return false;
+        };
+        metadata.known_params.contains(&param) || is_ae_numeric_param(param)
+    }
+}
+
+fn is_ae_numeric_param(param: &str) -> bool {
+    let bytes = param.as_bytes();
+    bytes.len() == 4 && bytes.iter().all(u8::is_ascii_digit)
+}
+
+const EFFECT_METADATA: &[EffectMetadata] = &[
+    metadata(
+        "anr.analog_glitch",
+        "ANR Analog Glitch",
+        &[
+            "contrast",
+            "red_gain",
+            "wave_amplitude",
+            "wave_width",
+            "grid_w",
+            "grid_h",
+            "glow_radius",
+        ],
+    ),
+    metadata(
+        "anr.f3_stylize",
+        "ANR F3 Stylize",
+        &[
+            "mode",
+            "amount",
+            "threshold",
+            "softness",
+            "composite_original",
+            "magentas",
+            "tint",
+            "tint_black",
+            "height",
+            "width",
+            "speed",
+        ],
+    ),
+    metadata(
+        "anr.shape_overlay",
+        "ANR Shape Overlay",
+        &[
+            "shape",
+            "opacity",
+            "thickness",
+            "size",
+            "fill",
+            "stroke",
+            "seed",
+        ],
+    ),
+    metadata(
+        "anr.vertical_gradient",
+        "ANR Vertical Gradient",
+        &[
+            "text_paint",
+            "top",
+            "bottom",
+            "brightness",
+            "start_xy",
+            "end_xy",
+            "source_match_name",
+            "sapphire_params",
+        ],
+    ),
+    metadata(
+        "adbe.box_blur2",
+        "ADBE Box Blur2",
+        &[
+            "radius",
+            "iterations",
+            "repeat_edge_pixels",
+            "horizontal",
+            "vertical",
+        ],
+    ),
+    metadata(
+        "adbe.drop_shadow",
+        "ADBE Drop Shadow",
+        &[
+            "color",
+            "opacity",
+            "direction",
+            "distance",
+            "softness",
+            "source_match_name",
+            "sapphire_params",
+        ],
+    ),
+    metadata(
+        "adbe.motion_blur",
+        "ADBE Motion Blur",
+        &["direction", "blur_length"],
+    ),
+    metadata(
+        "adbe.gaussian_blur2",
+        "ADBE Gaussian Blur 2",
+        &["blurriness", "repeat_edge_pixels"],
+    ),
+    metadata(
+        "adbe.glo2",
+        "ADBE Glo2",
+        &[
+            "threshold",
+            "radius",
+            "intensity",
+            "operation",
+            "color",
+            "based_on",
+            "composite_original",
+        ],
+    ),
+    metadata(
+        "cc.image_wipe",
+        "CC Image Wipe",
+        &["completion", "border_softness"],
+    ),
+    metadata(
+        "adbe.invert",
+        "ADBE Invert",
+        &["channel", "blend_with_original"],
+    ),
+    metadata(
+        "adbe.minimax",
+        "ADBE Minimax",
+        &["operation", "channels", "direction", "radius"],
+    ),
+    metadata(
+        "adbe.optics_compensation",
+        "ADBE Optics Compensation",
+        &["field_of_view", "reverse", "center"],
+    ),
+    metadata(
+        "adbe.posterize_time",
+        "ADBE Posterize Time",
+        &["frameRate", "frame_rate"],
+    ),
+    metadata(
+        "adbe.geometry2",
+        "ADBE Geometry2",
+        &[
+            "anchor",
+            "position",
+            "scale",
+            "scale_width",
+            "scale_height",
+            "rotation",
+            "opacity",
+        ],
+    ),
+    metadata(
+        "adbe.turbulent_displace",
+        "ADBE Turbulent Displace",
+        &[
+            "amount",
+            "size",
+            "offset",
+            "complexity",
+            "evolution",
+            "seed",
+            "pinning",
+            "resize_layer",
+        ],
+    ),
+];
+
+const fn metadata(
+    stable_id: &'static str,
+    ae_match_name: &'static str,
+    known_params: &'static [&'static str],
+) -> EffectMetadata {
+    EffectMetadata {
+        stable_id,
+        ae_match_name,
+        backend: EffectBackend::NativeApproximation,
+        known_params,
+        keyframes: true,
+        alpha: "straight-rgba8-boundary/premultiplied-float-sampling",
+        color: "unmanaged-srgb-approximation",
+        fallback_policy: "unsupported_unknown_params",
+        parity: ParityStatus::Approximate,
+    }
 }
 
 #[cfg(test)]
@@ -70,5 +296,21 @@ mod tests {
     #[test]
     fn registry_rejects_unknown_match_name() {
         assert!(EffectRegistry::create("ADBE Definitely Not Real").is_none());
+    }
+
+    #[test]
+    fn registry_exposes_metadata_and_param_contract() {
+        let metadata = EffectRegistry::metadata("ADBE Drop Shadow").unwrap();
+        assert_eq!(metadata.stable_id, "adbe.drop_shadow");
+        assert!(metadata.keyframes);
+        assert!(EffectRegistry::is_known_param(
+            "ADBE Drop Shadow",
+            "softness"
+        ));
+        assert!(EffectRegistry::is_known_param("ADBE Drop Shadow", "0052"));
+        assert!(!EffectRegistry::is_known_param(
+            "ADBE Drop Shadow",
+            "mystery"
+        ));
     }
 }

@@ -24,6 +24,8 @@ pub struct RenderJsonRequest {
     pub assets: AssetsSpec,
     #[serde(default, rename = "outputSpec", alias = "output_spec")]
     pub output: OutputSpec,
+    #[serde(default, rename = "debugSpec", alias = "debug_spec")]
+    pub debug: DebugSpec,
     #[serde(default)]
     pub policy: RenderPolicy,
 }
@@ -70,6 +72,28 @@ impl Default for OutputSpec {
             write_scene: true,
         }
     }
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+pub struct DebugSpec {
+    #[serde(
+        default,
+        rename = "captureEffectStages",
+        alias = "capture_effect_stages"
+    )]
+    pub capture_effect_stages: bool,
+    #[serde(default, rename = "sourceLayers", alias = "source_layers")]
+    pub source_layers: bool,
+    #[serde(default, rename = "preEffects", alias = "pre_effects")]
+    pub pre_effects: bool,
+    #[serde(default, rename = "textMasks", alias = "text_masks")]
+    pub text_masks: bool,
+    #[serde(default, rename = "adjustmentResults", alias = "adjustment_results")]
+    pub adjustment_results: bool,
+    #[serde(default, rename = "precompResults", alias = "precomp_results")]
+    pub precomp_results: bool,
+    #[serde(default, rename = "finalComposite", alias = "final_composite")]
+    pub final_composite: bool,
 }
 
 fn deserialize_frame_selection<'de, D>(deserializer: D) -> Result<Option<Vec<u32>>, D::Error>
@@ -510,6 +534,7 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
             job_archive.clone(),
             video_path,
             false,
+            request.debug.capture_effect_stages,
         ),
         None => super::render_png_output(
             &scene_path,
@@ -520,6 +545,7 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
             None,
             request.output.frames.as_deref(),
             false,
+            request.debug.capture_effect_stages,
         ),
     };
     if let Err(error) = render_result {

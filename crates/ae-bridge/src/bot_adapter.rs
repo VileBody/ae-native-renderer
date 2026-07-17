@@ -432,12 +432,8 @@ mod tests {
     }
 
     #[test]
-    fn bot_modes_and_semantic_styles_are_accepted_as_approximate() {
+    fn active_bot_modes_and_semantic_styles_are_accepted_as_approximate() {
         for (mode, subtitle_payload) in [
-            (
-                "legacy_blocks",
-                json!({"segments":[{"text":"x","in_point":0.0,"out_point":1.0}]}),
-            ),
             (
                 "impulse_2nd",
                 json!({"segments":[{"text":"x","in":0.0,"out":1.0,"type":"long"}]}),
@@ -468,6 +464,24 @@ mod tests {
             assert!(report.ok, "{mode}: {:#?}", report.errors);
             assert!(!report.has_unsupported(), "{mode}: {:#?}", report.findings);
         }
+    }
+
+    #[test]
+    fn legacy_blocks_are_preserved_but_not_implemented() {
+        let request = adapt_bot_envelope(
+            serde_json::from_value(json!({
+                "subtitles_mode": "legacy_blocks",
+                "subtitle_payload": {"segments":[{"text":"x","in_point":0.0,"out_point":1.0}]}
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+        let report = crate::validate_payload(&request.generated_payload(), true);
+        assert!(!report.ok);
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::NotImplemented
+                && finding.feature == "visual_op.subtitle.bot.legacy_blocks.v1"
+        }));
     }
 
     #[test]
