@@ -195,7 +195,7 @@ def main() -> None:
     for case in select_cases(manifest, args.cases):
         case_dir = args.out / str(case["id"])
         case_dir.mkdir(parents=True, exist_ok=True)
-        app_root = unpack_job(args.archive_root, str(case["job_id"]), cache_root)
+        app_root = unpack_job(args.archive_root, str(case["job_id"]), cache_root).resolve()
         extracted = case_dir / "request.extracted.json"
         run([render_cli, "extract-jsx-request", "--jsx", app_root / "render.jsx", "--out", extracted])
         request = json.loads(extracted.read_text(encoding="utf-8"))
