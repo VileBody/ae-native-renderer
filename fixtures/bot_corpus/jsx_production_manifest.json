@@ -11,6 +11,8 @@
     {"id": "type_5_outline", "type": "TYPE_5", "job_id": "ea15818e2a81460ca3a15044e19e5584", "text": "ДЕЛЯТСЯ НОЧЬЮ СО МНОЙ", "states": ["outline", "fill_start"], "requirements": ["hollow stroke before fill", "independent outline/fill timing"]},
     {"id": "type_5_fill_tail", "type": "TYPE_5", "job_id": "ea15818e2a81460ca3a15044e19e5584", "text": "ДЕЛЯТСЯ НОЧЬЮ СО МНОЙ", "states": ["peak", "exit"], "requirements": ["same available production layer: fill and tail", "shared blur tail"]},
     {"id": "type_6_first_group", "type": "TYPE_6", "job_id": "fbca5929d7cd4b6e8f7c73366f54ab5f", "text": "ТЫЩА ВАРОВ FREE FOR PROFIT", "states": ["first_group", "second_group"], "requirements": ["first and second group reveal", "posterize/turbulent stack"]},
-    {"id": "type_6_exit", "type": "TYPE_6", "job_id": "fbca5929d7cd4b6e8f7c73366f54ab5f", "text": "ТЫЩА ВАРОВ FREE FOR PROFIT", "states": ["peak", "exit"], "requirements": ["same available production layer: peak and exit", "shared effect stack"]}
+    {"id": "type_6_exit", "type": "TYPE_6", "job_id": "fbca5929d7cd4b6e8f7c73366f54ab5f", "text": "ТЫЩА ВАРОВ FREE FOR PROFIT", "states": ["peak", "exit"], "requirements": ["same available production layer: peak and exit", "shared effect stack"]},
+    {"id": "trendy_5th_production", "type": "TRENDY_5TH", "job_id": "9ef2717145c04318927ca738f5882541", "text": "", "window": [0.0, 12.0], "control_frames": [0, 58, 116, 174, 232, 287], "requirements": ["production Trendy JSX archive", "frame-locked native vs AE output", "tracking/fill-stroke/gradient/shadow/F3 stack present"]},
+    {"id": "brat_5th_strobe_subtitles", "type": "BRAT_5TH", "job_id": "a15d4c02d67843b787402bb27aeb5830", "text": "", "window": [0.0, 15.0], "control_frames": [0, 72, 144, 216, 288, 336], "requirements": ["production Brat JSX archive", "subtitle/strobe comparison", "archive contains no video footage assets, so full footage parity is not applicable for this case"]}
   ]
 }

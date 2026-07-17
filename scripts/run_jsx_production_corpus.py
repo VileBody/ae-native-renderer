@@ -62,6 +62,10 @@ def unpack_job(archive_root: Path, job_id: str, cache_root: Path) -> Path:
         return app_root
     archive = archive_root / job_id / f"{job_id}_job_folder.tar.gz"
     if not archive.is_file():
+        matches = sorted(archive_root.glob(f"**/{job_id}_job_folder.tar.gz"))
+        if matches:
+            archive = matches[0]
+    if not archive.is_file():
         raise SystemExit(f"missing archive: {archive}")
     cache_root.mkdir(parents=True, exist_ok=True)
     with tarfile.open(archive, "r:gz") as bundle:
@@ -92,6 +96,45 @@ def state_times(start: float, end: float, states: list[str]) -> list[float]:
         "peak": 0.68, "exit": 0.92,
     }
     return [start + duration * fractions[state] for state in states]
+
+
+def control_times_for_case(case: dict[str, Any], start: float, end: float, fps: float) -> tuple[list[str], list[float], list[int]]:
+    if case.get("control_frames") is not None:
+        frames = [int(frame) for frame in case["control_frames"]]
+        return ([f"frame_{frame}" for frame in frames], [frame / fps for frame in frames], frames)
+    if case.get("control_times") is not None:
+        times = [float(time) for time in case["control_times"]]
+        return ([f"{time:.3f}s" for time in times], times, [round(time * fps) for time in times])
+    states = list(case["states"])
+    times = state_times(start, end, states)
+    return states, times, [round(time * fps) for time in times]
+
+
+def reference_for_case(archive_root: Path, case: dict[str, Any]) -> Path:
+    if case.get("reference"):
+        reference = Path(str(case["reference"]))
+        return reference if reference.is_absolute() else (ROOT / reference)
+    job_id = str(case["job_id"])
+    reference = archive_root / job_id / "output.mp4"
+    if reference.is_file():
+        return reference
+    archive_matches = sorted(archive_root.glob(f"**/{job_id}_job_folder.tar.gz"))
+    for archive in archive_matches:
+        sibling = archive.parent / "output.mp4"
+        if sibling.is_file():
+            return sibling
+    matches = sorted(archive_root.glob(f"**/{job_id}/output.mp4"))
+    if matches:
+        return matches[0]
+    matches = sorted(archive_root.glob(f"**/{job_id}_output.mp4"))
+    if matches:
+        return matches[0]
+    case_id = str(case.get("id") or "")
+    if case_id:
+        matches = sorted(archive_root.glob(f"**/{case_id}/output.mp4"))
+        if matches:
+            return matches[0]
+    return reference
 
 
 def ae_frame(reference: Path, frame: int, out: Path) -> None:
@@ -172,8 +215,7 @@ def main() -> None:
                 raise SystemExit(f"invalid explicit window for case {case['id']}")
         else:
             start, end = text_layer_window(request, str(case["text"]))
-        times = state_times(start, end, list(case["states"]))
-        frames = [round(time * fps) for time in times]
+        labels, times, frames = control_times_for_case(case, start, end, fps)
         request["policy"] = {"onUnsupported": "report"}
         request["assetsSpec"] = {"root": str(app_root)}
         native_dir = (case_dir / "native").resolve()
@@ -184,12 +226,12 @@ def main() -> None:
         response = case_dir / "response.json"
         run([render_cli, "json", "--request", render_request, "--response", response], quiet=True)
 
-        reference = args.archive_root / str(case["job_id"]) / "output.mp4"
+        reference = reference_for_case(args.archive_root, case)
         if not reference.is_file():
             raise SystemExit(f"missing AE reference: {reference}")
         comparisons: list[Path] = []
         controls: list[dict[str, Any]] = []
-        for state, time, frame in zip(case["states"], times, frames, strict=True):
+        for label, time, frame in zip(labels, times, frames, strict=True):
             native = native_dir / "render" / "frames" / f"frame_{frame:06d}.png"
             if not native.is_file():
                 raise SystemExit(f"native frame missing: {native}")
@@ -198,7 +240,7 @@ def main() -> None:
             ae_frame(reference, frame, ae)
             hstack(native, ae, comparison)
             comparisons.append(comparison)
-            controls.append({"state": state, "time": time, "frame": frame, "native": str(native), "ae": str(ae), "side_by_side": str(comparison)})
+            controls.append({"state": label, "time": time, "frame": frame, "native": str(native), "ae": str(ae), "side_by_side": str(comparison)})
         movie = case_dir / "side-by-side.mp4"
         controls_movie(comparisons, movie)
         first_comparisons.append(comparisons[0])
