@@ -74,6 +74,25 @@ shutter/snap/flash/shake, light/slow-shutter/negative-zoom hooks, and active
 extras. F1/F2/F4/F5 lower to native visual operations; F1/F5 consume supplied
 local audio rather than synthesizing it inside the renderer.
 
+`schemaVersion`, `requirements`, `styleRegistry`, `effectRegistry`, and
+`goldenRefs` are the P0/P1 readiness metadata surface. They do not change the
+external `ae-native-renderer.render-request.v1` transport, but they make each
+request self-describing for manager/import/corpus tooling:
+
+- `schemaVersion` pins the canonical RenderPlan dialect, currently
+  `render-plan.v1.1`.
+- `requirements` lists fonts, layer types, required asset roles, and plugin
+  requirements. External plugins are reported as unsupported in this native-only
+  slice.
+- `styleRegistry` and `effectRegistry` carry stable IDs, AE match names,
+  selected backend, parity level, and fallback policy.
+- `goldenRefs` links production jobs/artifacts used by differential tests.
+
+OFX/Sapphire/BCC/VISINF execution is intentionally not a production dependency
+for this slice. Requests may reference those requirements, but the capability
+resolver must return `unsupported` unless the effect is lowered to a native
+approximation.
+
 `projectSpec.colorManagement` is optional. Its production default is an
 unmanaged working space with nonlinear blending and sRGB output. Native v1
 accepts `workingSpace` values `none` and `srgb`; other ICC or wide-gamut

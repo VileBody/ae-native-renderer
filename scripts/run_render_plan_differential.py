@@ -25,6 +25,10 @@ def parse_args() -> argparse.Namespace:
                         help="Seconds for side-by-side control frames. Defaults to 0, 25, 50 and 75 percent duration.")
     parser.add_argument("--heatmap", action="store_true",
                         help="Also write absolute RGB difference heatmaps for control frames.")
+    parser.add_argument("--preflight-only", action="store_true",
+                        help="Validate request/reference metadata and write index.json without rendering.")
+    parser.add_argument("--require-reference", action="store_true",
+                        help="Fail if an AE reference is missing for any request.")
     return parser.parse_args()
 
 
@@ -116,10 +120,41 @@ def capability_summary(response_path: Path) -> dict[str, Any]:
     }
 
 
+def preflight_request(request_path: Path, request: dict[str, Any], reference: Path | None) -> dict[str, Any]:
+    project = request.get("projectSpec") or {}
+    output = request.get("outputSpec") or {}
+    debug = request.get("debugSpec") or {}
+    golden_refs = request.get("goldenRefs") or []
+    issues: list[str] = []
+    if request.get("schema") != "ae-native-renderer.render-request.v1":
+        issues.append("schema must be ae-native-renderer.render-request.v1")
+    if not str(request.get("schemaVersion") or "").startswith("render-plan.v1"):
+        issues.append("schemaVersion must start with render-plan.v1")
+    if not request.get("visualOps"):
+        issues.append("visualOps is empty")
+    if not golden_refs:
+        issues.append("goldenRefs is empty")
+    if reference is not None and not reference.is_file():
+        issues.append(f"reference is missing: {reference}")
+    return {
+        "request": str(request_path),
+        "request_id": request.get("requestId") or request_path.stem,
+        "main_comp": project.get("mainCompName"),
+        "schema_version": request.get("schemaVersion"),
+        "visual_ops": [op.get("type") for op in request.get("visualOps") or []],
+        "golden_refs": golden_refs,
+        "debug_flags": {key: value for key, value in debug.items() if value is True},
+        "output": output,
+        "reference": str(reference) if reference is not None else None,
+        "ok": not issues,
+        "issues": issues,
+    }
+
+
 def main() -> None:
     args = parse_args()
     render_cli = args.render_cli.resolve()
-    if not render_cli.is_file():
+    if not args.preflight_only and not render_cli.is_file():
         raise SystemExit(f"render-cli is missing: {render_cli}; build it with cargo build -p render-cli --release")
     references = args.reference or []
     if references and len(references) != len(args.request):
@@ -135,6 +170,11 @@ def main() -> None:
         case_dir.mkdir(parents=True, exist_ok=True)
         duration = request_duration(request)
         control_times = args.control_time or default_control_times(duration)
+        reference = references[idx].resolve() if references else None
+        preflight = preflight_request(request_path, request, reference)
+        if args.require_reference and reference is None:
+            preflight["ok"] = False
+            preflight["issues"].append("--require-reference was set but no reference was provided")
 
         native_dir = (case_dir / "native").resolve()
         native_mp4 = (case_dir / "native.mp4").resolve()
@@ -145,6 +185,18 @@ def main() -> None:
         render_request = case_dir / "request.render.json"
         write_json(render_request, request)
         response = case_dir / "response.json"
+        if args.preflight_only:
+            review = {
+                "case": case_id,
+                "request": str(render_request),
+                "preflight": preflight,
+                "controls": [],
+            }
+            write_json(case_dir / "review.json", review)
+            index.append(review)
+            continue
+        if not preflight["ok"] and args.require_reference:
+            raise SystemExit(f"preflight failed for {case_id}: {preflight['issues']}")
         run([render_cli, "json", "--request", render_request, "--response", response])
 
         review: dict[str, Any] = {
@@ -153,11 +205,11 @@ def main() -> None:
             "native": str(native_mp4),
             "response": str(response),
             "capabilities": capability_summary(response),
+            "preflight": preflight,
             "controls": [],
         }
 
-        if references:
-            reference = references[idx].resolve()
+        if reference is not None:
             comparisons: list[Path] = []
             for frame_idx, time in enumerate(control_times):
                 native_frame = case_dir / f"native_{frame_idx:02d}_{time:.3f}s.png"

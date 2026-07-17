@@ -1,6 +1,8 @@
 {
   "schema": "ae-native-renderer.p0p1-readiness-corpus.v1",
   "description": "Contract corpus for active Blast public modes. Local cases are runnable now; external cases require S3/artifact archives before differential rendering.",
+  "production_goldens_manifest": "fixtures/bot_corpus/production_goldens.p0p1.json",
+  "native_tunables": "configs/native_tunables.p0p1.json",
   "local_cases": [
     {
       "id": "impulse_long_short",

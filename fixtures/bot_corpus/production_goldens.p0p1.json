@@ -1,0 +1,70 @@
+{
+  "schema": "ae-native-renderer.production-goldens.v1",
+  "description": "P0/P1 readiness manifest for production AE/native differential work. OFX/plugin workers are intentionally out of scope; external plugin effects must report unsupported or native approximation.",
+  "acceptance": {
+    "same_fps_resolution_frame_count": true,
+    "subtitle_timing_frame_tolerance": 1,
+    "bbox_edge_tolerance_px": 2,
+    "subtitle_mask_iou_min": 0.9,
+    "control_frame_ssim_min": 0.9,
+    "requires_stage_debug": [
+      "sourceLayers",
+      "preEffects",
+      "captureEffectStages",
+      "textMasks",
+      "adjustmentResults",
+      "precompResults",
+      "finalComposite"
+    ]
+  },
+  "environment": {
+    "fonts": [
+      "Montserrat-Bold",
+      "Point-SemiBold"
+    ],
+    "color_model": "straight-rgba8-boundary/premultiplied-float-effects",
+    "renderer_tunables": "configs/native_tunables.p0p1.json",
+    "plugin_policy": "no_ofx_no_proprietary_plugin_workers_in_this_slice"
+  },
+  "cases": [
+    {
+      "id": "trendy_5th_real_job",
+      "family": "Trendy",
+      "artifact_job_id": "9ef2717145c04318927ca738f5882541",
+      "source_examples_dir": "out/visual_tool_examples_s3/trendy_5th/",
+      "required_visual_ops": ["subtitle.trendy.v1"],
+      "reference_status": "download_required",
+      "native_status": "approximate"
+    },
+    {
+      "id": "brat_5th_real_job",
+      "family": "Brat",
+      "artifact_job_id": "a15d4c02d67843b787402bb27aeb5830",
+      "source_examples_dir": "out/visual_tool_examples_s3/brat_5th/",
+      "required_visual_ops": ["subtitle.brat.v1"],
+      "reference_status": "download_required",
+      "native_status": "approximate"
+    },
+    {
+      "id": "bigtest_f1_f5_render_plan_corpus",
+      "family": "F1-F5",
+      "request_manifest": "blast-mj-rust-gen:data/native_render_plan_corpus/bigtest_f1_f5/manifest.json",
+      "request_count": 32,
+      "coverage": {
+        "F1": 1,
+        "F2": 5,
+        "F3": 15,
+        "F4": 5,
+        "F5": 5
+      },
+      "reference_status": "assets_and_ae_exports_required",
+      "native_status": "schema_validated"
+    }
+  ],
+  "known_p1_gaps": [
+    "full AE mask/matte compositing",
+    "byte-exact TextDocument sourceRect/CoolType metrics",
+    "full AE reference media for every /bigtest F1-F5 request",
+    "external Sapphire/BCC/VISINF plugin execution route"
+  ]
+}

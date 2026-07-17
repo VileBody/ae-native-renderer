@@ -71,12 +71,17 @@ pub struct BotAdaptedRequest {
 impl BotAdaptedRequest {
     pub fn generated_payload(&self) -> GeneratedPayload {
         GeneratedPayload {
+            schema_version: Some("render-plan.v1.1".to_string()),
             payload_version: Some("bot-adapter.v1".to_string()),
             project_spec: self.project_spec.clone(),
             comps_spec: self.comps_spec.clone(),
             footage_layers: self.footage_layers.clone(),
             text_layers: self.text_layers.clone(),
             visual_ops: self.visual_ops.clone(),
+            requirements: Value::Null,
+            style_registry: Vec::new(),
+            effect_registry: Vec::new(),
+            golden_refs: Vec::new(),
         }
     }
 }

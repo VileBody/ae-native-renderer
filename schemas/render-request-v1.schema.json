@@ -10,6 +10,7 @@
       "default": "ae-native-renderer.render-request.v1"
     },
     "requestId": { "type": "string" },
+    "schemaVersion": { "type": "string" },
     "action": {
       "enum": ["validate", "inspect", "render"],
       "default": "render"
@@ -70,6 +71,45 @@
       "type": "array",
       "default": [],
       "items": { "$ref": "#/$defs/visualOperation" }
+    },
+    "requirements": {
+      "type": "object",
+      "properties": {
+        "fonts": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "asset_roles": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "layer_types": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "plugins": {
+          "type": "array",
+          "items": { "type": "string" }
+        },
+        "audio_required": { "type": "boolean" },
+        "external_plugins_policy": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "styleRegistry": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/registryEntry" }
+    },
+    "effectRegistry": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/registryEntry" }
+    },
+    "goldenRefs": {
+      "type": "array",
+      "default": [],
+      "items": { "$ref": "#/$defs/goldenRef" }
     },
     "assetsSpec": {
       "type": "object",
@@ -189,6 +229,30 @@
           }
         },
         "required": { "type": "boolean", "default": true }
+      },
+      "additionalProperties": true
+    },
+    "registryEntry": {
+      "type": "object",
+      "properties": {
+        "styleId": { "type": "string" },
+        "stableId": { "type": "string" },
+        "aeMatchName": { "type": "string" },
+        "version": { "type": "string" },
+        "backend": { "type": "string" },
+        "parity": { "type": "string" },
+        "fallbackPolicy": { "type": "string" }
+      },
+      "additionalProperties": true
+    },
+    "goldenRef": {
+      "type": "object",
+      "properties": {
+        "id": { "type": "string" },
+        "artifactJobId": { "type": "string" },
+        "jobId": { "type": "string" },
+        "family": { "type": "string" },
+        "status": { "type": "string" }
       },
       "additionalProperties": true
     }

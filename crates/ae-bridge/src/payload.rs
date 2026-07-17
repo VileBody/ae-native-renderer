@@ -6,6 +6,8 @@ use std::path::Path;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GeneratedPayload {
+    #[serde(default, rename = "schemaVersion", alias = "schema_version")]
+    pub schema_version: Option<String>,
     #[serde(default, rename = "payloadVersion", alias = "payload_version")]
     pub payload_version: Option<String>,
     #[serde(rename = "projectSpec", alias = "project")]
@@ -18,6 +20,14 @@ pub struct GeneratedPayload {
     pub text_layers: Vec<PayloadLayer>,
     #[serde(default, rename = "visualOps", alias = "visual_ops")]
     pub visual_ops: Vec<VisualOperation>,
+    #[serde(default)]
+    pub requirements: Value,
+    #[serde(default, rename = "styleRegistry", alias = "style_registry")]
+    pub style_registry: Vec<RegistryEntry>,
+    #[serde(default, rename = "effectRegistry", alias = "effect_registry")]
+    pub effect_registry: Vec<RegistryEntry>,
+    #[serde(default, rename = "goldenRefs", alias = "golden_refs")]
+    pub golden_refs: Vec<GoldenRef>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,6 +78,38 @@ pub struct VisualOperationAsset {
     pub path: String,
     #[serde(default)]
     pub optional: bool,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct RegistryEntry {
+    #[serde(default, rename = "styleId", alias = "style_id")]
+    pub style_id: Option<String>,
+    #[serde(default, rename = "stableId", alias = "stable_id")]
+    pub stable_id: Option<String>,
+    #[serde(default, rename = "aeMatchName", alias = "ae_match_name")]
+    pub ae_match_name: Option<String>,
+    #[serde(default)]
+    pub backend: Option<String>,
+    #[serde(default)]
+    pub parity: Option<String>,
+    #[serde(default, rename = "fallbackPolicy", alias = "fallback_policy")]
+    pub fallback_policy: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct GoldenRef {
+    #[serde(default)]
+    pub id: Option<String>,
+    #[serde(default, rename = "artifactJobId", alias = "artifact_job_id")]
+    pub artifact_job_id: Option<String>,
+    #[serde(default)]
+    pub family: Option<String>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(flatten)]
+    pub extra: BTreeMap<String, Value>,
 }
 
 fn default_required() -> bool {
@@ -270,6 +312,7 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
             payload.project_spec.main_comp_name
         ));
     }
+    classify_render_plan_metadata(payload, &mut findings);
     classify_color_management(&payload.project_spec, &mut findings);
 
     for comp in &payload.comps_spec {
@@ -298,6 +341,7 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
         *layer_types.entry(layer.kind.clone()).or_insert(0) += 1;
         validate_layer_timing(layer, &mut errors);
         classify_layer(layer, &mut findings);
+        classify_layer_surface_semantics(layer, &mut findings);
         classify_text_animator(layer, &mut findings);
 
         for (prop_name, prop) in &layer.props {
@@ -461,6 +505,104 @@ fn classify_color_management(project: &ProjectSpec, findings: &mut Vec<Capabilit
             )
         },
     });
+}
+
+fn classify_render_plan_metadata(
+    payload: &GeneratedPayload,
+    findings: &mut Vec<CapabilityFinding>,
+) {
+    findings.push(CapabilityFinding {
+        status: if payload.schema_version.as_deref().is_some_and(|version| {
+            version == "render-plan.v1" || version.starts_with("render-plan.v1.")
+        }) {
+            CapabilityStatus::Supported
+        } else {
+            CapabilityStatus::Approximate
+        },
+        feature: "render_plan.schema_version".to_string(),
+        layer: None,
+        detail: format!(
+            "schemaVersion={}",
+            payload.schema_version.as_deref().unwrap_or("<absent>")
+        ),
+    });
+
+    if let Some(plugins) = payload
+        .requirements
+        .get("plugins")
+        .and_then(Value::as_array)
+    {
+        for plugin in plugins.iter().filter_map(Value::as_str) {
+            findings.push(CapabilityFinding {
+                status: CapabilityStatus::Unsupported,
+                feature: format!("requirement.plugin.{plugin}"),
+                layer: None,
+                detail: "external plugin route is intentionally disabled for this native P0/P1 slice; use native approximation or report unsupported".to_string(),
+            });
+        }
+    }
+
+    for entry in &payload.style_registry {
+        let style_id = entry
+            .style_id
+            .as_deref()
+            .or(entry.stable_id.as_deref())
+            .unwrap_or("<unknown>");
+        let backend = entry.backend.as_deref().unwrap_or("native_approximation");
+        findings.push(CapabilityFinding {
+            status: if backend.contains("unsupported") {
+                CapabilityStatus::Unsupported
+            } else {
+                CapabilityStatus::Approximate
+            },
+            feature: format!("style_registry.{style_id}"),
+            layer: None,
+            detail: format!(
+                "style registry entry backend={backend}, parity={}",
+                entry.parity.as_deref().unwrap_or("approximate")
+            ),
+        });
+    }
+
+    for entry in &payload.effect_registry {
+        let match_name = entry
+            .ae_match_name
+            .as_deref()
+            .or(entry.stable_id.as_deref())
+            .unwrap_or("<unknown>");
+        let backend = entry.backend.as_deref().unwrap_or("native_approximation");
+        let status = if backend.contains("unsupported")
+            || match_name.starts_with("S_")
+            || match_name.starts_with("BCC ")
+            || match_name.starts_with("VISINF ")
+        {
+            CapabilityStatus::Unsupported
+        } else {
+            CapabilityStatus::Approximate
+        };
+        findings.push(CapabilityFinding {
+            status,
+            feature: format!("effect_registry.{match_name}"),
+            layer: None,
+            detail: format!(
+                "effect registry entry backend={backend}, parity={}",
+                entry.parity.as_deref().unwrap_or("approximate")
+            ),
+        });
+    }
+
+    for golden in &payload.golden_refs {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Supported,
+            feature: format!("golden_ref.{}", golden.id.as_deref().unwrap_or("<unnamed>")),
+            layer: None,
+            detail: format!(
+                "production reference family={}, artifactJobId={}",
+                golden.family.as_deref().unwrap_or("<unknown>"),
+                golden.artifact_job_id.as_deref().unwrap_or("<none>")
+            ),
+        });
+    }
 }
 
 pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<PayloadImportResult> {
@@ -1136,6 +1278,56 @@ fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
             layer: Some(layer.name.clone()),
             detail: "native temporal supersampling is enabled with fixed shutter defaults"
                 .to_string(),
+        });
+    }
+}
+
+fn classify_layer_surface_semantics(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
+    if layer.extra.contains_key("masks")
+        || layer.text_data.get("masks").is_some()
+        || layer.text_data.pointer("/layer_meta/masks").is_some()
+    {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::NotImplemented,
+            feature: "layer.masks".to_string(),
+            layer: Some(layer.name.clone()),
+            detail: "mask paths are preserved in the payload but full AE mask compositing is not implemented in the native P0/P1 slice".to_string(),
+        });
+    }
+
+    if layer.extra.contains_key("matte")
+        || layer.extra.contains_key("mattes")
+        || layer.extra.contains_key("track_matte")
+        || layer
+            .text_data
+            .pointer("/layer_meta/trackMatteType")
+            .is_some()
+        || layer.text_data.pointer("/layer_meta/track_matte").is_some()
+    {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::NotImplemented,
+            feature: "layer.mattes".to_string(),
+            layer: Some(layer.name.clone()),
+            detail: "track mattes/alpha mattes are capability-reported; native matte compositing remains a P1 implementation gap".to_string(),
+        });
+    }
+
+    if layer.source_rect != Value::Null && layer.source_rect != json!({}) {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Approximate,
+            feature: "layer.source_rect".to_string(),
+            layer: Some(layer.name.clone()),
+            detail: "sourceRect/source bounds are imported for layout diagnostics; exact AE sourceRect parity is approximate".to_string(),
+        });
+    }
+
+    let blend = layer_blend_mode(layer);
+    if !matches!(blend, render_ir::BlendMode::Normal) {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Supported,
+            feature: "layer.blend_mode".to_string(),
+            layer: Some(layer.name.clone()),
+            detail: format!("native compositor supports requested blend mode {blend:?}"),
         });
     }
 }
@@ -2248,6 +2440,7 @@ mod color_management_tests {
     #[test]
     fn unknown_effect_param_is_reported_explicitly() {
         let payload = GeneratedPayload {
+            schema_version: Some("render-plan.v1.1".to_string()),
             project_spec: ProjectSpec {
                 main_comp_name: "Comp 1".to_string(),
                 subtitles_mode: None,
@@ -2295,6 +2488,10 @@ mod color_management_tests {
             text_layers: Vec::new(),
             visual_ops: Vec::new(),
             payload_version: None,
+            requirements: Value::Null,
+            style_registry: Vec::new(),
+            effect_registry: Vec::new(),
+            golden_refs: Vec::new(),
         };
 
         let report = validate_payload(&payload, true);
@@ -2303,6 +2500,84 @@ mod color_management_tests {
             finding.status == CapabilityStatus::Unsupported
                 && finding.feature == "effect_param.ADBE Drop Shadow.mystery"
                 && finding.layer.as_deref() == Some("adjustment")
+        }));
+    }
+
+    #[test]
+    fn render_plan_metadata_and_layer_surface_gaps_are_reported() {
+        let payload: GeneratedPayload = serde_json::from_value(json!({
+            "schemaVersion": "render-plan.v1.1",
+            "payloadVersion": "render-plan.v1",
+            "projectSpec": {"mainCompName": "Comp 1"},
+            "compsSpec": [{"name": "Comp 1", "w": 64, "h": 64, "fps": 24.0, "dur": 1.0}],
+            "requirements": {
+                "plugins": ["sapphire"],
+                "external_plugins_policy": "unsupported_without_ofx_or_sidecar"
+            },
+            "styleRegistry": [{
+                "styleId": "subtitle.trendy.v1",
+                "backend": "native_approximation",
+                "parity": "approximate"
+            }],
+            "effectRegistry": [{
+                "stableId": "s.blurmotion",
+                "aeMatchName": "S_BlurMotion",
+                "backend": "unsupported_external_plugin",
+                "parity": "unsupported"
+            }],
+            "goldenRefs": [{
+                "id": "trendy_5th_real_job",
+                "artifactJobId": "9ef2717145c04318927ca738f5882541",
+                "family": "Trendy"
+            }],
+            "footage_layers": [{
+                "name": "masked",
+                "type": "footage",
+                "in_point": 0.0,
+                "out_point": 1.0,
+                "z_index": 1,
+                "source_rect": {"x": 1, "y": 2, "w": 3, "h": 4},
+                "masks": [],
+                "text_data": {
+                    "layer_meta": {
+                        "comp_name_target": "Comp 1",
+                        "trackMatteType": "alpha",
+                        "blendingModeCode": 5220
+                    },
+                    "source_footage": {"file_name": "clip.mp4"}
+                }
+            }]
+        }))
+        .unwrap();
+
+        let report = validate_payload(&payload, true);
+        assert!(!report.ok);
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Supported
+                && finding.feature == "render_plan.schema_version"
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Unsupported
+                && finding.feature == "requirement.plugin.sapphire"
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Unsupported
+                && finding.feature == "effect_registry.S_BlurMotion"
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::NotImplemented
+                && finding.feature == "layer.masks"
+                && finding.layer.as_deref() == Some("masked")
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::NotImplemented
+                && finding.feature == "layer.mattes"
+                && finding.layer.as_deref() == Some("masked")
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Supported
+                && finding.feature == "layer.blend_mode"
+                && finding.layer.as_deref() == Some("masked")
         }));
     }
 

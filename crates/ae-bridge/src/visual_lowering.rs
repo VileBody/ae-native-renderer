@@ -2393,6 +2393,7 @@ mod tests {
 
     fn payload(kind: &str, words: Value) -> GeneratedPayload {
         GeneratedPayload {
+            schema_version: Some("render-plan.v1.1".to_string()),
             payload_version: None,
             project_spec: ProjectSpec {
                 main_comp_name: "Comp 1".to_string(),
@@ -2411,6 +2412,10 @@ mod tests {
                 assets: Vec::new(),
                 required: true,
             }],
+            requirements: Value::Null,
+            style_registry: Vec::new(),
+            effect_registry: Vec::new(),
+            golden_refs: Vec::new(),
         }
     }
 
