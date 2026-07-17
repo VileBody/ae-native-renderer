@@ -329,6 +329,30 @@ fn debug_spec_can_force_full_effect_stage_telemetry_for_video_output() {
     let render_log = fs::read_to_string(scratch.0.join("out/render/render-log.jsonl")).unwrap();
     let start_event: Value = serde_json::from_str(render_log.lines().next().unwrap()).unwrap();
     assert_eq!(start_event["output"]["telemetry"], "full");
+    assert_eq!(start_event["output"]["stage_debug"]["effect_stages"], true);
+
+    let frame_event: Value = render_log
+        .lines()
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .find(|event| event["event"] == "frame.rendered")
+        .unwrap();
+    let stage_paths = frame_event["stage_debug"].as_array().unwrap();
+    assert!(stage_paths.iter().any(|path| path
+        .as_str()
+        .is_some_and(|path| path.contains("/source_layers/"))));
+    assert!(stage_paths.iter().any(|path| path
+        .as_str()
+        .is_some_and(|path| path.contains("/pre_effects/"))));
+    assert!(stage_paths.iter().any(|path| path
+        .as_str()
+        .is_some_and(|path| path.contains("/final_composite/"))));
+    for path in stage_paths {
+        let path = path.as_str().unwrap();
+        assert!(
+            scratch.0.join("out/render").join(path).is_file(),
+            "missing stage debug image {path}"
+        );
+    }
 }
 
 #[test]

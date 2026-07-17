@@ -1981,7 +1981,7 @@ fn visual_operation_status(operation: &VisualOperation) -> (CapabilityStatus, &'
         ),
         "hook.f2.object.v1" => (
             CapabilityStatus::Approximate,
-            "square, ellipse, rhomb, star1, and star2 lower to native procedural overlays with a drop-light chain",
+            "square, ellipse/elipse, rhomb, star1, and star2 lower to native procedural overlays with a drop-light chain",
         ),
         "hook.f4.motion.v1" => (
             CapabilityStatus::Approximate,

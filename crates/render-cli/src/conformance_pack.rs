@@ -3868,7 +3868,7 @@ mod tests {
     use super::*;
     use render_core::layer_eval::{
         AdjustmentEffectTrace, FrameRenderTrace, MotionBlurSampleTrace, MotionBlurTrace,
-        PosterizeTiming, SourceFrameQuantization, TemporalTraceRecord,
+        PosterizeTiming, SourceFrameQuantization, StageDebugSpec, TemporalTraceRecord,
     };
     use render_core::FootageProvider;
 
@@ -3893,7 +3893,9 @@ mod tests {
             text_selector_weights: Vec::new(),
             position_expressions: Vec::new(),
             collapse: Vec::new(),
+            stage_images: Vec::new(),
             capture_effect_debug: true,
+            stage_debug: StageDebugSpec::default(),
         }
     }
 

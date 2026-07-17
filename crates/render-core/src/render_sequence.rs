@@ -1,7 +1,8 @@
 use crate::layer_eval::{
-    render_frame_with_footage_profiled_runtime, CheckerboardFootageProvider, EffectRuntime,
-    EffectTiming, FootageProvider, FrameRenderTrace, KeyframeTraceRecord, LayerTiming,
-    MotionBlurTrace, SourceFrameQuantization, TemporalTraceRecord,
+    render_frame_with_footage_profiled_runtime_with_stage_debug, CheckerboardFootageProvider,
+    EffectRuntime, EffectTiming, FootageProvider, FrameRenderTrace, KeyframeTraceRecord,
+    LayerTiming, MotionBlurTrace, SourceFrameQuantization, StageDebugImage, StageDebugSpec,
+    TemporalTraceRecord,
 };
 use raster_cpu::Canvas;
 use rayon::prelude::*;
@@ -61,7 +62,7 @@ pub fn render_png_frames_with_footage(
     )
 }
 
-fn render_png_sequence_with_footage_options(
+pub fn render_png_sequence_with_footage_options(
     scene: &Scene,
     out_dir: impl AsRef<Path>,
     footage: &mut dyn FootageProvider,
@@ -94,6 +95,7 @@ pub struct RenderSequenceOptions {
     frame_write_timing_key: String,
     selected_frames: Option<Vec<u32>>,
     capture_effect_debug: bool,
+    stage_debug: StageDebugSpec,
 }
 
 impl RenderSequenceOptions {
@@ -105,6 +107,7 @@ impl RenderSequenceOptions {
             frame_write_timing_key: "save_ms".to_string(),
             selected_frames: None,
             capture_effect_debug: true,
+            stage_debug: StageDebugSpec::default(),
         }
     }
 
@@ -136,7 +139,16 @@ impl RenderSequenceOptions {
             frame_write_timing_key: "write_ms".to_string(),
             selected_frames: None,
             capture_effect_debug: false,
+            stage_debug: StageDebugSpec::default(),
         }
+    }
+
+    pub fn with_stage_debug(mut self, stage_debug: StageDebugSpec) -> Self {
+        self.stage_debug = stage_debug;
+        if stage_debug.effect_stages {
+            self.capture_effect_debug = true;
+        }
+        self
     }
 }
 
@@ -226,7 +238,10 @@ where
         Some(frames) => frames.clone(),
         None => (0..frame_count).collect(),
     };
-    let workers = frame_parallel_workers(scene, options.capture_effect_debug);
+    let workers = frame_parallel_workers(
+        scene,
+        options.capture_effect_debug || options.stage_debug.any(),
+    );
     let mut sequential_runtime = EffectRuntime::default();
     let lane_runtimes = (0..workers)
         .map(|_| Mutex::new(EffectRuntime::default()))
@@ -244,13 +259,15 @@ where
                         let mut runtime = lane_runtimes[lane].lock().map_err(|_| {
                             anyhow::anyhow!("frame lane runtime mutex was poisoned")
                         })?;
-                        let (canvas, trace) = render_frame_with_footage_profiled_runtime(
-                            scene,
-                            frame,
-                            &mut batch_footage,
-                            &mut runtime,
-                            options.capture_effect_debug,
-                        )?;
+                        let (canvas, trace) =
+                            render_frame_with_footage_profiled_runtime_with_stage_debug(
+                                scene,
+                                frame,
+                                &mut batch_footage,
+                                &mut runtime,
+                                options.capture_effect_debug,
+                                options.stage_debug,
+                            )?;
                         Ok(RenderedFrame {
                             frame,
                             canvas,
@@ -265,6 +282,7 @@ where
                     footage,
                     &mut sequential_runtime,
                     options.capture_effect_debug,
+                    options.stage_debug,
                 )?,
             }
         } else {
@@ -274,6 +292,7 @@ where
                 footage,
                 &mut sequential_runtime,
                 options.capture_effect_debug,
+                options.stage_debug,
             )?
         };
 
@@ -301,6 +320,7 @@ where
             frame_timings.push(frame_timing.clone());
             record_profile(&trace, &mut layer_profile, &mut effect_profile);
             write_adjustment_effect_trace_lines(&mut adjustment_effects_log, &trace)?;
+            let stage_debug_paths = write_stage_debug_images(out_dir, frame, &trace.stage_images)?;
             write_temporal_trace_lines(&mut temporal_telemetry_log, &trace)?;
             write_trace_value_lines(
                 &mut text_telemetry_log,
@@ -340,6 +360,7 @@ where
                     write_ms,
                     frame_total_ms,
                     frame_output.path.as_deref(),
+                    &stage_debug_paths,
                     &trace,
                 ),
             )?;
@@ -388,18 +409,20 @@ fn render_batch_sequential(
     footage: &mut dyn FootageProvider,
     runtime: &mut EffectRuntime,
     capture_effect_debug: bool,
+    stage_debug: StageDebugSpec,
 ) -> anyhow::Result<Vec<RenderedFrame>> {
     frames
         .iter()
         .copied()
         .map(|frame| {
             let frame_render_started = Instant::now();
-            let (canvas, trace) = render_frame_with_footage_profiled_runtime(
+            let (canvas, trace) = render_frame_with_footage_profiled_runtime_with_stage_debug(
                 scene,
                 frame,
                 footage,
                 runtime,
                 capture_effect_debug,
+                stage_debug,
             )?;
             Ok(RenderedFrame {
                 frame,
@@ -461,6 +484,20 @@ fn render_output_json(options: &RenderSequenceOptions) -> Value {
     if let Some(frames) = &options.selected_frames {
         output.insert("selected_frames".to_string(), json!(frames));
     }
+    if options.stage_debug.any() {
+        output.insert(
+            "stage_debug".to_string(),
+            json!({
+                "effect_stages": options.stage_debug.effect_stages,
+                "source_layers": options.stage_debug.source_layers,
+                "pre_effects": options.stage_debug.pre_effects,
+                "text_masks": options.stage_debug.text_masks,
+                "adjustment_results": options.stage_debug.adjustment_results,
+                "precomp_results": options.stage_debug.precomp_results,
+                "final_composite": options.stage_debug.final_composite
+            }),
+        );
+    }
     Value::Object(output)
 }
 
@@ -493,6 +530,7 @@ fn frame_log_json(
     write_ms: f64,
     duration_ms: f64,
     path: Option<&str>,
+    stage_debug_paths: &[String],
     trace: &FrameRenderTrace,
 ) -> Value {
     let mut event = Map::new();
@@ -505,8 +543,75 @@ fn frame_log_json(
     if let Some(path) = path {
         event.insert("path".to_string(), json!(path));
     }
+    if !stage_debug_paths.is_empty() {
+        event.insert("stage_debug".to_string(), json!(stage_debug_paths));
+    }
     event.insert("profile".to_string(), frame_trace_json(trace));
     Value::Object(event)
+}
+
+fn write_stage_debug_images(
+    out_dir: &Path,
+    frame: u32,
+    images: &[StageDebugImage],
+) -> anyhow::Result<Vec<String>> {
+    if images.is_empty() {
+        return Ok(Vec::new());
+    }
+    let mut paths = Vec::with_capacity(images.len());
+    for (index, image) in images.iter().enumerate() {
+        let category = path_segment(image.category);
+        let dir = out_dir
+            .join("stage-debug")
+            .join(format!("frame_{frame:06}"))
+            .join(&category);
+        fs::create_dir_all(&dir)?;
+        let layer = image.layer_id.as_deref().unwrap_or("composition");
+        let effect = image
+            .effect_index
+            .map(|value| format!("effect_{value:02}_"))
+            .unwrap_or_default();
+        let filename = format!(
+            "{index:03}_{}_{}{}__{}__{}x{}.png",
+            path_segment(&image.composition),
+            path_segment(layer),
+            effect,
+            path_segment(&image.label),
+            image.canvas.width,
+            image.canvas.height
+        );
+        let path = dir.join(filename);
+        image.canvas.save_png(&path)?;
+        paths.push(relative_render_path(out_dir, &path));
+    }
+    Ok(paths)
+}
+
+fn relative_render_path(root: &Path, path: &Path) -> String {
+    path.strip_prefix(root)
+        .unwrap_or(path)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn path_segment(value: &str) -> String {
+    let mut out = String::with_capacity(value.len().max(1));
+    for ch in value.chars() {
+        if ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.') {
+            out.push(ch);
+        } else {
+            out.push('_');
+        }
+    }
+    while out.contains("__") {
+        out = out.replace("__", "_");
+    }
+    let out = out.trim_matches('_').to_string();
+    if out.is_empty() {
+        "unnamed".to_string()
+    } else {
+        out
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1365,7 +1470,9 @@ mod tests {
             text_selector_weights: Vec::new(),
             position_expressions: Vec::new(),
             collapse: Vec::new(),
+            stage_images: Vec::new(),
             capture_effect_debug: true,
+            stage_debug: StageDebugSpec::default(),
         };
         let path = std::env::temp_dir().join(format!(
             "ae_native_adjustment_effects_{}_{}.jsonl",

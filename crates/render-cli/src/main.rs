@@ -965,7 +965,7 @@ fn render(
             job_archive.clone(),
             mp4_path,
             true,
-            false,
+            render_core::layer_eval::StageDebugSpec::default(),
         )?;
         println!(
             "render.done scene={} out={}",
@@ -984,7 +984,7 @@ fn render(
         mp4.as_deref(),
         None,
         true,
-        false,
+        render_core::layer_eval::StageDebugSpec::default(),
     )?;
     println!(
         "render.done scene={} out={}",
@@ -1003,7 +1003,7 @@ fn render_png_output(
     mp4: Option<&Path>,
     selected_frames: Option<&[u32]>,
     emit_progress: bool,
-    capture_effect_debug: bool,
+    stage_debug: render_core::layer_eval::StageDebugSpec,
 ) -> anyhow::Result<()> {
     if selected_frames.is_some() && mp4.is_some() {
         anyhow::bail!(
@@ -1024,11 +1024,21 @@ fn render_png_output(
     footage.set_parallel_prefetch_plan(media_plan.clone());
     write_media_plan(out, &media_plan, prepare_report, emit_progress)?;
     if let Some(frames) = selected_frames {
-        render_core::render_png_frames_with_footage(scene, out, &mut footage, frames)?;
-    } else if mp4.is_some() && !capture_effect_debug {
+        render_core::render_png_sequence_with_footage_options(
+            scene,
+            out,
+            &mut footage,
+            render_core::RenderSequenceOptions::png_frames(frames).with_stage_debug(stage_debug),
+        )?;
+    } else if mp4.is_some() && !stage_debug.any() {
         render_core::render_png_sequence_with_footage_production(scene, out, &mut footage)?;
     } else {
-        render_core::render_png_sequence_with_footage(scene, out, &mut footage)?;
+        render_core::render_png_sequence_with_footage_options(
+            scene,
+            out,
+            &mut footage,
+            render_core::RenderSequenceOptions::png_sequence().with_stage_debug(stage_debug),
+        )?;
     }
     write_media_report(out, &footage, emit_progress)?;
     if let Some(mp4) = mp4 {
@@ -1062,9 +1072,9 @@ fn render_video_output(
     job_archive: Option<PathBuf>,
     mp4: &Path,
     emit_progress: bool,
-    capture_effect_debug: bool,
+    stage_debug: render_core::layer_eval::StageDebugSpec,
 ) -> anyhow::Result<()> {
-    if capture_effect_debug {
+    if stage_debug.any() {
         return render_png_output(
             scene_path,
             scene,
@@ -1074,7 +1084,7 @@ fn render_video_output(
             Some(mp4),
             None,
             emit_progress,
-            true,
+            stage_debug,
         );
     }
     match render_direct_mp4(
@@ -1100,7 +1110,7 @@ fn render_video_output(
                 Some(mp4),
                 None,
                 emit_progress,
-                false,
+                render_core::layer_eval::StageDebugSpec::default(),
             )
         }
     }

@@ -39,6 +39,8 @@
       "id": "trendy_5th_real_job",
       "family": "Trendy",
       "source": "artifact_jobs",
+      "artifact_job_id": "9ef2717145c04318927ca738f5882541",
+      "example_dir": "out/visual_tool_examples_s3/trendy_5th/",
       "expected_visual_ops": ["subtitle.trendy.v1"],
       "required_fields": ["word_timings", "fill", "blend", "style"]
     },
@@ -46,6 +48,8 @@
       "id": "brat_5th_real_job",
       "family": "Brat",
       "source": "artifact_jobs",
+      "artifact_job_id": "a15d4c02d67843b787402bb27aeb5830",
+      "example_dir": "out/visual_tool_examples_s3/brat_5th/",
       "expected_visual_ops": ["subtitle.brat.v1"],
       "required_fields": ["word_timings", "bpm", "fill", "blend"]
     },

@@ -405,8 +405,12 @@ fn lower_f1(operation: &VisualOperation, comp: &CompSpec) -> Option<VisualLoweri
 }
 
 fn lower_f2(operation: &VisualOperation, comp: &CompSpec) -> Option<VisualLoweringResult> {
-    let shape =
+    let requested_shape =
         operation_string_param(operation, &["shape", "device", "object"]).unwrap_or("square");
+    let shape = match requested_shape {
+        "elipse" => "ellipse",
+        other => other,
+    };
     if !matches!(shape, "square" | "ellipse" | "rhomb" | "star1" | "star2") {
         return None;
     }
@@ -464,7 +468,13 @@ fn lower_f2(operation: &VisualOperation, comp: &CompSpec) -> Option<VisualLoweri
         status: CapabilityStatus::Approximate,
         feature: format!("lower.visual_op.hook.f2.object.v1.{shape}"),
         layer: operation.id.clone(),
-        detail: format!("{shape} lowered to a native procedural vector overlay plus drop light"),
+        detail: if requested_shape == shape {
+            format!("{shape} lowered to a native procedural vector overlay plus drop light")
+        } else {
+            format!(
+                "{requested_shape} normalized to {shape} and lowered to a native procedural vector overlay plus drop light"
+            )
+        },
     });
     Some(result)
 }
@@ -3157,7 +3167,14 @@ mod tests {
 
     #[test]
     fn active_f2_f3_and_f4_palette_ids_all_lower_to_native_layers() {
-        for shape in ["square", "ellipse", "rhomb", "star1", "star2"] {
+        for (shape, lowered_shape) in [
+            ("square", "square"),
+            ("ellipse", "ellipse"),
+            ("elipse", "ellipse"),
+            ("rhomb", "rhomb"),
+            ("star1", "star1"),
+            ("star2", "star2"),
+        ] {
             let mut payload = payload("hook.f2.object.v1", json!([]));
             payload.visual_ops[0].params = json!({"shape": shape, "drop_time": 1.0});
             let result = lower_visual_operations(&payload, &comp());
@@ -3170,7 +3187,7 @@ mod tests {
                 panic!("F2 {shape} did not lower to a solid overlay");
             };
             assert_eq!(effects[0].match_name, "ANR Shape Overlay");
-            assert_eq!(effects[0].params["shape"], json!(shape));
+            assert_eq!(effects[0].params["shape"], json!(lowered_shape));
         }
 
         for device in ["head", "pinch", "holdfinger", "tap", "swipe"] {

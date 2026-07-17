@@ -83,9 +83,21 @@ normalized roles `audio`, `tts_audio`, `overlay`, and `matte`.
 `debugSpec` is optional. Production defaults all flags to `false`.
 `captureEffectStages=true` forces the PNG/full-telemetry render path even when
 `outputSpec.video` is requested, so `render/render-log.jsonl` records full effect
-stage telemetry for differential debugging. The source/pre-effects/text-mask/
-adjustment/precomp/final-composite flags are preserved in the normalized request
-as contract switches for stage export tooling.
+stage telemetry for differential debugging. The stage image switches now export
+PNG snapshots under `render/stage-debug/frame_XXXXXX/<category>/` and attach the
+relative paths to each `frame.rendered` event:
+
+- `sourceLayers`: source raster after text/footage/solid/precomp acquisition.
+- `preEffects`: layer raster before the local effect stack and parent transform.
+- `textMasks`: text/range-selector mask raster before local effects.
+- `captureEffectStages`: raster after each layer or adjustment effect.
+- `adjustmentResults`: adjustment-layer result after each adjustment effect.
+- `precompResults`: child comp raster inside its own raster boundary.
+- `finalComposite`: final frame after all layers composite.
+
+When any stage image flag is enabled, the renderer uses the deterministic PNG
+sequence path even if `outputSpec.video` is present; MP4 muxing then happens
+from those PNGs.
 
 ### Exact frame selection
 

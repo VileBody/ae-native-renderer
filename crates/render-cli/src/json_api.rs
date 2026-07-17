@@ -96,6 +96,20 @@ pub struct DebugSpec {
     pub final_composite: bool,
 }
 
+impl DebugSpec {
+    fn stage_debug_spec(&self) -> render_core::layer_eval::StageDebugSpec {
+        render_core::layer_eval::StageDebugSpec {
+            effect_stages: self.capture_effect_stages,
+            source_layers: self.source_layers,
+            pre_effects: self.pre_effects,
+            text_masks: self.text_masks,
+            adjustment_results: self.adjustment_results,
+            precomp_results: self.precomp_results,
+            final_composite: self.final_composite,
+        }
+    }
+}
+
 fn deserialize_frame_selection<'de, D>(deserializer: D) -> Result<Option<Vec<u32>>, D::Error>
 where
     D: Deserializer<'de>,
@@ -525,6 +539,7 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
         .as_ref()
         .map(|path| resolve_path(base_dir, path));
     let started = Instant::now();
+    let stage_debug = request.debug.stage_debug_spec();
     let render_result = match video.as_deref() {
         Some(video_path) => super::render_video_output(
             &scene_path,
@@ -534,7 +549,7 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
             job_archive.clone(),
             video_path,
             false,
-            request.debug.capture_effect_stages,
+            stage_debug,
         ),
         None => super::render_png_output(
             &scene_path,
@@ -545,7 +560,7 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
             None,
             request.output.frames.as_deref(),
             false,
-            request.debug.capture_effect_stages,
+            stage_debug,
         ),
     };
     if let Err(error) = render_result {

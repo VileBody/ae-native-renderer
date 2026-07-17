@@ -84,7 +84,42 @@ pub struct FrameRenderTrace {
     pub text_selector_weights: Vec<Value>,
     pub position_expressions: Vec<Value>,
     pub collapse: Vec<Value>,
+    pub stage_images: Vec<StageDebugImage>,
     pub capture_effect_debug: bool,
+    pub stage_debug: StageDebugSpec,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct StageDebugSpec {
+    pub effect_stages: bool,
+    pub source_layers: bool,
+    pub pre_effects: bool,
+    pub text_masks: bool,
+    pub adjustment_results: bool,
+    pub precomp_results: bool,
+    pub final_composite: bool,
+}
+
+impl StageDebugSpec {
+    pub fn any(self) -> bool {
+        self.effect_stages
+            || self.source_layers
+            || self.pre_effects
+            || self.text_masks
+            || self.adjustment_results
+            || self.precomp_results
+            || self.final_composite
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct StageDebugImage {
+    pub category: &'static str,
+    pub composition: String,
+    pub layer_id: Option<String>,
+    pub effect_index: Option<usize>,
+    pub label: String,
+    pub canvas: Canvas,
 }
 
 #[derive(Debug, Clone)]
@@ -472,6 +507,24 @@ pub fn render_frame_with_footage_profiled_runtime(
     runtime: &mut EffectRuntime,
     capture_effect_debug: bool,
 ) -> anyhow::Result<(Canvas, FrameRenderTrace)> {
+    render_frame_with_footage_profiled_runtime_with_stage_debug(
+        scene,
+        frame_index,
+        footage,
+        runtime,
+        capture_effect_debug,
+        StageDebugSpec::default(),
+    )
+}
+
+pub fn render_frame_with_footage_profiled_runtime_with_stage_debug(
+    scene: &Scene,
+    frame_index: u32,
+    footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
+    capture_effect_debug: bool,
+    stage_debug: StageDebugSpec,
+) -> anyhow::Result<(Canvas, FrameRenderTrace)> {
     let comp = &scene.composition;
     let time = frame_index as f64 / comp.fps;
     let mut trace = FrameRenderTrace {
@@ -488,7 +541,9 @@ pub fn render_frame_with_footage_profiled_runtime(
         text_selector_weights: Vec::new(),
         position_expressions: Vec::new(),
         collapse: Vec::new(),
+        stage_images: Vec::new(),
         capture_effect_debug,
+        stage_debug,
     };
     let canvas = render_composition_frame(
         scene,
@@ -500,6 +555,15 @@ pub fn render_frame_with_footage_profiled_runtime(
         &mut Vec::new(),
         Some(&mut trace),
     )?;
+    record_stage_image(
+        Some(&mut trace),
+        StageDebugKind::FinalComposite,
+        &comp.id,
+        None,
+        None,
+        "final",
+        &canvas,
+    );
     Ok((canvas, trace))
 }
 
@@ -689,6 +753,59 @@ fn composite_layer(dst: &mut Canvas, src: &Canvas, opacity_percent: f32, blend_m
 
 fn quantize_blend_unit(value: f32) -> u8 {
     (value * 255.0).round().clamp(0.0, 255.0) as u8
+}
+
+#[derive(Debug, Clone, Copy)]
+enum StageDebugKind {
+    SourceLayer,
+    PreEffects,
+    TextMask,
+    EffectStage,
+    AdjustmentResult,
+    PrecompResult,
+    FinalComposite,
+}
+
+fn record_stage_image(
+    trace: Option<&mut FrameRenderTrace>,
+    kind: StageDebugKind,
+    composition: &str,
+    layer_id: Option<&str>,
+    effect_index: Option<usize>,
+    label: impl Into<String>,
+    canvas: &Canvas,
+) {
+    let Some(trace) = trace else {
+        return;
+    };
+    let enabled = match kind {
+        StageDebugKind::SourceLayer => trace.stage_debug.source_layers,
+        StageDebugKind::PreEffects => trace.stage_debug.pre_effects,
+        StageDebugKind::TextMask => trace.stage_debug.text_masks,
+        StageDebugKind::EffectStage => trace.stage_debug.effect_stages,
+        StageDebugKind::AdjustmentResult => trace.stage_debug.adjustment_results,
+        StageDebugKind::PrecompResult => trace.stage_debug.precomp_results,
+        StageDebugKind::FinalComposite => trace.stage_debug.final_composite,
+    };
+    if !enabled {
+        return;
+    }
+    trace.stage_images.push(StageDebugImage {
+        category: match kind {
+            StageDebugKind::SourceLayer => "source_layers",
+            StageDebugKind::PreEffects => "pre_effects",
+            StageDebugKind::TextMask => "text_masks",
+            StageDebugKind::EffectStage => "effect_stages",
+            StageDebugKind::AdjustmentResult => "adjustment_results",
+            StageDebugKind::PrecompResult => "precomp_results",
+            StageDebugKind::FinalComposite => "final_composite",
+        },
+        composition: composition.to_string(),
+        layer_id: layer_id.map(str::to_string),
+        effect_index,
+        label: label.into(),
+        canvas: canvas.clone(),
+    });
 }
 
 fn should_motion_blur_layer(comp: &Composition, layer: &Layer) -> bool {
@@ -1088,6 +1205,15 @@ fn render_layer_stub(
                 comp.fps,
             );
             let c = Canvas::new(canvas_dim(rect.w), canvas_dim(rect.h), *color);
+            record_stage_image(
+                trace.as_deref_mut(),
+                StageDebugKind::SourceLayer,
+                &comp.id,
+                Some(id),
+                None,
+                "solid_source",
+                &c,
+            );
             transform_canvas(&c, comp.width, comp.height, &evaluated, [rect.x, rect.y])
         }
         Layer::Text {
@@ -1229,6 +1355,33 @@ fn render_layer_stub(
                     id,
                 );
             }
+            record_stage_image(
+                trace.as_deref_mut(),
+                StageDebugKind::TextMask,
+                &comp.id,
+                Some(id),
+                None,
+                "text_mask",
+                &text_canvas,
+            );
+            record_stage_image(
+                trace.as_deref_mut(),
+                StageDebugKind::SourceLayer,
+                &comp.id,
+                Some(id),
+                None,
+                "text_source",
+                &text_canvas,
+            );
+            record_stage_image(
+                trace.as_deref_mut(),
+                StageDebugKind::PreEffects,
+                &comp.id,
+                Some(id),
+                None,
+                "text_pre_effects",
+                &text_canvas,
+            );
             let effects_started = Instant::now();
             text_canvas = apply_effects_to_canvas(
                 effects,
@@ -1272,7 +1425,25 @@ fn render_layer_stub(
             let source_time = (*source_start + (layer_time - *start)).max(0.0);
             match footage.frame_at(source, source_time)? {
                 Some(frame) => {
+                    record_stage_image(
+                        trace.as_deref_mut(),
+                        StageDebugKind::SourceLayer,
+                        &comp.id,
+                        Some(id),
+                        None,
+                        "footage_source",
+                        &frame,
+                    );
                     if effects_are_turbulent_only(effects_of(layer)) {
+                        record_stage_image(
+                            trace.as_deref_mut(),
+                            StageDebugKind::PreEffects,
+                            &comp.id,
+                            Some(id),
+                            None,
+                            "footage_pre_effects",
+                            &frame,
+                        );
                         let effects_started = Instant::now();
                         let effected = apply_effects_to_canvas(
                             effects_of(layer),
@@ -1363,6 +1534,24 @@ fn render_layer_stub(
                     }
                     rendered
                 };
+                record_stage_image(
+                    trace.as_deref_mut(),
+                    StageDebugKind::PrecompResult,
+                    &comp.id,
+                    Some(id),
+                    None,
+                    format!("precomp_{composition}"),
+                    precomp_canvas.as_ref(),
+                );
+                record_stage_image(
+                    trace.as_deref_mut(),
+                    StageDebugKind::SourceLayer,
+                    &comp.id,
+                    Some(id),
+                    None,
+                    format!("precomp_source_{composition}"),
+                    precomp_canvas.as_ref(),
+                );
                 let evaluated =
                     evaluate_transform(transform, layer_time, *start, *duration, comp.fps);
                 record_transform_sampling_trace(
@@ -1403,6 +1592,15 @@ fn render_layer_stub(
         effects_ms
     } else {
         let effects_started = Instant::now();
+        record_stage_image(
+            trace.as_deref_mut(),
+            StageDebugKind::PreEffects,
+            &comp.id,
+            Some(layer.id()),
+            None,
+            "layer_pre_effects",
+            &canvas,
+        );
         canvas = apply_effects_to_canvas(
             effects_of(layer),
             &canvas,
@@ -1894,6 +2092,17 @@ fn apply_effects_to_canvas(
             );
             canvas = Some(rendered);
             if let Some(trace) = trace.as_deref_mut() {
+                if let Some(stage_canvas) = canvas.as_ref() {
+                    record_stage_image(
+                        Some(&mut *trace),
+                        StageDebugKind::EffectStage,
+                        composition,
+                        Some(layer_id),
+                        Some(effect_index),
+                        format!("{}_{}", effect_index, spec.match_name),
+                        stage_canvas,
+                    );
+                }
                 if let Some(debug_trace) = debug_trace {
                     trace.effect_debug.push(EffectDebugRecord {
                         composition: composition.to_string(),
@@ -1975,6 +2184,24 @@ fn apply_adjustment_effects_to_canvas(
         let output_hash = capture_diagnostics.then(|| canvas_hash(&canvas));
 
         if let Some(trace) = trace.as_deref_mut() {
+            record_stage_image(
+                Some(&mut *trace),
+                StageDebugKind::EffectStage,
+                composition,
+                Some(layer_id),
+                Some(effect_index),
+                format!("{}_{}", effect_index, spec.match_name),
+                &canvas,
+            );
+            record_stage_image(
+                Some(&mut *trace),
+                StageDebugKind::AdjustmentResult,
+                composition,
+                Some(layer_id),
+                Some(effect_index),
+                format!("{}_{}", effect_index, spec.match_name),
+                &canvas,
+            );
             if let Some(debug_trace) = debug_trace {
                 trace.effect_debug.push(EffectDebugRecord {
                     composition: composition.to_string(),
