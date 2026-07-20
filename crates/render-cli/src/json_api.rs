@@ -1444,6 +1444,10 @@ fn ffmpeg_seconds(value: f64) -> String {
     format!("{value:.9}")
 }
 
+fn ffmpeg_amplitude_from_db(value: f64) -> String {
+    ffmpeg_seconds(10.0_f64.powf(value / 20.0).clamp(0.0, 1.0))
+}
+
 fn audio_filter(plans: &[AudioTrackPlan]) -> String {
     assert!(
         !plans.is_empty(),
@@ -1468,17 +1472,19 @@ fn audio_filter(plans: &[AudioTrackPlan]) -> String {
         }
         if plan.fade_in > 0.0 {
             filters.push(format!(
-                "afade=t=in:st=0:d={}:curve=qsin",
-                ffmpeg_seconds(plan.fade_in)
+                "afade=t=in:st=0:d={}:curve=qsin:silence={}",
+                ffmpeg_seconds(plan.fade_in),
+                ffmpeg_amplitude_from_db(plan.min_db)
             ));
         }
         if plan.fade_out > 0.0 {
             let start = (plan.layer_duration - plan.fade_out).max(0.0);
             if start < plan.duration {
                 filters.push(format!(
-                    "afade=t=out:st={}:d={}:curve=qsin",
+                    "afade=t=out:st={}:d={}:curve=qsin:silence={}",
                     ffmpeg_seconds(start),
-                    ffmpeg_seconds(plan.fade_out)
+                    ffmpeg_seconds(plan.fade_out),
+                    ffmpeg_amplitude_from_db(plan.min_db)
                 ));
             }
         }
@@ -1993,7 +1999,9 @@ mod tests {
 
         let filter = audio_filter(&plans);
         assert!(filter.contains("curve=qsin:silence=0.003981072"));
-        assert!(filter.contains("afade=t=out:st=14.500000000:d=0.500000000"));
+        assert_eq!(filter.matches("silence=0.003981072").count(), 2);
+        assert!(filter
+            .contains("afade=t=out:st=14.500000000:d=0.500000000:curve=qsin:silence=0.003981072"));
         assert!(filter.contains("atrim=start=53.000000000:duration=15.000000000"));
     }
 

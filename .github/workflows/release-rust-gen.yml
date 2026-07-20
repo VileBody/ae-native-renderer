@@ -17,9 +17,13 @@ jobs:
   image:
     runs-on: ubuntu-latest
     outputs:
-      image: ghcr.io/${{ github.repository_owner }}/ae-native-renderer@${{ steps.image.outputs.digest }}
+      image: ${{ steps.image-name.outputs.value }}@${{ steps.image.outputs.digest }}
     steps:
       - uses: actions/checkout@v4
+      - id: image-name
+        name: Normalize image name
+        shell: bash
+        run: echo "value=ghcr.io/${GITHUB_REPOSITORY_OWNER,,}/ae-native-renderer" >> "$GITHUB_OUTPUT"
       - uses: docker/setup-buildx-action@v3
       - uses: docker/login-action@v3
         with:
@@ -33,8 +37,8 @@ jobs:
         with:
           context: .
           push: true
-          tags: ghcr.io/${{ github.repository_owner }}/ae-native-renderer:${{ github.sha }}
-          outputs: type=image,name=ghcr.io/${{ github.repository_owner }}/ae-native-renderer,push-by-digest=true,name-canonical=true,push=true
+          tags: ${{ steps.image-name.outputs.value }}:${{ github.sha }}
+          outputs: type=image,name=${{ steps.image-name.outputs.value }},push-by-digest=true,name-canonical=true,push=true
 
   deploy:
     needs: image
