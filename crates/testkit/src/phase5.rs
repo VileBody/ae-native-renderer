@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::load_rgba_png;
-    use anyhow::{Context, Result};
+    use anyhow::{bail, Context, Result};
     use serde_json::Value;
     use std::path::{Path, PathBuf};
 
@@ -131,6 +131,18 @@ mod tests {
     #[test]
     fn phase5_selected_ae_goldens_exist_and_are_512_rgba() -> Result<()> {
         let root = repo_root();
+        let missing = missing_phase5_goldens(&root);
+        if !missing.is_empty() {
+            if !crate::ae_png_goldens_required() {
+                eprintln!(
+                    "skipping phase5 AE PNG golden load test: {} files missing; set {}=1 to require goldens",
+                    missing.len(),
+                    crate::REQUIRE_AE_PNG_GOLDENS_ENV
+                );
+                return Ok(());
+            }
+            bail!("missing phase5 AE PNG goldens: {missing:?}");
+        }
 
         for case in PHASE5_CASES {
             for frame in case.selected_frames {
@@ -156,6 +168,21 @@ mod tests {
         }
 
         Ok(())
+    }
+
+    fn missing_phase5_goldens(root: &Path) -> Vec<PathBuf> {
+        PHASE5_CASES
+            .iter()
+            .flat_map(|case| {
+                case.selected_frames.iter().map(move |frame| {
+                    root.join(format!(
+                        "fixtures/ae_conformance_pack/ae_goldens/png/{}/{:}_{:05}.png",
+                        case.id, case.id, frame
+                    ))
+                })
+            })
+            .filter(|path| !path.is_file())
+            .collect()
     }
 
     #[test]
