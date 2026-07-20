@@ -1448,6 +1448,27 @@ fn ffmpeg_amplitude_from_db(value: f64) -> String {
     ffmpeg_seconds(10.0_f64.powf(value / 20.0).clamp(0.0, 1.0))
 }
 
+fn audio_fade_in_filter(duration: f64, min_db: f64) -> String {
+    let duration = duration.max(f64::EPSILON);
+    let minimum = ffmpeg_amplitude_from_db(min_db);
+    format!(
+        "volume='if(lt(t,{duration}),{minimum}+(1-{minimum})*sin(PI*t/(2*{duration})),1)':eval=frame",
+        duration = ffmpeg_seconds(duration),
+    )
+}
+
+fn audio_fade_out_filter(start: f64, duration: f64, min_db: f64) -> String {
+    let duration = duration.max(f64::EPSILON);
+    let end = start + duration;
+    let start = ffmpeg_seconds(start.max(0.0));
+    let duration = ffmpeg_seconds(duration);
+    let end = ffmpeg_seconds(end.max(0.0));
+    let minimum = ffmpeg_amplitude_from_db(min_db);
+    format!(
+        "volume='if(lt(t,{start}),1,if(lt(t,{end}),{minimum}+(1-{minimum})*sin(PI*({end}-t)/(2*{duration})),{minimum}))':eval=frame"
+    )
+}
+
 fn audio_filter(plans: &[AudioTrackPlan]) -> String {
     assert!(
         !plans.is_empty(),
@@ -1471,21 +1492,12 @@ fn audio_filter(plans: &[AudioTrackPlan]) -> String {
             filters.push(format!("volume={:.6}dB", plan.level_db));
         }
         if plan.fade_in > 0.0 {
-            filters.push(format!(
-                "afade=t=in:st=0:d={}:curve=qsin:silence={}",
-                ffmpeg_seconds(plan.fade_in),
-                ffmpeg_amplitude_from_db(plan.min_db)
-            ));
+            filters.push(audio_fade_in_filter(plan.fade_in, plan.min_db));
         }
         if plan.fade_out > 0.0 {
             let start = (plan.layer_duration - plan.fade_out).max(0.0);
             if start < plan.duration {
-                filters.push(format!(
-                    "afade=t=out:st={}:d={}:curve=qsin:silence={}",
-                    ffmpeg_seconds(start),
-                    ffmpeg_seconds(plan.fade_out),
-                    ffmpeg_amplitude_from_db(plan.min_db)
-                ));
+                filters.push(audio_fade_out_filter(start, plan.fade_out, plan.min_db));
             }
         }
         filters.push(format!(
@@ -1998,10 +2010,14 @@ mod tests {
         assert!((plan.min_db + 48.0).abs() < 1e-9);
 
         let filter = audio_filter(&plans);
-        assert!(filter.contains("curve=qsin:silence=0.003981072"));
-        assert_eq!(filter.matches("silence=0.003981072").count(), 2);
-        assert!(filter
-            .contains("afade=t=out:st=14.500000000:d=0.500000000:curve=qsin:silence=0.003981072"));
+        assert!(!filter.contains("silence="));
+        assert_eq!(filter.matches("0.003981072").count(), 5);
+        assert!(filter.contains(
+            "volume='if(lt(t,0.500000000),0.003981072+(1-0.003981072)*sin(PI*t/(2*0.500000000)),1)':eval=frame"
+        ));
+        assert!(filter.contains(
+            "volume='if(lt(t,14.500000000),1,if(lt(t,15.000000000),0.003981072+(1-0.003981072)*sin(PI*(15.000000000-t)/(2*0.500000000)),0.003981072))':eval=frame"
+        ));
         assert!(filter.contains("atrim=start=53.000000000:duration=15.000000000"));
     }
 
@@ -2098,8 +2114,9 @@ mod tests {
         assert!((plan.level_db + 3.0).abs() < 1e-9);
         let filter = audio_filter(&plans);
         assert!(filter.contains("volume=-3.000000dB"));
-        assert!(filter.contains("afade=t=in:st=0:d=0.020000000"));
-        assert!(filter.contains("afade=t=out:st=0.650000000:d=0.100000000"));
+        assert!(filter.contains("if(lt(t,0.020000000)"));
+        assert!(filter.contains("if(lt(t,0.650000000),1,if(lt(t,0.750000000)"));
+        assert!(!filter.contains("silence="));
         assert!(filter.contains("asetpts=PTS+2.350000000/TB"));
     }
 
