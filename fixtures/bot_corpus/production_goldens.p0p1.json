@@ -26,6 +26,7 @@
     "renderer_tunables": "configs/native_tunables.p0p1.json",
     "plugin_policy": "no_ofx_no_proprietary_plugin_workers_in_this_slice"
   },
+  "acceptance_evidence": "fixtures/bot_corpus/production_acceptance_20260717.json",
   "cases": [
     {
       "id": "trendy_5th_real_job",
@@ -33,7 +34,7 @@
       "artifact_job_id": "9ef2717145c04318927ca738f5882541",
       "source_examples_dir": "out/visual_tool_examples_s3/trendy_5th/",
       "required_visual_ops": ["subtitle.trendy.v1"],
-      "reference_status": "download_required",
+      "reference_status": "ae_reference_job_recorded",
       "native_status": "approximate"
     },
     {
@@ -42,8 +43,8 @@
       "artifact_job_id": "a15d4c02d67843b787402bb27aeb5830",
       "source_examples_dir": "out/visual_tool_examples_s3/brat_5th/",
       "required_visual_ops": ["subtitle.brat.v1"],
-      "reference_status": "download_required",
-      "native_status": "approximate"
+      "reference_status": "ae_reference_downloaded_and_compared",
+      "native_status": "approximate_complete"
     },
     {
       "id": "bigtest_f1_f5_render_plan_corpus",
@@ -57,14 +58,13 @@
         "F4": 5,
         "F5": 5
       },
-      "reference_status": "assets_and_ae_exports_required",
-      "native_status": "schema_validated"
+      "reference_status": "32_ae_exports_downloaded_and_compared",
+      "native_status": "approximate_complete"
     }
   ],
   "known_p1_gaps": [
     "full AE mask/matte compositing",
     "byte-exact TextDocument sourceRect/CoolType metrics",
-    "full AE reference media for every /bigtest F1-F5 request",
     "external Sapphire/BCC/VISINF plugin execution route"
   ]
 }

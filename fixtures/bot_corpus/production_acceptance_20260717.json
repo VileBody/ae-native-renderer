@@ -1,0 +1,68 @@
+{
+  "schema": "ae-native-renderer.production-acceptance.v1",
+  "created_at": "2026-07-17T20:44:00+03:00",
+  "scope": "P0/P1 approximate native readiness without OFX or proprietary plugin workers",
+  "source": {
+    "builder_repository": "VileBody/srv_blast",
+    "builder_commit": "1c7754a6",
+    "renderer_repository": "VileBody/ae-native-renderer",
+    "renderer_commit": "970de60",
+    "ae_batch": "native-ae-refs-20260717-144356",
+    "ae_master_job_id": "3df3f3445d4249188964b3a7d4fbf016"
+  },
+  "validation": {
+    "total": 33,
+    "complete": 33,
+    "incomplete": 0,
+    "with_audio_capability_supported": 33,
+    "not_implemented": 0,
+    "unsupported": 0,
+    "parity": "approximate"
+  },
+  "checksums": {
+    "algorithm": "sha256",
+    "ae_output_digest_list": "4f8d5de7d522b55c58d2a933d02dd653582d73e88bf5bd0ce38f65538766e33e",
+    "native_acceptance_summary": "7a8716bdd6bc6b9681f62f7f31ed280056f5233a86e587d818afabb8798bc1b1",
+    "brat_full_ae_output": "4ac068f3805dad716c1f627208449784c6f711978fd2c115969fd528253c4949"
+  },
+  "artifact_recovery": {
+    "provider": "Blast orchestrator artifact storage",
+    "lookup": "job_id",
+    "notes": "Re-harvest output video and job archive by job_id; presigned URLs are intentionally not committed."
+  },
+  "cases": [
+    {"id": "bigtest_01_baseline_case", "job_id": "d9de61c1d35a4e199d2d7999bc037889"},
+    {"id": "bigtest_02_f3_f3", "job_id": "a4fecde8ad704b529980d14a5ee1c02b"},
+    {"id": "bigtest_03_f3_f3", "job_id": "5d44796ffdbb47868cc656af31d81de3"},
+    {"id": "bigtest_04_f3_f3", "job_id": "2583181b3809488da941003baede4290"},
+    {"id": "bigtest_05_f3_f3", "job_id": "cc612497219f4f47847531857936d5cf"},
+    {"id": "bigtest_06_f3_f3_3", "job_id": "1f78d8b25b77435786249182adb22489"},
+    {"id": "bigtest_07_f3_f3", "job_id": "ca7f045a58f04b4f892c0910301a522f"},
+    {"id": "bigtest_08_f3_f3", "job_id": "033c113eae6b4320abdfa018f1278122"},
+    {"id": "bigtest_09_f3_f3", "job_id": "48fc2cbe22d945978ff7e03d2cb442f5"},
+    {"id": "bigtest_10_f3_f3", "job_id": "62c5efcb02064fb88f67eb4fd7e0ca25"},
+    {"id": "bigtest_11_f3_f3", "job_id": "141dc531fed34eb1824ac9547172b678"},
+    {"id": "bigtest_12_f3_f3", "job_id": "68ef2337589e4a369bd6f70ea31f2189"},
+    {"id": "bigtest_13_f3_f3", "job_id": "64cc7c3b009248f4908f9a6a8d1a317b"},
+    {"id": "bigtest_14_f3_f3", "job_id": "02e74738d8fb48b19809f48733412543"},
+    {"id": "bigtest_15_f3_f3", "job_id": "c7db0ba4ef8942698af2877f66d1210b"},
+    {"id": "bigtest_16_f3_f3", "job_id": "002a1ff95f4b45e8b960448cb63e3264"},
+    {"id": "bigtest_17_f4_f4", "job_id": "4f6756d559e2432a80a4081bbff771af"},
+    {"id": "bigtest_18_f4_f4", "job_id": "1d9a970d10034712b763ac8dab9448c6"},
+    {"id": "bigtest_19_f4_f4", "job_id": "07659043bd564a018b02baa0140f3658"},
+    {"id": "bigtest_20_f4_f4", "job_id": "d1481df692414885aa5a101f575f9049"},
+    {"id": "bigtest_21_f4_f4", "job_id": "97073a3a10e74c578a7f0c3b3e47790e"},
+    {"id": "bigtest_22_f5_f5", "job_id": "de0472db2c0648498d9c05caf4f19c7c"},
+    {"id": "bigtest_23_f5_f5", "job_id": "1efcc2ccd4504a439e5e9976b2d641d2"},
+    {"id": "bigtest_24_f5_f5", "job_id": "0119cb99f34a4b8e80d5bf79332dda57"},
+    {"id": "bigtest_25_f5_f5", "job_id": "e2eec331c90c4e518da92f178713ffb7"},
+    {"id": "bigtest_26_f5_f5", "job_id": "ec087fab0ed74468bfbe5270845e2460"},
+    {"id": "bigtest_27_f2_f2", "job_id": "e55f4e1499224921be513079e8526b73"},
+    {"id": "bigtest_28_f2_f2", "job_id": "d487d1c0022f41ea98f41fd7b39ae2b2"},
+    {"id": "bigtest_29_f2_f2_10", "job_id": "3ec8b1c74f92409c900ab1ed7b0a4d04"},
+    {"id": "bigtest_30_f2_f2_5", "job_id": "9e876f8f22ce46d397c23473530201c6"},
+    {"id": "bigtest_31_f2_f2", "job_id": "b2d4c6de30bf4551a5b662255406f8d0"},
+    {"id": "bigtest_32_f1_f1_supplied_sfx", "job_id": "0c5b410e4f8e462aaf21e22962b389da"},
+    {"id": "brat_5th_full_footage_ref", "job_id": "3df3f3445d4249188964b3a7d4fbf016"}
+  ]
+}

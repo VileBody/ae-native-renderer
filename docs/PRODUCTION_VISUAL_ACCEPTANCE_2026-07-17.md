@@ -2,11 +2,12 @@
 
 ## Scope
 
-This pass covers the first reproducible archived-JSX visual acceptance run for
-public bot styles that already have local AE job artifacts:
+This pass covers the reproducible archived-JSX visual acceptance run for the
+active native-readiness corpus:
 
 - `trendy_5th_production`
-- `brat_5th_strobe_subtitles`
+- full-footage `brat_5th`
+- 32 production `/bigtest` F1-F5 cases
 
 The OFX/Sapphire execution route remains out of scope. The renderer path is the
 native approximate implementation.
@@ -30,35 +31,41 @@ reference lookup, and explicit `control_frames` / `control_times`.
 
 ## Results
 
-- `trendy_5th_production`: rendered 6 frame-locked control frames and generated
-  side-by-side MP4. Capability status is partial only because audio mux is still
-  reported as `import.skip_audio` / `layer.audio`; no unsupported visual layers
-  were reported.
-- `brat_5th_strobe_subtitles`: rendered 6 frame-locked control frames and
-  generated side-by-side MP4. The archived AE job contains text/strobe/audio
-  only (`scene.assets=0`); it is valid for subtitle/strobe parity, but not for
-  full footage parity.
+The final production pass contains 33 cases: 32 `/bigtest` F1-F5 jobs and one
+full-footage Brat job. All 33 rendered with required audio capability, no
+`not_implemented` findings and no `unsupported` findings. This is native
+approximate acceptance, not a pixel-perfect claim.
+
+The earlier Trendy pass remains the subtitle/style reference. It rendered six
+frame-locked controls without unsupported visual layers; its residual is visual
+tuning rather than missing production semantics.
 
 Generated artifacts:
 
 - `target/visual_acceptance/jsx_runner_acceptance/index.json`
 - `target/visual_acceptance/jsx_runner_acceptance/trendy_5th_production/side-by-side.mp4`
-- `target/visual_acceptance/jsx_runner_acceptance/brat_5th_strobe_subtitles/side-by-side.mp4`
+- `target/visual_acceptance/ae_refs_20260717_full32/full_video_audio_summary.json`
+- `target/visual_acceptance/ae_refs_20260717_full32/full_video_audio_bounded/`
+- `target/visual_acceptance/ae_refs_20260717_full32/full_video_audio_tail/`
+- `target/visual_acceptance/ae_refs_20260717_full32/f3_final_3/`
+
+The tracked, secret-free evidence index is
+`fixtures/bot_corpus/production_acceptance_20260717.json`. It records the 33
+orchestrator job IDs and aggregate SHA-256 checksums so the AE outputs and job
+archives can be re-harvested from artifact storage.
 
 ## Visual Notes
 
 - Trendy is structurally close: text timing, word order, position and overall
   red treatment line up. The main residual differences are global AE analog
   texture / moire, grade intensity, and small text softness/stroke differences.
-- Brat subtitle/strobe mechanics line up enough for this artifact, but the
-  comparison cannot validate underlying footage because the AE archive has no
-  video source layers.
+- Brat subtitle/strobe mechanics and full footage composition are both covered
+  by the final reference job.
 
 ## Remaining
 
-- Add real `/bigtest` F1-F5 AE job archives to the same manifest once their
-  production job ids are available or after a fresh team bot `/bigtest` run.
-- Add a Brat production reference with actual footage if we want full-frame
-  footage parity rather than subtitle/strobe-only acceptance.
-- Improve the runner contact sheet to include all control frames per case, not
-  only the first comparison frame.
+- Pixel-level tuning of text metrics, masks/mattes and plugin-derived native
+  approximations remains separate from P0/P1 readiness.
+- OFX and proprietary plugin workers remain intentionally out of scope.
+- Production rollout still requires the normal container/manager canary; it is
+  not part of this visual acceptance result.
