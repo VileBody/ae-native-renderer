@@ -195,12 +195,14 @@ pub struct KeyframeEase {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EffectSpec {
+    #[serde(alias = "matchName")]
     pub match_name: String,
     #[serde(default)]
     pub params: serde_json::Value,
 }
 
 pub const TEXT_PAINT_MATCH_NAME: &str = "ANR Text Paint";
+pub const TRACK_MATTE_MATCH_NAME: &str = "ANR Track Matte";
 
 /// Optional text paint extension carried in `Layer::Text.effects`, either as
 /// a standalone marker or in an effect's `params.text_paint` field.
@@ -685,5 +687,15 @@ mod tests {
         );
         assert_eq!(serde_json::to_value(BlendMode::Add).unwrap(), "add");
         assert_eq!(serde_json::to_value(BlendMode::Screen).unwrap(), "screen");
+    }
+
+    #[test]
+    fn effect_spec_accepts_canonical_render_plan_match_name() {
+        let effect: super::EffectSpec = serde_json::from_value(serde_json::json!({
+            "matchName": "ADBE Geometry2",
+            "params": {"scale_width": 101}
+        }))
+        .unwrap();
+        assert_eq!(effect.match_name, "ADBE Geometry2");
     }
 }

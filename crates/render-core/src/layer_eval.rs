@@ -4,7 +4,7 @@ use raster_cpu::{composite_normal, BilinearSampler, Canvas, Sampler, AE_ALPHA_GA
 use render_ir::{
     BlendMode, Composition, EffectSpec, Layer, PositionExpression, Rect, ScalarKeyframe, Scene,
     TextAnimatorSpec, TextExpressionSelector, TextPaintSpec, TextSelectorBasedOn,
-    TextSelectorShape, Vec2Keyframe, TEXT_PAINT_MATCH_NAME,
+    TextSelectorShape, Vec2Keyframe, TEXT_PAINT_MATCH_NAME, TRACK_MATTE_MATCH_NAME,
 };
 use serde_json::{json, Value};
 use std::collections::{BTreeMap, VecDeque};
@@ -578,11 +578,18 @@ fn render_composition_frame(
     mut trace: Option<&mut FrameRenderTrace>,
 ) -> anyhow::Result<Canvas> {
     let mut canvas = Canvas::new(comp.width, comp.height, comp.background);
+    let matte_sources = layers
+        .iter()
+        .filter_map(|layer| track_matte_spec(layer).map(|spec| spec.source_layer.to_string()))
+        .collect::<std::collections::BTreeSet<_>>();
 
     // IR order is top-to-bottom like AE. Render bottom-to-top.
     for layer_index in (0..layers.len()).rev() {
         let layer = &layers[layer_index];
         if !layer.is_active(time) {
+            continue;
+        }
+        if matte_sources.contains(layer.id()) {
             continue;
         }
         if let Layer::Adjustment { start, effects, .. } = layer {
@@ -679,6 +686,17 @@ fn render_composition_frame(
                 stack,
                 trace.as_deref_mut(),
             )?;
+            let layer_canvas = apply_track_matte(
+                scene,
+                comp,
+                layers,
+                layer,
+                layer_canvas,
+                time,
+                footage,
+                runtime,
+                stack,
+            )?;
             composite_layer(&mut canvas, &layer_canvas, 100.0, layer.blend_mode());
         } else {
             let layer_canvas = render_layer_stub(
@@ -690,6 +708,17 @@ fn render_composition_frame(
                 runtime,
                 stack,
                 trace.as_deref_mut(),
+            )?;
+            let layer_canvas = apply_track_matte(
+                scene,
+                comp,
+                layers,
+                layer,
+                layer_canvas,
+                time,
+                footage,
+                runtime,
+                stack,
             )?;
             composite_layer(
                 &mut canvas,
@@ -749,6 +778,99 @@ fn composite_layer(dst: &mut Canvas, src: &Canvas, opacity_percent: f32, blend_m
             dst.data[dst_index + 3] = quantize_blend_unit(out_alpha);
         }
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct TrackMatteSpec<'a> {
+    source_layer: &'a str,
+    luma: bool,
+    inverted: bool,
+}
+
+fn track_matte_spec(layer: &Layer) -> Option<TrackMatteSpec<'_>> {
+    let effect = effects_of(layer)
+        .iter()
+        .find(|effect| effect.match_name == TRACK_MATTE_MATCH_NAME)?;
+    Some(TrackMatteSpec {
+        source_layer: effect.params.get("source_layer")?.as_str()?,
+        luma: effect
+            .params
+            .get("mode")
+            .and_then(Value::as_str)
+            .is_some_and(|mode| mode.eq_ignore_ascii_case("luma")),
+        inverted: effect
+            .params
+            .get("inverted")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_track_matte(
+    scene: &Scene,
+    comp: &Composition,
+    layers: &[Layer],
+    target: &Layer,
+    mut target_canvas: Canvas,
+    time: f64,
+    footage: &mut dyn FootageProvider,
+    runtime: &mut EffectRuntime,
+    stack: &mut Vec<String>,
+) -> anyhow::Result<Canvas> {
+    let Some(spec) = track_matte_spec(target) else {
+        return Ok(target_canvas);
+    };
+    let source = layers
+        .iter()
+        .find(|layer| layer.id() == spec.source_layer)
+        .ok_or_else(|| {
+            anyhow::anyhow!("track matte source '{}' was not found", spec.source_layer)
+        })?;
+    if !source.is_active(time) {
+        target_canvas.data.fill(0);
+        return Ok(target_canvas);
+    }
+    let source_time = posterized_time_for_effects(effects_of(source), time);
+    let matte = render_layer_stub(
+        scene,
+        comp,
+        source,
+        source_time,
+        footage,
+        runtime,
+        stack,
+        None,
+    )?;
+    let source_opacity = (opacity_of(source, source_time) / 100.0).clamp(0.0, 1.0);
+    let width = target_canvas.width.min(matte.width);
+    let height = target_canvas.height.min(matte.height);
+    for y in 0..target_canvas.height {
+        for x in 0..target_canvas.width {
+            let target_index = ((y * target_canvas.width + x) * 4) as usize;
+            let mut coverage = if x < width && y < height {
+                let matte_index = ((y * matte.width + x) * 4) as usize;
+                let alpha = matte.data[matte_index + 3] as f32 / 255.0 * source_opacity;
+                if spec.luma {
+                    let luma = 0.2126 * matte.data[matte_index] as f32
+                        + 0.7152 * matte.data[matte_index + 1] as f32
+                        + 0.0722 * matte.data[matte_index + 2] as f32;
+                    luma / 255.0 * alpha
+                } else {
+                    alpha
+                }
+            } else {
+                0.0
+            };
+            if spec.inverted {
+                coverage = 1.0 - coverage;
+            }
+            target_canvas.data[target_index + 3] = (target_canvas.data[target_index + 3] as f32
+                * coverage.clamp(0.0, 1.0))
+            .round() as u8;
+        }
+    }
+    Ok(target_canvas)
 }
 
 fn quantize_blend_unit(value: f32) -> u8 {
@@ -2067,7 +2189,7 @@ fn apply_effects_to_canvas(
 ) -> anyhow::Result<Canvas> {
     let mut canvas = None::<Canvas>;
     for (effect_index, spec) in effects.iter().enumerate() {
-        if spec.match_name == TEXT_PAINT_MATCH_NAME {
+        if spec.match_name == TEXT_PAINT_MATCH_NAME || spec.match_name == TRACK_MATTE_MATCH_NAME {
             continue;
         }
         if let Some(effect) = EffectRegistry::create(&spec.match_name) {
@@ -2140,6 +2262,9 @@ fn apply_adjustment_effects_to_canvas(
 ) -> anyhow::Result<Canvas> {
     let mut canvas = input.clone();
     for (effect_index, spec) in effects.iter().enumerate() {
+        if spec.match_name == TRACK_MATTE_MATCH_NAME {
+            continue;
+        }
         let Some(effect) = EffectRegistry::create(&spec.match_name) else {
             anyhow::bail!("unknown effect matchName: {}", spec.match_name);
         };
@@ -4876,6 +5001,63 @@ mod tests {
             composite_layer(&mut destination, &source, 50.0, mode);
             assert_eq!(destination.pixel(0, 0), [200, 100, 50, 64]);
         }
+    }
+
+    #[test]
+    fn alpha_track_matte_hides_provider_and_clips_target() {
+        let scene = Scene {
+            version: "test".to_string(),
+            composition: Composition {
+                id: "main".to_string(),
+                width: 4,
+                height: 4,
+                fps: 24.0,
+                duration: 1.0,
+                background: [0, 0, 0, 0],
+                motion_blur: Default::default(),
+            },
+            compositions: Vec::new(),
+            assets: Vec::new(),
+            layers: vec![
+                Layer::Solid {
+                    id: "matte".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    blend_mode: BlendMode::Normal,
+                    color: [255, 255, 255, 255],
+                    rect: Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 2.0,
+                        h: 4.0,
+                    },
+                    transform: Default::default(),
+                    effects: Vec::new(),
+                },
+                Layer::Solid {
+                    id: "target".to_string(),
+                    start: 0.0,
+                    duration: 1.0,
+                    blend_mode: BlendMode::Normal,
+                    color: [255, 0, 0, 255],
+                    rect: Rect {
+                        x: 0.0,
+                        y: 0.0,
+                        w: 4.0,
+                        h: 4.0,
+                    },
+                    transform: Default::default(),
+                    effects: vec![effect(
+                        TRACK_MATTE_MATCH_NAME,
+                        json!({"source_layer": "matte", "mode": "alpha", "inverted": false}),
+                    )],
+                },
+            ],
+        };
+
+        let rendered = render_frame(&scene, 0).unwrap();
+        assert_eq!(rendered.pixel(0, 2), [255, 0, 0, 255]);
+        assert_eq!(rendered.pixel(3, 2)[3], 0);
     }
 
     #[test]

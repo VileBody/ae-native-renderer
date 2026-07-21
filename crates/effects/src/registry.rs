@@ -1,10 +1,10 @@
 use crate::{
     analog_glitch::AnalogGlitch, box_blur::BoxBlur2, directional_blur::DirectionalBlur,
     drop_shadow::DropShadow, f3_stylize::F3Stylize, gaussian_blur::GaussianBlur2,
-    geometry::Geometry2, glow::Glow, image_wipe::ImageWipe, invert::Invert, minimax::Minimax,
-    optics_compensation::OpticsCompensation, posterize_time::PosterizeTime,
-    shape_overlay::ShapeOverlay, turbulent_displace::TurbulentDisplace,
-    vertical_gradient::VerticalGradient, Effect,
+    geometry::Geometry2, glow::Glow, image_wipe::ImageWipe, invert::Invert,
+    layer_masks::LayerMasks, minimax::Minimax, optics_compensation::OpticsCompensation,
+    posterize_time::PosterizeTime, shape_overlay::ShapeOverlay,
+    turbulent_displace::TurbulentDisplace, vertical_gradient::VerticalGradient, Effect,
 };
 
 pub struct EffectRegistry;
@@ -50,6 +50,7 @@ impl EffectRegistry {
             "ADBE Glo2" => Some(Box::new(Glow::default())),
             "CC Image Wipe" => Some(Box::new(ImageWipe)),
             "ADBE Invert" => Some(Box::new(Invert)),
+            "ANR Layer Masks" => Some(Box::new(LayerMasks)),
             "ADBE Minimax" => Some(Box::new(Minimax::default())),
             "ADBE Optics Compensation" => Some(Box::new(OpticsCompensation)),
             "ADBE Posterize Time" => Some(Box::new(PosterizeTime::default())),
@@ -72,6 +73,7 @@ impl EffectRegistry {
             "ADBE Glo2",
             "CC Image Wipe",
             "ADBE Invert",
+            "ANR Layer Masks",
             "ADBE Minimax",
             "ADBE Optics Compensation",
             "ADBE Posterize Time",
@@ -100,7 +102,7 @@ impl EffectRegistry {
 
 fn is_ae_numeric_param(param: &str) -> bool {
     let bytes = param.as_bytes();
-    bytes.len() == 4 && bytes.iter().all(u8::is_ascii_digit)
+    (4..=8).contains(&bytes.len()) && bytes.iter().all(u8::is_ascii_digit)
 }
 
 const EFFECT_METADATA: &[EffectMetadata] = &[
@@ -188,12 +190,17 @@ const EFFECT_METADATA: &[EffectMetadata] = &[
     metadata(
         "adbe.motion_blur",
         "ADBE Motion Blur",
-        &["direction", "blur_length"],
+        &["direction", "blur_length", "0051", "S_BlurMotion-0051"],
     ),
     metadata(
         "adbe.gaussian_blur2",
         "ADBE Gaussian Blur 2",
-        &["blurriness", "repeat_edge_pixels"],
+        &[
+            "blurriness",
+            "repeat_edge_pixels",
+            "9961714",
+            "BCC6LensBlur-9961714",
+        ],
     ),
     metadata(
         "adbe.glo2",
@@ -218,6 +225,7 @@ const EFFECT_METADATA: &[EffectMetadata] = &[
         "ADBE Invert",
         &["channel", "blend_with_original"],
     ),
+    metadata("anr.layer_masks", "ANR Layer Masks", &["masks"]),
     metadata(
         "adbe.minimax",
         "ADBE Minimax",

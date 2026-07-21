@@ -11,10 +11,10 @@
     "ae_master_job_id": "3df3f3445d4249188964b3a7d4fbf016"
   },
   "validation": {
-    "total": 33,
-    "complete": 33,
+    "total": 34,
+    "complete": 34,
     "incomplete": 0,
-    "with_audio_capability_supported": 33,
+    "with_audio_capability_supported": 34,
     "not_implemented": 0,
     "unsupported": 0,
     "parity": "approximate"
@@ -23,7 +23,9 @@
     "algorithm": "sha256",
     "ae_output_digest_list": "4f8d5de7d522b55c58d2a933d02dd653582d73e88bf5bd0ce38f65538766e33e",
     "native_acceptance_summary": "7a8716bdd6bc6b9681f62f7f31ed280056f5233a86e587d818afabb8798bc1b1",
-    "brat_full_ae_output": "4ac068f3805dad716c1f627208449784c6f711978fd2c115969fd528253c4949"
+    "brat_full_ae_output": "4ac068f3805dad716c1f627208449784c6f711978fd2c115969fd528253c4949",
+    "trendy_full_ae_output": "5763c4d8878bf24aea53951678838a4712522e8ff89b4ca765118a6704ba27e3",
+    "trendy_full_native_output": "a4e1653e426f75353f5cc62bda948e7166bf929a8ee4f5062733c03fe8763636"
   },
   "artifact_recovery": {
     "provider": "Blast orchestrator artifact storage",
@@ -31,6 +33,7 @@
     "notes": "Re-harvest output video and job archive by job_id; presigned URLs are intentionally not committed."
   },
   "cases": [
+    {"id": "trendy_5th_real_job", "job_id": "9ef2717145c04318927ca738f5882541"},
     {"id": "bigtest_01_baseline_case", "job_id": "d9de61c1d35a4e199d2d7999bc037889"},
     {"id": "bigtest_02_f3_f3", "job_id": "a4fecde8ad704b529980d14a5ee1c02b"},
     {"id": "bigtest_03_f3_f3", "job_id": "5d44796ffdbb47868cc656af31d81de3"},

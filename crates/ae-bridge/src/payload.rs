@@ -94,6 +94,10 @@ pub struct RegistryEntry {
     pub parity: Option<String>,
     #[serde(default, rename = "fallbackPolicy", alias = "fallback_policy")]
     pub fallback_policy: Option<String>,
+    #[serde(default)]
+    pub version: Option<String>,
+    #[serde(default, rename = "effectGraph", alias = "effect_graph")]
+    pub effect_graph: Vec<render_ir::EffectSpec>,
     #[serde(flatten)]
     pub extra: BTreeMap<String, Value>,
 }
@@ -314,6 +318,14 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
     }
     classify_render_plan_metadata(payload, &mut findings);
     classify_color_management(&payload.project_spec, &mut findings);
+    classify_extra_fields(
+        "projectSpec",
+        None,
+        &payload.project_spec.extra,
+        &["colorManagement"],
+        &[],
+        &mut findings,
+    );
 
     for comp in &payload.comps_spec {
         if comp.w == 0 || comp.h == 0 {
@@ -331,6 +343,14 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
                 comp.name, comp.dur
             ));
         }
+        classify_extra_fields(
+            "compsSpec",
+            Some(&comp.name),
+            &comp.extra,
+            &[],
+            &["parentFolderPath"],
+            &mut findings,
+        );
     }
 
     for layer in payload
@@ -341,10 +361,36 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
         *layer_types.entry(layer.kind.clone()).or_insert(0) += 1;
         validate_layer_timing(layer, &mut errors);
         classify_layer(layer, &mut findings);
-        classify_layer_surface_semantics(layer, &mut findings);
+        classify_layer_surface_semantics(layer, payload, &mut findings);
         classify_text_animator(layer, &mut findings);
+        classify_extra_fields(
+            "layer",
+            Some(&layer.name),
+            &layer.extra,
+            &["masks", "matte", "mattes", "track_matte", "shape", "parent"],
+            &["comp_id", "comp_name", "style_instructions"],
+            &mut findings,
+        );
 
         for (prop_name, prop) in &layer.props {
+            classify_extra_fields(
+                "property",
+                Some(&layer.name),
+                &prop.extra,
+                &[],
+                &[],
+                &mut findings,
+            );
+            for keyframe in &prop.keyframes {
+                classify_extra_fields(
+                    "keyframe",
+                    Some(&layer.name),
+                    &keyframe.extra,
+                    &[],
+                    &[],
+                    &mut findings,
+                );
+            }
             if prop
                 .expression
                 .as_deref()
@@ -429,6 +475,7 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
             layer: operation.id.clone(),
             detail: detail.to_string(),
         });
+        classify_visual_operation_params(operation, &mut findings);
     }
 
     let summary = main_comp.map(|comp| PayloadSummary {
@@ -463,6 +510,143 @@ pub fn validate_payload(payload: &GeneratedPayload, strict: bool) -> PayloadVali
         visual_operations,
         findings,
         errors,
+    }
+}
+
+fn classify_extra_fields(
+    surface: &str,
+    subject: Option<&str>,
+    extra: &BTreeMap<String, Value>,
+    supported: &[&str],
+    ignored: &[&str],
+    findings: &mut Vec<CapabilityFinding>,
+) {
+    for key in extra.keys() {
+        let (status, detail) = if supported.contains(&key.as_str()) {
+            (CapabilityStatus::Supported, "recognized extension field")
+        } else if ignored.contains(&key.as_str()) {
+            (
+                CapabilityStatus::Ignored,
+                "recognized metadata field has no pixel semantics",
+            )
+        } else {
+            (
+                CapabilityStatus::Unsupported,
+                "unknown field is preserved but has no native semantics",
+            )
+        };
+        findings.push(CapabilityFinding {
+            status,
+            feature: format!("unknown_field.{surface}.{key}"),
+            layer: subject.map(str::to_string),
+            detail: detail.to_string(),
+        });
+    }
+}
+
+fn classify_visual_operation_params(
+    operation: &VisualOperation,
+    findings: &mut Vec<CapabilityFinding>,
+) {
+    let Some(params) = operation.params.as_object() else {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Unsupported,
+            feature: format!("visual_op_param.{}.<non_object>", operation.kind),
+            layer: operation.id.clone(),
+            detail: "visual operation params must be an object".to_string(),
+        });
+        return;
+    };
+    let known = visual_operation_known_params(&operation.kind);
+    if known.is_empty() {
+        return;
+    }
+    for key in params.keys().filter(|key| !known.contains(&key.as_str())) {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Unsupported,
+            feature: format!("visual_op_param.{}.{}", operation.kind, key),
+            layer: operation.id.clone(),
+            detail: "parameter is not declared by the visual operation contract".to_string(),
+        });
+    }
+}
+
+fn visual_operation_known_params(kind: &str) -> &'static [&'static str] {
+    match kind {
+        "subtitle.trendy.v1" | "subtitle.brat.v1" => &[
+            "source_mode",
+            "word_timings",
+            "words",
+            "fill",
+            "blend",
+            "blend_mode",
+            "bpm",
+            "text",
+        ],
+        "subtitle.bot.impulse_2nd.v1"
+        | "subtitle.bot.scenes_3rd.v1"
+        | "subtitle.bot.scenes_3rd_single_step.v1"
+        | "subtitle.bot.template_4th.v1"
+        | "subtitle.bot.legacy_blocks.v1" => &["source_mode", "segments"],
+        "style.semantic.v1" => &["styleId", "style_id", "version"],
+        "hook.f1.sound.v1" => &[
+            "drop_time",
+            "impactAt",
+            "duration",
+            "fadeOut",
+            "duck",
+            "subtitle_text",
+            "seed",
+        ],
+        "hook.f2.object.v1" => &[
+            "shape",
+            "device",
+            "object",
+            "drop_time",
+            "seed",
+            "shape_fill",
+            "fill",
+            "color",
+        ],
+        "hook.f3.effect.v1" => &[
+            "detected_effect_ids",
+            "hook",
+            "transition",
+            "extra",
+            "effect",
+            "device",
+            "extra_full",
+            "hook_extend",
+            "drop_time",
+            "assets",
+            "cut_times",
+            "extend",
+            "full",
+        ],
+        "hook.f4.motion.v1" => &[
+            "device",
+            "motion",
+            "gesture",
+            "bpm",
+            "drop_time",
+            "seed",
+            "fill",
+            "color",
+        ],
+        "hook.f5.cognition.v1" => &[
+            "device",
+            "tts_text",
+            "duck",
+            "drop_time",
+            "focal_start_ms",
+            "seed",
+            "word_timings",
+            "words",
+            "fill",
+            "blend",
+            "text",
+        ],
+        _ => &[],
     }
 }
 
@@ -665,7 +849,8 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
                     continue;
                 }
                 match import_layer(layer, &mut assets, &mut asset_index, target_spec) {
-                    Some(imported) => {
+                    Some(mut imported) => {
+                        append_surface_effects(&mut imported, layer, payload);
                         diagnostics.imported_layers += 1;
                         nested_layer_items
                             .entry(target_comp.to_string())
@@ -687,7 +872,8 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
             if let Some(parent) = precomp_sources.get(target_comp) {
                 if layer.kind == "text" || layer.kind == "adjustment" {
                     match import_flattened_text_layer(layer, parent, main_comp) {
-                        Some(imported) => {
+                        Some(mut imported) => {
+                            append_surface_effects(&mut imported, layer, payload);
                             diagnostics.imported_layers += 1;
                             diagnostics.findings.push(CapabilityFinding {
                                 status: CapabilityStatus::Approximate,
@@ -762,7 +948,8 @@ pub fn import_payload_to_scene(payload: &GeneratedPayload) -> anyhow::Result<Pay
         }
 
         match import_layer(layer, &mut assets, &mut asset_index, main_comp) {
-            Some(imported) => {
+            Some(mut imported) => {
+                append_surface_effects(&mut imported, layer, payload);
                 diagnostics.imported_layers += 1;
                 layer_items.push((main_sort_key(layer), imported));
             }
@@ -1058,8 +1245,66 @@ fn import_layer(
             duration,
             effects,
         }),
+        "shape" => {
+            let mut shape_effects = vec![render_ir::EffectSpec {
+                match_name: "ANR Shape Overlay".to_string(),
+                params: generic_shape_params(layer, comp),
+            }];
+            shape_effects.extend(effects);
+            Some(render_ir::Layer::Solid {
+                id,
+                start,
+                duration,
+                blend_mode: layer_blend_mode(layer),
+                color: [0, 0, 0, 0],
+                rect: render_ir::Rect {
+                    x: 0.0,
+                    y: 0.0,
+                    w: comp.w as f32,
+                    h: comp.h as f32,
+                },
+                transform,
+                effects: shape_effects,
+            })
+        }
+        "null" => Some(render_ir::Layer::Solid {
+            id,
+            start,
+            duration,
+            blend_mode: render_ir::BlendMode::Normal,
+            color: [0, 0, 0, 0],
+            rect: render_ir::Rect {
+                x: 0.0,
+                y: 0.0,
+                w: 1.0,
+                h: 1.0,
+            },
+            transform,
+            effects: Vec::new(),
+        }),
         _ => None,
     }
+}
+
+fn generic_shape_params(layer: &PayloadLayer, comp: &CompSpec) -> Value {
+    let source = layer
+        .text_data
+        .get("shape_source")
+        .or_else(|| layer.text_data.get("shape"))
+        .or_else(|| layer.extra.get("shape"))
+        .cloned()
+        .unwrap_or_else(|| json!({}));
+    let mut params = source.as_object().cloned().unwrap_or_default();
+    params
+        .entry("shape".to_string())
+        .or_insert_with(|| Value::String("ellipse".to_string()));
+    params
+        .entry("center_x".to_string())
+        .or_insert_with(|| json!(comp.w as f64 * 0.5));
+    params
+        .entry("center_y".to_string())
+        .or_insert_with(|| json!(comp.h as f64 * 0.5));
+    Value::Object(params)
 }
 
 fn import_text_layer(
@@ -1257,6 +1502,14 @@ fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
             CapabilityStatus::Approximate,
             "adjustment layers apply known effects to the accumulated buffer",
         ),
+        "shape" => (
+            CapabilityStatus::Approximate,
+            "normalized shape primitives are lowered through the native shape overlay kernel",
+        ),
+        "null" => (
+            CapabilityStatus::Approximate,
+            "null layers are preserved as non-rendering control layers",
+        ),
         _ => (CapabilityStatus::Unsupported, "unknown layer type"),
     };
 
@@ -1282,16 +1535,17 @@ fn classify_layer(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
     }
 }
 
-fn classify_layer_surface_semantics(layer: &PayloadLayer, findings: &mut Vec<CapabilityFinding>) {
-    if layer.extra.contains_key("masks")
-        || layer.text_data.get("masks").is_some()
-        || layer.text_data.pointer("/layer_meta/masks").is_some()
-    {
+fn classify_layer_surface_semantics(
+    layer: &PayloadLayer,
+    payload: &GeneratedPayload,
+    findings: &mut Vec<CapabilityFinding>,
+) {
+    if layer_masks(layer).is_some() {
         findings.push(CapabilityFinding {
-            status: CapabilityStatus::NotImplemented,
+            status: CapabilityStatus::Approximate,
             feature: "layer.masks".to_string(),
             layer: Some(layer.name.clone()),
-            detail: "mask paths are preserved in the payload but full AE mask compositing is not implemented in the native P0/P1 slice".to_string(),
+            detail: "mask order, add/subtract/intersect/difference, inversion and opacity are lowered natively; animated paths and feather remain approximate".to_string(),
         });
     }
 
@@ -1304,11 +1558,20 @@ fn classify_layer_surface_semantics(layer: &PayloadLayer, findings: &mut Vec<Cap
             .is_some()
         || layer.text_data.pointer("/layer_meta/track_matte").is_some()
     {
+        let lowered = track_matte_params(layer, payload).is_some();
         findings.push(CapabilityFinding {
-            status: CapabilityStatus::NotImplemented,
+            status: if lowered {
+                CapabilityStatus::Approximate
+            } else {
+                CapabilityStatus::Unsupported
+            },
             feature: "layer.mattes".to_string(),
             layer: Some(layer.name.clone()),
-            detail: "track mattes/alpha mattes are capability-reported; native matte compositing remains a P1 implementation gap".to_string(),
+            detail: if lowered {
+                "alpha/luma track matte compositing, inversion and hidden matte providers are lowered natively".to_string()
+            } else {
+                "track matte type was present but no explicit or adjacent matte source could be resolved".to_string()
+            },
         });
     }
 
@@ -1318,6 +1581,19 @@ fn classify_layer_surface_semantics(layer: &PayloadLayer, findings: &mut Vec<Cap
             feature: "layer.source_rect".to_string(),
             layer: Some(layer.name.clone()),
             detail: "sourceRect/source bounds are imported for layout diagnostics; exact AE sourceRect parity is approximate".to_string(),
+        });
+    }
+
+    if layer.extra.contains_key("parent")
+        || layer.text_data.pointer("/layer_meta/parent").is_some()
+        || layer.text_data.pointer("/layer_meta/parentName").is_some()
+        || layer.text_data.pointer("/layer_meta/parentIndex").is_some()
+    {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::NotImplemented,
+            feature: "layer.parent_transform".to_string(),
+            layer: Some(layer.name.clone()),
+            detail: "parent relation is preserved but arbitrary AE parent-chain transform evaluation remains outside the current native subset".to_string(),
         });
     }
 
@@ -1493,9 +1769,15 @@ fn normalize_effect_name(effect_name: &str) -> &str {
         .split_once(':')
         .map_or(effect_name, |(_, name)| name);
     match name {
-        // Sapphire's drop shadow is lowered to the native shadow kernel. Its
-        // parameter IDs are handled by DropShadowParams as an approximation.
+        // Production proprietary effects with an approved native approximation
+        // stay on the native worker. Unknown plugin match names remain explicit
+        // capability gaps and are never normalized here.
         "S_DropShadow" => "ADBE Drop Shadow",
+        "S_BlurMotion" => "ADBE Motion Blur",
+        "S_Gradient" => "ANR Vertical Gradient",
+        "S_Glow" | "S_GlowEdges" => "ADBE Glo2",
+        "BCC6LensBlur" | "BCC Lens Blur" => "ADBE Gaussian Blur 2",
+        "VISINF Grain Implant" => "ANR Analog Glitch",
         _ => name,
     }
 }
@@ -1667,6 +1949,112 @@ fn effects_of(layer: &PayloadLayer) -> Vec<render_ir::EffectSpec> {
             params: serde_json::to_value(params).unwrap_or_else(|_| json!({})),
         })
         .collect()
+}
+
+fn append_surface_effects(
+    imported: &mut render_ir::Layer,
+    source: &PayloadLayer,
+    payload: &GeneratedPayload,
+) {
+    let effects = match imported {
+        render_ir::Layer::Solid { effects, .. }
+        | render_ir::Layer::Footage { effects, .. }
+        | render_ir::Layer::Text { effects, .. }
+        | render_ir::Layer::Precomp { effects, .. }
+        | render_ir::Layer::Adjustment { effects, .. } => effects,
+    };
+    if let Some(masks) = layer_masks(source) {
+        effects.push(render_ir::EffectSpec {
+            match_name: "ANR Layer Masks".to_string(),
+            params: json!({"masks": masks}),
+        });
+    }
+    if let Some(params) = track_matte_params(source, payload) {
+        effects.push(render_ir::EffectSpec {
+            match_name: "ANR Track Matte".to_string(),
+            params,
+        });
+    }
+}
+
+fn layer_masks(layer: &PayloadLayer) -> Option<Value> {
+    let value = layer
+        .extra
+        .get("masks")
+        .or_else(|| layer.text_data.get("masks"))
+        .or_else(|| layer.text_data.pointer("/layer_meta/masks"))?;
+    value
+        .as_array()
+        .filter(|masks| !masks.is_empty())
+        .map(|_| value.clone())
+}
+
+fn track_matte_params(layer: &PayloadLayer, payload: &GeneratedPayload) -> Option<Value> {
+    let raw = layer
+        .extra
+        .get("track_matte")
+        .or_else(|| layer.extra.get("matte"))
+        .or_else(|| layer.text_data.pointer("/layer_meta/trackMatteType"))
+        .or_else(|| layer.text_data.pointer("/layer_meta/track_matte"))?;
+    let type_value = raw
+        .get("type")
+        .or_else(|| raw.get("mode"))
+        .or_else(|| raw.get("matteType"))
+        .unwrap_or(raw);
+    let (mode, inverted) = match type_value
+        .as_str()
+        .unwrap_or("")
+        .to_ascii_lowercase()
+        .replace([' ', '-'], "_")
+        .as_str()
+    {
+        "alpha" | "alpha_matte" => ("alpha", false),
+        "alpha_inverted" | "alpha_inverted_matte" => ("alpha", true),
+        "luma" | "luma_matte" => ("luma", false),
+        "luma_inverted" | "luma_inverted_matte" => ("luma", true),
+        _ => match type_value.as_i64() {
+            Some(1) => ("alpha", false),
+            Some(2) => ("alpha", true),
+            Some(3) => ("luma", false),
+            Some(4) => ("luma", true),
+            _ => return None,
+        },
+    };
+    let explicit_source = raw
+        .get("sourceLayer")
+        .or_else(|| raw.get("source_layer"))
+        .or_else(|| raw.get("source"))
+        .and_then(|value| {
+            value
+                .as_str()
+                .or_else(|| value.get("name").and_then(Value::as_str))
+        });
+    let all_layers = || {
+        payload
+            .footage_layers
+            .iter()
+            .chain(payload.text_layers.iter())
+    };
+    let inferred_source = || {
+        let target_comp = layer_target_comp(layer);
+        all_layers()
+            .filter(|candidate| layer_target_comp(candidate) == target_comp)
+            .filter(|candidate| candidate.z_index < layer.z_index)
+            .max_by_key(|candidate| candidate.z_index)
+            .map(layer_id)
+    };
+    let source = explicit_source
+        .and_then(|name| {
+            all_layers()
+                .find(|candidate| candidate.name == name || layer_id(candidate) == name)
+                .map(layer_id)
+        })
+        .or_else(inferred_source)?;
+    Some(json!({
+        "source_layer": source,
+        "mode": mode,
+        "inverted": inverted,
+    }))
 }
 
 fn text_animators_of(layer: &PayloadLayer) -> Vec<render_ir::TextAnimatorSpec> {
@@ -2206,7 +2594,7 @@ fn effect_param_is_known(effect_name: &str, param_name: &str) -> bool {
 
 fn is_ae_numeric_param(param_name: &str) -> bool {
     let bytes = param_name.as_bytes();
-    bytes.len() == 4 && bytes.iter().all(u8::is_ascii_digit)
+    (4..=8).contains(&bytes.len()) && bytes.iter().all(u8::is_ascii_digit)
 }
 
 fn effect_known_params(effect_name: &str) -> Option<&'static [&'static str]> {
@@ -2504,6 +2892,103 @@ mod color_management_tests {
     }
 
     #[test]
+    fn approved_proprietary_effects_route_to_native_approximations() {
+        let payload: GeneratedPayload = serde_json::from_value(json!({
+            "schemaVersion": "render-plan.v1.1",
+            "projectSpec": {"mainCompName": "Comp 1"},
+            "compsSpec": [{"name": "Comp 1", "w": 64, "h": 64, "fps": 24, "dur": 1}],
+            "footage_layers": [{
+                "name": "adjustment",
+                "type": "adjustment",
+                "in_point": 0,
+                "out_point": 1,
+                "z_index": 1,
+                "adjustment_layer": true,
+                "effects": {
+                    "S_BlurMotion": {"0051": {"value": 12}},
+                    "BCC6LensBlur": {"9961714": {"value": 8}}
+                }
+            }]
+        }))
+        .unwrap();
+
+        let report = validate_payload(&payload, true);
+        assert!(report.ok, "unexpected findings: {:?}", report.findings);
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Approximate
+                && finding.feature == "effect.ADBE Motion Blur"
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Approximate
+                && finding.feature == "effect.ADBE Gaussian Blur 2"
+        }));
+
+        let imported = import_payload_to_scene(&payload).unwrap();
+        let adjustment = imported.scene.layers.first().expect("adjustment layer");
+        let effects = match adjustment {
+            render_ir::Layer::Adjustment { effects, .. } => effects,
+            other => panic!("expected adjustment layer, got {other:?}"),
+        };
+        assert_eq!(effects[0].match_name, "ADBE Gaussian Blur 2");
+        assert_eq!(effects[1].match_name, "ADBE Motion Blur");
+    }
+
+    #[test]
+    fn unknown_layer_field_and_visual_param_are_reported_explicitly() {
+        let payload: GeneratedPayload = serde_json::from_value(json!({
+            "schemaVersion": "render-plan.v1.1",
+            "projectSpec": {"mainCompName": "Comp 1"},
+            "compsSpec": [{"name": "Comp 1", "w": 64, "h": 64, "fps": 24, "dur": 1}],
+            "footage_layers": [{
+                "name": "solid",
+                "type": "solid",
+                "in_point": 0,
+                "out_point": 1,
+                "z_index": 1,
+                "mysteryLayerField": 42,
+                "text_data": {"solid_source": {"width": 64, "height": 64}}
+            }],
+            "visualOps": [{
+                "id": "style",
+                "type": "style.semantic.v1",
+                "params": {"styleId": "txt_soft_v1", "mysteryParam": true}
+            }]
+        }))
+        .unwrap();
+
+        let report = validate_payload(&payload, true);
+        assert!(!report.ok);
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Unsupported
+                && finding.feature == "unknown_field.layer.mysteryLayerField"
+        }));
+        assert!(report.findings.iter().any(|finding| {
+            finding.status == CapabilityStatus::Unsupported
+                && finding.feature == "visual_op_param.style.semantic.v1.mysteryParam"
+        }));
+    }
+
+    #[test]
+    fn nullable_subtitle_blend_mode_is_part_of_the_visual_op_contract() {
+        let payload: GeneratedPayload = serde_json::from_value(json!({
+            "projectSpec": {"mainCompName": "Comp 1"},
+            "compsSpec": [{"name": "Comp 1", "w": 64, "h": 64, "fps": 24, "dur": 1}],
+            "visualOps": [{
+                "id": "trendy",
+                "type": "subtitle.trendy.v1",
+                "params": {"word_timings": [], "blend_mode": null}
+            }]
+        }))
+        .unwrap();
+
+        let report = validate_payload(&payload, true);
+        assert!(!report
+            .findings
+            .iter()
+            .any(|finding| { finding.feature == "visual_op_param.subtitle.trendy.v1.blend_mode" }));
+    }
+
+    #[test]
     fn render_plan_metadata_and_layer_surface_gaps_are_reported() {
         let payload: GeneratedPayload = serde_json::from_value(json!({
             "schemaVersion": "render-plan.v1.1",
@@ -2537,7 +3022,7 @@ mod color_management_tests {
                 "out_point": 1.0,
                 "z_index": 1,
                 "source_rect": {"x": 1, "y": 2, "w": 3, "h": 4},
-                "masks": [],
+                "masks": [{"mode": "add", "rect": [0, 0, 32, 32]}],
                 "text_data": {
                     "layer_meta": {
                         "comp_name_target": "Comp 1",
@@ -2565,12 +3050,12 @@ mod color_management_tests {
                 && finding.feature == "effect_registry.S_BlurMotion"
         }));
         assert!(report.findings.iter().any(|finding| {
-            finding.status == CapabilityStatus::NotImplemented
+            finding.status == CapabilityStatus::Approximate
                 && finding.feature == "layer.masks"
                 && finding.layer.as_deref() == Some("masked")
         }));
         assert!(report.findings.iter().any(|finding| {
-            finding.status == CapabilityStatus::NotImplemented
+            finding.status == CapabilityStatus::Unsupported
                 && finding.feature == "layer.mattes"
                 && finding.layer.as_deref() == Some("masked")
         }));

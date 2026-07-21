@@ -17,10 +17,10 @@ class ProductionAcceptanceManifestTest(unittest.TestCase):
         cases = acceptance["cases"]
 
         self.assertEqual(acceptance["schema"], "ae-native-renderer.production-acceptance.v1")
-        self.assertEqual(validation["total"], 33)
-        self.assertEqual(validation["complete"], 33)
+        self.assertEqual(validation["total"], 34)
+        self.assertEqual(validation["complete"], 34)
         self.assertEqual(validation["incomplete"], 0)
-        self.assertEqual(validation["with_audio_capability_supported"], 33)
+        self.assertEqual(validation["with_audio_capability_supported"], 34)
         self.assertEqual(validation["not_implemented"], 0)
         self.assertEqual(validation["unsupported"], 0)
         self.assertEqual(len(cases), validation["total"])
@@ -35,6 +35,10 @@ class ProductionAcceptanceManifestTest(unittest.TestCase):
         self.assertTrue(evidence.is_file())
 
         by_id = {case["id"]: case for case in goldens["cases"]}
+        self.assertEqual(
+            by_id["trendy_5th_real_job"]["reference_status"],
+            "ae_reference_downloaded_and_compared",
+        )
         self.assertEqual(
             by_id["brat_5th_real_job"]["reference_status"],
             "ae_reference_downloaded_and_compared",

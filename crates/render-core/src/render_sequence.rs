@@ -1190,6 +1190,7 @@ fn collect_collapse_features(scene: &Scene, approximate: &mut BTreeSet<String>) 
 
 fn is_supported_effect(match_name: &str) -> bool {
     match_name == render_ir::TEXT_PAINT_MATCH_NAME
+        || match_name == render_ir::TRACK_MATTE_MATCH_NAME
         || effects::EffectRegistry::known_match_names()
             .iter()
             .any(|known| *known == match_name)

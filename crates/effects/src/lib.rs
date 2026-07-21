@@ -8,6 +8,7 @@ pub mod geometry;
 pub mod glow;
 pub mod image_wipe;
 pub mod invert;
+pub mod layer_masks;
 pub mod minimax;
 pub mod optics_compensation;
 pub mod posterize_time;

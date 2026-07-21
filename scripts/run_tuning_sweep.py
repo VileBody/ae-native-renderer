@@ -11,6 +11,8 @@ import sys
 from pathlib import Path
 from typing import Any
 
+from compare_frame_locked import run_comparison
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RENDER_CLI = ROOT / "target" / "release" / "render-cli"
@@ -68,6 +70,20 @@ def build_case_request(
     return request
 
 
+def select_best_case(cases: list[dict[str, Any]]) -> dict[str, Any] | None:
+    comparable = [case for case in cases if isinstance(case.get("comparison"), dict)]
+    if not comparable:
+        return None
+    return min(
+        comparable,
+        key=lambda case: (
+            float(case["comparison"].get("mae", float("inf"))),
+            -float(case["comparison"].get("ssim", 0.0)),
+            int(case["index"]),
+        ),
+    )
+
+
 def run_sweep(args: argparse.Namespace) -> Path:
     request_path = args.request.resolve()
     request_dir = request_path.parent
@@ -95,6 +111,16 @@ def run_sweep(args: argparse.Namespace) -> Path:
             case_dir / "render-output",
             index,
         )
+        if args.stage_debug:
+            request["debugSpec"] = {
+                "captureEffectStages": True,
+                "sourceLayers": True,
+                "preEffects": True,
+                "textMasks": True,
+                "adjustmentResults": True,
+                "precompResults": True,
+                "finalComposite": True,
+            }
         generated_request = case_dir / "request.json"
         generated_request.write_text(
             json.dumps(request, indent=2, ensure_ascii=False) + "\n",
@@ -133,9 +159,32 @@ def run_sweep(args: argparse.Namespace) -> Path:
                     "artifacts": response.get("artifacts", {}),
                 }
             )
+            if args.ae_frames is not None and row["ok"]:
+                rust_frames_raw = (response.get("render") or {}).get("frames_directory")
+                if not rust_frames_raw:
+                    raise RuntimeError(f"case {index} response has no render.frames_directory")
+                comparison_path = run_comparison(
+                    rust_dir=Path(rust_frames_raw),
+                    ae_dir=args.ae_frames,
+                    frame_specs=args.frames,
+                    out_dir=case_dir / "comparison",
+                )
+                comparison = json.loads(comparison_path.read_text(encoding="utf-8"))
+                summary = comparison["summary"]
+                row["comparison"] = {
+                    "metrics": str(comparison_path.relative_to(out)),
+                    "mae": summary["mae"],
+                    "ssim": summary["ssim"],
+                    "min_frame_ssim": summary["min_frame_ssim"],
+                    "max_abs_diff": summary["max_abs_diff"],
+                }
+                stage_debug = case_dir / "render-output" / "render" / "stage-debug"
+                if stage_debug.is_dir():
+                    row["stage_debug"] = str(stage_debug.relative_to(out))
         cases.append(row)
         print(f"[{index}/{len(args.value)}] {value!r}: {row['status']}", flush=True)
 
+    best = select_best_case(cases)
     report = {
         "schema": "ae-native-renderer.tuning-sweep.v1",
         "source_request": str(request_path),
@@ -143,6 +192,11 @@ def run_sweep(args: argparse.Namespace) -> Path:
         "parameter": args.parameter,
         "dry_run": args.dry_run,
         "cases": cases,
+        "best_case": (
+            {"index": best["index"], "value": best["value"], **best["comparison"]}
+            if best is not None
+            else None
+        ),
     }
     report_path = out / "sweep-index.json"
     report_path.write_text(json.dumps(report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
@@ -157,8 +211,16 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--profile", default="builtin:p0p1-readiness")
     parser.add_argument("--out", type=Path, required=True)
     parser.add_argument("--render-cli", type=Path, default=DEFAULT_RENDER_CLI)
+    parser.add_argument("--ae-frames", type=Path, help="AE PNG directory for frame-locked comparison")
+    parser.add_argument("--frames", nargs="+", help="Frame numbers/ranges compared for every value")
+    parser.add_argument("--stage-debug", action="store_true", help="Capture every supported render stage")
     parser.add_argument("--dry-run", action="store_true")
-    return parser.parse_args()
+    args = parser.parse_args()
+    if (args.ae_frames is None) != (args.frames is None):
+        parser.error("--ae-frames and --frames must be supplied together")
+    if args.ae_frames is not None:
+        args.ae_frames = args.ae_frames.resolve()
+    return args
 
 
 if __name__ == "__main__":

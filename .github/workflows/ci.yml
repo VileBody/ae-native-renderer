@@ -7,7 +7,8 @@ on:
 jobs:
   rust:
     name: Rust workspace
-    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: [self-hosted, linux, x64]
 
     steps:
       - name: Checkout
@@ -27,10 +28,24 @@ jobs:
             pkg-config \
             libgstreamer1.0-dev \
             libgstreamer-plugins-base1.0-dev \
-            libglib2.0-dev
+            libglib2.0-dev \
+            python3-numpy \
+            python3-pil
 
       - name: Cargo check
         run: cargo check --workspace
 
       - name: Targeted tests
         run: cargo test -p testkit -p effects -p render-core -p ae-bridge -p render-cli
+
+      - name: Production evidence and differential harness tests
+        run: |
+          python3 scripts/test_production_acceptance_manifest.py
+          python3 scripts/test_compare_frame_locked.py
+          python3 scripts/test_run_tuning_sweep.py
+
+      - name: Build visual regression binary
+        run: cargo build -p render-cli --bin render-cli
+
+      - name: Self-contained P0/P1 visual regression
+        run: python3 scripts/run_ci_visual_regression.py --render-cli target/debug/render-cli

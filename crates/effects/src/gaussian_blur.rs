@@ -58,6 +58,8 @@ impl GaussianBlur2Params {
                     "radius",
                     "0001",
                     "ADBE Gaussian Blur 2-0001",
+                    "9961714",
+                    "BCC6LensBlur-9961714",
                 ],
                 time,
                 0.0,

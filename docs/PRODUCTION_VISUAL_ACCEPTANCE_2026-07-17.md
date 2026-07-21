@@ -31,14 +31,14 @@ reference lookup, and explicit `control_frames` / `control_times`.
 
 ## Results
 
-The final production pass contains 33 cases: 32 `/bigtest` F1-F5 jobs and one
-full-footage Brat job. All 33 rendered with required audio capability, no
+The final production pass contains 34 cases: 32 `/bigtest` F1-F5 jobs, one
+full-footage Brat job, and one full-footage Trendy job. All 34 rendered with required audio capability, no
 `not_implemented` findings and no `unsupported` findings. This is native
 approximate acceptance, not a pixel-perfect claim.
 
-The earlier Trendy pass remains the subtitle/style reference. It rendered six
-frame-locked controls without unsupported visual layers; its residual is visual
-tuning rather than missing production semantics.
+Trendy renders a full 12-second native MP4 with H.264 video and stereo AAC,
+plus six frame-locked controls against the production AE master. Its residual
+is visual tuning rather than missing production semantics.
 
 Generated artifacts:
 
@@ -64,7 +64,7 @@ archives can be re-harvested from artifact storage.
 
 ## Remaining
 
-- Pixel-level tuning of text metrics, masks/mattes and plugin-derived native
+- Pixel-level tuning of text metrics, animated mask paths/feather and plugin-derived native
   approximations remains separate from P0/P1 readiness.
 - OFX and proprietary plugin workers remain intentionally out of scope.
 - Production rollout still requires the normal container/manager canary; it is

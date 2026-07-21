@@ -87,7 +87,7 @@ pub fn lower_visual_operations(
                             .to_string(),
                 }],
             }),
-            "style.semantic.v1" => lower_semantic_style(operation, main_comp),
+            "style.semantic.v1" => lower_semantic_style(operation, main_comp, payload),
             "hook.f1.sound.v1" => lower_f1(operation, main_comp),
             "hook.f2.object.v1" => lower_f2(operation, main_comp),
             "hook.f3.effect.v1" => lower_f3(operation, main_comp, payload),
@@ -2105,70 +2105,33 @@ fn bot_type_3_tail_effects(
 fn lower_semantic_style(
     operation: &VisualOperation,
     comp: &CompSpec,
+    payload: &GeneratedPayload,
 ) -> Option<VisualLoweringResult> {
     let style = operation_string_param(operation, &["styleId", "style_id"])?;
-    let Some(metadata) = StyleRegistry::metadata(style) else {
+    let request_recipe = payload.style_registry.iter().find(|entry| {
+        entry.style_id.as_deref().or(entry.stable_id.as_deref()) == Some(style)
+            && !entry.effect_graph.is_empty()
+    });
+    let effects = request_recipe
+        .map(|entry| entry.effect_graph.clone())
+        .or_else(|| StyleRegistry::effects(style));
+    let Some(effects) = effects else {
         return Some(VisualLoweringResult {
             layers: Vec::new(),
             findings: vec![CapabilityFinding {
                 status: CapabilityStatus::NotImplemented,
                 feature: format!("lower.visual_op.style.semantic.v1.{style}"),
                 layer: operation.id.clone(),
-                detail: "style id is not in the frozen bot semantic style catalog".to_string(),
+                detail: "style id has no effectGraph in the request or built-in recipe catalog"
+                    .to_string(),
             }],
         });
     };
-    let effects = match style {
-        "ftg_al16_default_v1" => vec![
-            EffectSpec {
-                match_name: "ADBE Gaussian Blur 2".to_string(),
-                params: json!({"blurriness": 3.0}),
-            },
-            EffectSpec {
-                match_name: "ADBE Geometry2".to_string(),
-                params: json!({"rotation": 0.65, "scale_width": 103.0, "scale_height": 103.0}),
-            },
-            EffectSpec {
-                match_name: "ADBE Motion Blur".to_string(),
-                params: json!({"direction": 0.0, "blur_length": 8.0}),
-            },
-        ],
-        "txt_soft_v1" => vec![
-            EffectSpec {
-                match_name: "ADBE Glo2".to_string(),
-                params: json!({"threshold": 120.0, "radius": 28.0, "intensity": 0.55, "operation": "screen"}),
-            },
-            EffectSpec {
-                match_name: "ADBE Geometry2".to_string(),
-                params: json!({"rotation": 0.15, "scale_width": 101.0, "scale_height": 101.0}),
-            },
-        ],
-        "txt_punch_v1" => vec![
-            EffectSpec {
-                match_name: "ADBE Geometry2".to_string(),
-                params: json!({"scale_width": 112.0, "scale_height": 88.0}),
-            },
-            EffectSpec {
-                match_name: "ADBE Motion Blur".to_string(),
-                params: json!({"direction": 0.0, "blur_length": 32.0}),
-            },
-        ],
-        "txt_drop_v1" => vec![
-            EffectSpec {
-                match_name: "ADBE Glo2".to_string(),
-                params: json!({"threshold": 105.0, "radius": 38.0, "intensity": 0.8, "operation": "add"}),
-            },
-            EffectSpec {
-                match_name: "ADBE Geometry2".to_string(),
-                params: json!({"scale_width": 118.0, "scale_height": 82.0}),
-            },
-            EffectSpec {
-                match_name: "ADBE Motion Blur".to_string(),
-                params: json!({"direction": 90.0, "blur_length": 46.0}),
-            },
-        ],
-        _ => unreachable!("style registry and lowering table drifted for {style}"),
-    };
+    let effect_names = effects
+        .iter()
+        .map(|effect| effect.match_name.as_str())
+        .collect::<Vec<_>>()
+        .join(", ");
     Some(VisualLoweringResult {
         layers: vec![LoweredVisualLayer {
             sort_key: -500_100,
@@ -2185,7 +2148,7 @@ fn lower_semantic_style(
             layer: operation.id.clone(),
             detail: format!(
                 "semantic AE/plugin stack is represented by a deterministic native approximation: {}",
-                metadata.effect_ids.join(", ")
+                effect_names
             ),
         }],
     })

@@ -11,6 +11,8 @@ const BLUR_LENGTH_NAMES: &[&str] = &[
     "length",
     "0002",
     "ADBE Motion Blur-0002",
+    "0051",
+    "S_BlurMotion-0051",
 ];
 
 #[derive(Debug, Default)]

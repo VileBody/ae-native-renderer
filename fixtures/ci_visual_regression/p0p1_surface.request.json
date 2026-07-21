@@ -1,0 +1,82 @@
+{
+  "schema": "ae-native-renderer.render-request.v1",
+  "schemaVersion": "render-plan.v1.1",
+  "payloadVersion": "render-plan.v1",
+  "requestId": "ci-p0p1-surface",
+  "action": "render",
+  "projectSpec": {"mainCompName": "Comp 1"},
+  "compsSpec": [
+    {"name": "Comp 1", "w": 64, "h": 64, "fps": 24, "dur": 0.0416666667, "bgColor": [0.02, 0.03, 0.05]}
+  ],
+  "footage_layers": [
+    {
+      "name": "matte source",
+      "type": "solid",
+      "in_point": 0,
+      "out_point": 0.0416666667,
+      "z_index": 1,
+      "masks": [{"mode": "add", "shapeType": "ellipse", "rect": [4, 4, 48, 48]}],
+      "text_data": {
+        "layer_meta": {"comp_name_target": "Comp 1"},
+        "solid_source": {"color_rgb01": [1, 1, 1], "width": 64, "height": 64}
+      }
+    },
+    {
+      "name": "matted fill",
+      "type": "solid",
+      "in_point": 0,
+      "out_point": 0.0416666667,
+      "z_index": 2,
+      "track_matte": {"type": "alpha", "sourceLayer": "matte source"},
+      "text_data": {
+        "layer_meta": {"comp_name_target": "Comp 1"},
+        "solid_source": {"color_rgb01": [0.95, 0.12, 0.2], "width": 64, "height": 64}
+      }
+    },
+    {
+      "name": "shape overlay",
+      "type": "shape",
+      "in_point": 0,
+      "out_point": 0.0416666667,
+      "z_index": 3,
+      "text_data": {
+        "layer_meta": {"comp_name_target": "Comp 1"},
+        "shape_source": {"shape": "rhomb", "size": 14, "thickness": 3, "color": [30, 220, 255, 220]}
+      }
+    },
+    {
+      "name": "control null",
+      "type": "null",
+      "in_point": 0,
+      "out_point": 0.0416666667,
+      "z_index": 4,
+      "text_data": {"layer_meta": {"comp_name_target": "Comp 1"}}
+    }
+  ],
+  "text_layers": [],
+  "visualOps": [
+    {
+      "id": "ci_dynamic_style",
+      "type": "style.semantic.v1",
+      "params": {"styleId": "ci_surface_style_v1"}
+    }
+  ],
+  "styleRegistry": [
+    {
+      "styleId": "ci_surface_style_v1",
+      "version": "v1",
+      "backend": "native_approximation",
+      "parity": "approximate",
+      "fallbackPolicy": "capability_report",
+      "effectGraph": [
+        {"match_name": "ADBE Geometry2", "params": {"scale_width": 98, "scale_height": 98}}
+      ]
+    }
+  ],
+  "effectRegistry": [
+    {"stableId": "adbe.geometry2", "aeMatchName": "ADBE Geometry2", "backend": "native_approximation", "parity": "approximate"}
+  ],
+  "assetsSpec": {"root": "."},
+  "outputSpec": {"directory": "target/ci_visual_regression", "writeScene": true},
+  "policy": {"onUnsupported": "error", "strict": false}
+}

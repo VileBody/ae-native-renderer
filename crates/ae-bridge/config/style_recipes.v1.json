@@ -1,0 +1,20 @@
+{
+  "ftg_al16_default_v1": [
+    {"match_name": "ADBE Gaussian Blur 2", "params": {"blurriness": 3.0}},
+    {"match_name": "ADBE Geometry2", "params": {"rotation": 0.65, "scale_width": 103.0, "scale_height": 103.0}},
+    {"match_name": "ADBE Motion Blur", "params": {"direction": 0.0, "blur_length": 8.0}}
+  ],
+  "txt_soft_v1": [
+    {"match_name": "ADBE Glo2", "params": {"threshold": 120.0, "radius": 28.0, "intensity": 0.55, "operation": "screen"}},
+    {"match_name": "ADBE Geometry2", "params": {"rotation": 0.15, "scale_width": 101.0, "scale_height": 101.0}}
+  ],
+  "txt_punch_v1": [
+    {"match_name": "ADBE Geometry2", "params": {"scale_width": 112.0, "scale_height": 88.0}},
+    {"match_name": "ADBE Motion Blur", "params": {"direction": 0.0, "blur_length": 32.0}}
+  ],
+  "txt_drop_v1": [
+    {"match_name": "ADBE Glo2", "params": {"threshold": 105.0, "radius": 38.0, "intensity": 0.8, "operation": "add"}},
+    {"match_name": "ADBE Geometry2", "params": {"scale_width": 118.0, "scale_height": 82.0}},
+    {"match_name": "ADBE Motion Blur", "params": {"direction": 90.0, "blur_length": 46.0}}
+  ]
+}

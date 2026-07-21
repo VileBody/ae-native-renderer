@@ -32,6 +32,13 @@ impl StyleRegistry {
     pub fn known_metadata() -> &'static [StyleMetadata] {
         STYLE_METADATA
     }
+
+    pub fn effects(stable_id: &str) -> Option<Vec<render_ir::EffectSpec>> {
+        let recipes: serde_json::Value =
+            serde_json::from_str(include_str!("../config/style_recipes.v1.json"))
+                .expect("embedded style recipe catalog must be valid JSON");
+        serde_json::from_value(recipes.get(stable_id)?.clone()).ok()
+    }
 }
 
 const STYLE_METADATA: &[StyleMetadata] = &[
@@ -70,5 +77,7 @@ mod tests {
         assert_eq!(style.source, "blast.bot.semantic_style");
         assert_eq!(style.effect_ids, &["ADBE Glo2", "ADBE Geometry2"]);
         assert!(StyleRegistry::metadata("txt_unknown_v1").is_none());
+        assert_eq!(StyleRegistry::effects("txt_soft_v1").unwrap().len(), 2);
+        assert!(StyleRegistry::effects("txt_unknown_v1").is_none());
     }
 }
