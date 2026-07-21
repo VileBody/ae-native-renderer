@@ -19,18 +19,12 @@ jobs:
           rustup toolchain install 1.88.0 --profile minimal
           rustup default 1.88.0
 
-      - name: Install native dependencies
+      - name: Verify preprovisioned native dependencies
         run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            ffmpeg \
-            fontconfig \
-            pkg-config \
-            libgstreamer1.0-dev \
-            libgstreamer-plugins-base1.0-dev \
-            libglib2.0-dev \
-            python3-numpy \
-            python3-pil
+          ffmpeg -version >/dev/null
+          fc-list >/dev/null
+          pkg-config --exists gstreamer-1.0 gstreamer-app-1.0 gstreamer-video-1.0 glib-2.0
+          python3 -c 'import numpy, PIL'
 
       - name: Cargo check
         run: cargo check --workspace
