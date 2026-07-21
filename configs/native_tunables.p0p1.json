@@ -2,8 +2,9 @@
   "schema": "ae-native-renderer.native-tunables.v1",
   "profile": "p0p1-readiness",
   "notes": [
-    "Production defaults remain compiled into the native effects; this file is the contract surface for non-recompile tuning.",
-    "Unknown keys must be reported by tooling before they are used in production jobs."
+    "Load with tuningSpec.profile=builtin:p0p1-readiness or a request-relative JSON path.",
+    "Effect, style, F3 and baseline values are applied after lowering and before graph validation without recompiling Rust.",
+    "Unknown keys fail request validation; contract-only acceptance thresholds are named in tuning-profile.resolved.json."
   ],
   "text": {
     "baseline_offsets_px": {

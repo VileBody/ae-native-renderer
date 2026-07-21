@@ -26,6 +26,8 @@ pub struct RenderJsonRequest {
     pub output: OutputSpec,
     #[serde(default, rename = "debugSpec", alias = "debug_spec")]
     pub debug: DebugSpec,
+    #[serde(default, rename = "tuningSpec", alias = "tuning_spec")]
+    pub tuning: crate::tuning::TuningSpec,
     #[serde(default)]
     pub policy: RenderPolicy,
 }
@@ -350,7 +352,20 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
         );
     }
 
-    let imported = match ae_bridge::import_payload_to_scene(&request.payload) {
+    let mut tuning = match crate::tuning::resolve(&request.tuning, base_dir) {
+        Ok(tuning) => tuning,
+        Err(error) => {
+            return config_failure_response(
+                &request,
+                &request_hash,
+                capabilities_from_findings(&validation.findings, None),
+                None,
+                format!("tuning profile validation failed: {error:#}"),
+            );
+        }
+    };
+
+    let mut imported = match ae_bridge::import_payload_to_scene(&request.payload) {
         Ok(imported) => imported,
         Err(error) => {
             return (
@@ -374,6 +389,17 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
             );
         }
     };
+    if let Some(tuning) = tuning.as_mut() {
+        if let Err(error) = crate::tuning::apply_to_scene(&mut imported.scene, tuning) {
+            return config_failure_response(
+                &request,
+                &request_hash,
+                capabilities_from_findings(&validation.findings, None),
+                Some(scene_summary(&imported.scene)),
+                format!("applying tuning profile failed: {error:#}"),
+            );
+        }
+    }
     if let Err(error) = render_core::graph::validate_graph(&imported.scene) {
         return (
             RenderJsonResponse {
@@ -398,6 +424,20 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
     let features = render_core::scene_feature_summary(&imported.scene);
     let mut findings = validation.findings.clone();
     findings.extend(imported.diagnostics.findings.clone());
+    if let Some(tuning) = tuning.as_ref() {
+        findings.push(CapabilityFinding {
+            status: CapabilityStatus::Supported,
+            feature: format!("tuning.profile.{}", tuning.report.profile),
+            layer: None,
+            detail: format!(
+                "runtime tuning applied from {} (sha256={}, applied={}, contract_only={})",
+                tuning.report.source,
+                tuning.report.sha256,
+                tuning.report.applied.len(),
+                tuning.report.contract_only.len()
+            ),
+        });
+    }
     let mut capabilities = capabilities_from_findings(&findings, Some(&features));
     apply_operation_requirements(&mut capabilities, &request.payload.visual_ops);
     apply_audio_asset_requirements(&mut capabilities, &request.payload.visual_ops);
@@ -481,6 +521,9 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
     let scene_path = output_dir.join("scene.json");
     let capabilities_path = output_dir.join("capabilities.json");
     let normalized_request_path = output_dir.join("request.normalized.json");
+    let tuning_profile_path = tuning
+        .as_ref()
+        .map(|_| output_dir.join("tuning-profile.resolved.json"));
     let video = request.output.video.as_ref().map(|path| {
         if path.is_absolute() {
             path.clone()
@@ -525,6 +568,21 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
             scene_summary,
             format!("writing normalized request failed: {error:#}"),
         );
+    }
+    if let (Some(tuning), Some(path)) = (tuning.as_ref(), tuning_profile_path.as_deref()) {
+        let document = serde_json::json!({
+            "profile": tuning.normalized,
+            "report": tuning.report,
+        });
+        if let Err(error) = write_pretty_json(path, &document) {
+            return render_failure_response(
+                request,
+                request_hash,
+                capabilities,
+                scene_summary,
+                format!("writing resolved tuning profile failed: {error:#}"),
+            );
+        }
     }
 
     let assets_root = request
@@ -642,6 +700,7 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
         request.output.write_scene.then_some(scene_path.as_path()),
         &capabilities_path,
         &normalized_request_path,
+        tuning_profile_path.as_deref(),
         frames_path.is_dir().then_some(frames_path.as_path()),
         video.as_deref(),
     ) {
@@ -666,6 +725,9 @@ fn execute(request: RenderJsonRequest, base_dir: &Path) -> (RenderJsonResponse, 
         "normalized_request".to_string(),
         normalized_request_path.display().to_string(),
     );
+    if let Some(path) = tuning_profile_path.as_ref() {
+        artifacts.insert("tuning_profile".to_string(), path.display().to_string());
+    }
     artifacts.insert("render".to_string(), render_dir.display().to_string());
     artifacts.insert(
         "output_manifest".to_string(),
@@ -1731,6 +1793,7 @@ fn write_output_manifest(
     scene_path: Option<&Path>,
     capabilities_path: &Path,
     normalized_request_path: &Path,
+    tuning_profile_path: Option<&Path>,
     frames_path: Option<&Path>,
     video_path: Option<&Path>,
 ) -> anyhow::Result<()> {
@@ -1750,6 +1813,12 @@ fn write_output_manifest(
         "normalized_request".to_string(),
         stable_artifact(output_dir, normalized_request_path)?,
     );
+    if let Some(tuning_profile_path) = tuning_profile_path {
+        artifacts.insert(
+            "tuning_profile".to_string(),
+            stable_artifact(output_dir, tuning_profile_path)?,
+        );
+    }
     if let Some(frames_path) = frames_path {
         artifacts.insert(
             "frames".to_string(),

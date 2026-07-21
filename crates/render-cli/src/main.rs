@@ -13,6 +13,7 @@ mod conformance_pack;
 mod json_api;
 mod media_plan;
 mod raw_video_sink;
+mod tuning;
 
 #[derive(Parser, Debug)]
 #[command(name = "render-cli")]

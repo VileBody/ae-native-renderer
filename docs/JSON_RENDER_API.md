@@ -41,6 +41,10 @@ Schemas:
   "debugSpec": {
     "captureEffectStages": false
   },
+  "tuningSpec": {
+    "profile": "builtin:p0p1-readiness",
+    "overrides": {}
+  },
   "policy": {
     "onUnsupported": "report"
   }
@@ -117,6 +121,41 @@ relative paths to each `frame.rendered` event:
 When any stage image flag is enabled, the renderer uses the deterministic PNG
 sequence path even if `outputSpec.video` is present; MP4 muxing then happens
 from those PNGs.
+
+### Runtime tuning
+
+`tuningSpec` applies a strict profile after the RenderPlan has been lowered to
+the native Scene and before graph validation. This lets visual coefficients be
+changed and swept without recompiling Rust while preserving the AE effect-stack
+order. `profile` accepts `builtin:p0p1-readiness` or a JSON path relative to the
+request file; `overrides` is deep-merged over that profile.
+
+The current runtime surface covers Cyrillic baseline offsets, global
+blur/glow/drop-shadow coefficients, semantic bot styles, and the active
+`flash_on_cuts`, `analog_glitch`, and `crystal_glow` F3 parameters. Unknown
+profile fields, style IDs, F3 IDs, or parameter names fail the request before
+rendering. Alpha/sampling values are also validated against the fixed native v1
+contract instead of being silently accepted.
+
+Every tuned render writes `tuning-profile.resolved.json` with the normalized
+profile, its SHA-256, applied keys, and explicitly named contract-only acceptance
+thresholds. The file is hashed in `output-manifest.json` and returned as the
+`tuning_profile` response artifact.
+
+Run several values against the same request and binary:
+
+```bash
+python3 scripts/run_tuning_sweep.py \
+  --request request.json \
+  --parameter effects.glow.radius_multiplier \
+  --value 0.75 --value 1.0 --value 1.25 \
+  --out out/glow-radius-sweep
+```
+
+The sweep preserves the original request directory as the resolution base for
+relative assets, writes one request/response/render directory per value, and
+produces `sweep-index.json`. Build `target/release/render-cli` once; no rebuild
+occurs between variants. Use `--dry-run` to generate requests only.
 
 ### Exact frame selection
 

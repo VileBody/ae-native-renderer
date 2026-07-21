@@ -153,6 +153,21 @@
       },
       "additionalProperties": false
     },
+    "tuningSpec": {
+      "type": "object",
+      "properties": {
+        "profile": {
+          "type": ["string", "null"],
+          "description": "builtin:p0p1-readiness or a path relative to the request JSON"
+        },
+        "overrides": {
+          "type": "object",
+          "default": {},
+          "description": "Deep-merged strict overrides; unknown fields fail validation"
+        }
+      },
+      "additionalProperties": false
+    },
     "policy": {
       "type": "object",
       "properties": {

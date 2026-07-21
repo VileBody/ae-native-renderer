@@ -356,6 +356,99 @@ fn debug_spec_can_force_full_effect_stage_telemetry_for_video_output() {
 }
 
 #[test]
+fn runtime_tuning_profile_changes_lowered_scene_and_is_manifested() {
+    let scratch = Scratch::new("runtime-tuning");
+    let mut request = fixture_request();
+    request["action"] = json!("render");
+    request["outputSpec"]["directory"] = json!("out");
+    request["footage_layers"][0]["effects"] = json!({
+        "ADBE Box Blur2": {
+            "radius": {"value": 4.0}
+        }
+    });
+    request["tuningSpec"] = json!({
+        "profile": "builtin:p0p1-readiness",
+        "overrides": {
+            "effects": {
+                "blur": {
+                    "box_radius_multiplier": 2.5
+                }
+            }
+        }
+    });
+
+    let output = run_json(&scratch.0, &serde_json::to_vec(&request).unwrap());
+    assert!(
+        output.status.success(),
+        "stderr={}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let response = response(&output);
+    assert_eq!(response["status"], "rendered");
+    assert!(response["artifacts"]["tuning_profile"]
+        .as_str()
+        .is_some_and(|path| path.ends_with("tuning-profile.resolved.json")));
+
+    let scene: Value =
+        serde_json::from_slice(&fs::read(scratch.0.join("out/scene.json")).unwrap()).unwrap();
+    assert_eq!(
+        scene["layers"][0]["effects"][0]["params"]["radius"]["value"],
+        10.0
+    );
+
+    let tuning: Value = serde_json::from_slice(
+        &fs::read(scratch.0.join("out/tuning-profile.resolved.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        tuning["profile"]["effects"]["blur"]["box_radius_multiplier"],
+        2.5
+    );
+    assert!(tuning["report"]["applied"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|value| value == "effects.blur.box_radius_multiplier"));
+
+    let manifest: Value =
+        serde_json::from_slice(&fs::read(scratch.0.join("out/output-manifest.json")).unwrap())
+            .unwrap();
+    assert_eq!(
+        manifest["artifacts"]["tuning_profile"]["path"],
+        "tuning-profile.resolved.json"
+    );
+}
+
+#[test]
+fn unknown_runtime_tuning_key_fails_before_output() {
+    let scratch = Scratch::new("runtime-tuning-unknown");
+    let mut request = fixture_request();
+    request["action"] = json!("render");
+    request["outputSpec"]["directory"] = json!("out");
+    request["tuningSpec"] = json!({
+        "profile": "builtin:p0p1-readiness",
+        "overrides": {
+            "f3": {
+                "analog_glitch": {
+                    "mystery_knob": 42.0
+                }
+            }
+        }
+    });
+
+    let output = run_json(&scratch.0, &serde_json::to_vec(&request).unwrap());
+    assert_eq!(output.status.code(), Some(1));
+    let response = response(&output);
+    assert_eq!(response["status"], "invalid");
+    assert_eq!(response["ok"], false);
+    assert!(response["errors"][0]
+        .as_str()
+        .unwrap()
+        .contains("unsupported tuning key f3.analog_glitch.mystery_knob"));
+    assert!(!scratch.0.join("out").exists());
+}
+
+#[test]
 fn identical_request_produces_identical_manifest_in_different_roots() {
     let first = Scratch::new("determinism-a");
     let second = Scratch::new("determinism-b");
